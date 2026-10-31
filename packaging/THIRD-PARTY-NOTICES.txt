@@ -1,0 +1,20 @@
+CodeCairn's own source is distributed under the MIT license.
+Third-party components retain their respective copyrights and licenses.
+
+Scintilla and Tree-sitter grammar notices are installed alongside this file.
+Standalone distributions dynamically link Qt 6 under its applicable LGPL terms
+and include Qt license texts. Qt and other shared libraries can be replaced with
+ABI-compatible builds; no product activation or integrity lock prevents this.
+Reverse engineering for debugging modifications to LGPL components is permitted.
+
+Runtime dependency notices and build/package inventories accompany standalone
+releases. System-managed packages obtain shared libraries and their notices from
+the package manager instead. See those notices for component-specific terms.
+
+Qt source: https://download.qt.io/official_releases/qt/
+MSYS2 package recipes and source references: https://github.com/msys2/MINGW-packages
+Homebrew formulae and source references: https://github.com/Homebrew/homebrew-core
+
+Release publishers must preserve all applicable notices and provide any source
+or corresponding-source offers required by the exact distributed components.
+The presence of this file alone does not establish license compliance.

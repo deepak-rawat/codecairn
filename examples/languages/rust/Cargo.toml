@@ -1,0 +1,9 @@
+[package]
+name = "codecairn-counter-example"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "counter-demo"
+path = "main.rs"

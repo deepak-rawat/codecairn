@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <title>CodeCairn</title>
+  <desc>Three rounded lines in amber, mint, and ice on a midnight-blue background.</desc>
+  <rect width="100" height="100" rx="22" fill="#142438"/>
+  <path d="M44 29 H61" fill="none" stroke="#f1bb62" stroke-width="10" stroke-linecap="round"/>
+  <path d="M34 50 H67" fill="none" stroke="#68d4c4" stroke-width="10" stroke-linecap="round"/>
+  <path d="M23 71 H77" fill="none" stroke="#e6edf5" stroke-width="10" stroke-linecap="round"/>
+</svg>

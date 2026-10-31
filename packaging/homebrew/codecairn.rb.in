@@ -1,0 +1,59 @@
+class Codecairn < Formula
+  desc "Desktop source browser and editor"
+  homepage "https://github.com/deepak-rawat/codecairn"
+  url "@SOURCE_URL@"
+  version "@VERSION@"
+  sha256 "@SHA256@"
+  license "MIT"
+
+  depends_on :arch => :arm64
+  depends_on :macos => :tahoe
+  depends_on "cmake" => :build
+  depends_on "ninja" => :build
+  depends_on "qt"
+  depends_on "tree-sitter"
+  depends_on "sqlite"
+  depends_on "re2"
+  depends_on "llvm"
+
+  def install
+    prefixes = %w[qt tree-sitter sqlite re2 llvm].map { |name| Formula[name].opt_prefix.realpath }
+    cmake = Formula["cmake"].opt_bin/"cmake"
+    system cmake, "-S", ".", "-B", "build", "-G", "Ninja",
+           *std_cmake_args,
+           "-DCMAKE_MAKE_PROGRAM=#{Formula["ninja"].opt_bin}/ninja",
+           "-DCMAKE_PREFIX_PATH=#{prefixes.join(";")}",
+           "-DCMAKE_OSX_ARCHITECTURES=arm64",
+           "-DCMAKE_OSX_DEPLOYMENT_TARGET=26.0",
+           "-DCODECAIRN_BUNDLE_RUNTIME=OFF",
+           "-DCODECAIRN_ALLOW_DOWNLOADS=OFF",
+           "-DCODECAIRN_RELEASE=ON",
+           "-DBUILD_TESTING=ON"
+    system cmake, "--build", "build", "--target", "codecairn", "cairn", "launcher_tests",
+           "--parallel", Hardware::CPU.cores.to_s
+    ENV["QT_QPA_PLATFORM"] = "offscreen"
+    system Formula["cmake"].opt_bin/"ctest", "--test-dir", "build", "--output-on-failure",
+           "-R", "^(application_version|application_help|launcher|launcher_version|managed_runtime|packaging|release_work)$"
+    system cmake, "--install", "build"
+    system "/usr/bin/codesign", "--force", "--sign", "-", prefix/"codecairn.app"
+    system "/usr/bin/codesign", "--verify", "--deep", "--strict", prefix/"codecairn.app"
+    prefix.install "LICENSE"
+  end
+
+  def caveats
+    <<~EOS
+      Launch from a terminal with: cairn .
+      The app is installed at #{prefix}/codecairn.app.
+      This formula uses Homebrew-managed libraries and is not a portable app.
+    EOS
+  end
+
+  test do
+    ENV["QT_QPA_PLATFORM"] = "offscreen"
+    system "/usr/bin/codesign", "--verify", "--deep", "--strict", prefix/"codecairn.app"
+    assert_match "CodeCairn #{version}", shell_output("#{bin}/cairn --version")
+    assert_match "CodeCairn #{version}",
+                 shell_output("#{prefix}/codecairn.app/Contents/MacOS/codecairn --version")
+    system Formula["llvm"].opt_bin/"clangd", "--version"
+  end
+end

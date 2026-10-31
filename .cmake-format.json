@@ -1,0 +1,27 @@
+{
+  "format": {
+    "line_width": 100,
+    "tab_size": 4,
+    "max_pargs_hwrap": 3,
+    "dangle_parens": true
+  },
+  "markup": {
+    "enable_markup": false
+  },
+  "parse": {
+    "additional_commands": {
+      "codecairn_source": {
+        "pargs": "+"
+      },
+      "codecairn_grammar": {
+        "pargs": "+"
+      },
+      "codecairn_test": {
+        "pargs": "+"
+      },
+      "add_counter": {
+        "pargs": "+"
+      }
+    }
+  }
+}

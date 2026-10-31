@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "ui": {
+    "fontFamily": "",
+    "fontSizePx": 11,
+    "rowHeight": 14,
+    "bandHeight": 23,
+    "iconSize": 16,
+    "symbolIconSize": 12,
+    "splitterWidth": 5,
+    "scrollbarWidth": 16,
+    "treeIndent": 13
+  },
+  "editor": {
+    "fontFamily": "",
+    "fontSizePt": 8.25,
+    "declarationScale": 1.2,
+    "uniformSizes": false,
+    "showWhitespace": false,
+    "showLineNumbers": false,
+    "highlightCurrentLine": false,
+    "tabWidth": 4,
+    "indentWidth": 4,
+    "useTabs": false,
+    "extraAscent": 0,
+    "extraDescent": 0
+  },
+  "layout": {
+    "windowWidth": 1446,
+    "windowHeight": 742,
+    "columns": [252, 660, 524],
+    "rightPanes": [330, 320]
+  },
+  "behavior": {
+    "parseDebounceMs": 180,
+    "contextDebounceMs": 90,
+    "searchDebounceMs": 100,
+    "workspaceRefreshMinutes": 360
+  },
+  "panels": {
+    "outline": {"fontFamily": "", "fontSizePx": 0, "foreground": "", "background": "", "headers": false, "paths": true, "sizes": true},
+    "files": {"fontFamily": "", "fontSizePx": 0, "foreground": "", "background": "", "headers": true, "paths": true, "sizes": true},
+    "symbols": {"fontFamily": "", "fontSizePx": 0, "foreground": "", "background": "", "headers": true, "paths": true, "sizes": true}
+  },
+  "outline": {"members": true, "enumerators": true, "locals": false, "longFunctionLines": 50},
+  "context": {"tracking": "selected", "comments": false, "strings": false, "scale": 1.0},
+  "references": {
+    "semantic": true, "scope": 0, "declarations": true, "comments": false, "strings": false,
+    "search": {
+      "method": 0, "caseSensitive": true, "wholeWords": true, "comments": 0, "strings": false,
+      "skipInactive": false, "smartMatching": true, "contextLines": 3,
+      "variations": false, "fragments": false, "filePatterns": "",
+      "output": {"container": true, "file": true, "line": true, "text": true, "links": true, "relativePaths": true}
+    }
+  },
+  "searchProject": {
+    "semantic": false, "scope": 0, "declarations": true, "comments": true, "strings": true,
+    "search": {
+      "method": 2, "caseSensitive": false, "wholeWords": false, "comments": 1, "strings": true,
+      "skipInactive": false, "smartMatching": false, "contextLines": 3,
+      "variations": false, "fragments": false, "filePatterns": "",
+      "output": {"container": true, "file": true, "line": true, "text": true, "links": true, "relativePaths": true}
+    }
+  },
+  "colors": {
+    "source.background": "#202020",
+    "source.foreground": "#dedede",
+    "source.selectionBackground": "#0078d7",
+    "source.referenceSelection": "#50979e",
+    "source.additionalSelection": "#555555",
+    "source.caret": "#eeeeee",
+    "source.currentLine": "#292929",
+    "source.lineNumbers": "#888888",
+    "ui.background": "#3c3c3c",
+    "ui.foreground": "#dedede",
+    "ui.brightForeground": "#eeeeee",
+    "ui.panelBackground": "#333333",
+    "ui.border": "#535353",
+    "ui.strongBorder": "#777777",
+    "ui.activeBorder": "#999999",
+    "ui.inputBackground": "#606060",
+    "ui.selectionBackground": "#0078d7",
+    "ui.selectionForeground": "#ffffff",
+    "ui.headerBackground": "#4c4c4c",
+    "ui.headerBorder": "#666666",
+    "ui.tabBackground": "#454545",
+    "ui.tabForeground": "#dddddd",
+    "ui.tabBorder": "#555555",
+    "ui.selectedTab": "#747474",
+    "ui.hoverBackground": "#555555",
+    "ui.hoverBorder": "#929292",
+    "ui.checkedBorder": "#9b9b9b",
+    "ui.titleBackground": "#393939",
+    "ui.scrollbarTrack": "#414141",
+    "ui.scrollbarHandle": "#606060",
+    "ui.scrollbarBorder": "#707070",
+    "ui.branchLine": "#8b8b8b",
+    "ui.branchBorder": "#b0b0b0",
+    "ui.branchBackground": "#eeeeee",
+    "ui.branchGlyph": "#333333",
+    "menu.background": "#ededed",
+    "menu.popupBackground": "#eeeeee",
+    "menu.foreground": "#141414",
+    "menu.selection": "#b8d9f1",
+    "menu.border": "#808080",
+    "menu.disabled": "#888888",
+    "tooltip.background": "#ffffdf",
+    "tooltip.foreground": "#111111"
+  },
+  "syntax": {
+    "plain":        {"foreground": "#00b000", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "comment":      {"foreground": "#aaaaff", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "keyword":      {"foreground": "#ffffff", "background": "", "fontFamily": "", "scale": 1.0, "bold": true,  "italic": false},
+    "string":       {"foreground": "#d4cc72", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "number":       {"foreground": "#e04040", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "type":         {"foreground": "#ffff00", "background": "", "fontFamily": "", "scale": 1.0, "bold": true,  "italic": false},
+    "function":     {"foreground": "#ffffff", "background": "", "fontFamily": "", "scale": 1.0, "bold": true,  "italic": false},
+    "field":        {"foreground": "#00bb00", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": true},
+    "preprocessor": {"foreground": "#ffffff", "background": "", "fontFamily": "", "scale": 1.0, "bold": true,  "italic": false},
+    "operator":     {"foreground": "#00b000", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "typeReference":{"foreground": "#00c6c6", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "primitive":   {"foreground": "#009f00", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "parameter":   {"foreground": "#d09030", "background": "", "fontFamily": "", "scale": 1.0, "bold": true,  "italic": false},
+    "variable":    {"foreground": "#00a6df", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "variableDeclaration": {"foreground": "#00a6df", "background": "", "fontFamily": "", "scale": 1.0, "bold": true, "italic": false},
+    "constant":    {"foreground": "#e04040", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "functionReference": {"foreground": "#00bb00", "background": "", "fontFamily": "", "scale": 1.0, "bold": true, "italic": false},
+    "libraryFunction": {"foreground": "#dedede", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false},
+    "punctuation": {"foreground": "#d4cc72", "background": "", "fontFamily": "", "scale": 1.0, "bold": false, "italic": false}
+  }
+}

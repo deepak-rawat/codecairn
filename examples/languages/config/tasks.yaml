@@ -1,0 +1,6 @@
+defaults_file: defaults.yaml
+tasks:
+  build:
+    command: cmake --build build
+  test:
+    command: ctest --test-dir build

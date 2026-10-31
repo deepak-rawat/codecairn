@@ -1,0 +1,15 @@
+<RCC>
+    <qresource prefix="/">
+        <file>config/default-settings.json</file>
+    </qresource>
+    <qresource prefix="/icons">
+        <file alias="codecairn-16.png">assets/icons/codecairn-16.png</file>
+        <file alias="codecairn-24.png">assets/icons/codecairn-24.png</file>
+        <file alias="codecairn-32.png">assets/icons/codecairn-32.png</file>
+        <file alias="codecairn-48.png">assets/icons/codecairn-48.png</file>
+        <file alias="codecairn-64.png">assets/icons/codecairn-64.png</file>
+        <file alias="codecairn-128.png">assets/icons/codecairn-128.png</file>
+        <file alias="codecairn-256.png">assets/icons/codecairn-256.png</file>
+        <file alias="codecairn-512.png">assets/icons/codecairn-512.png</file>
+    </qresource>
+</RCC>

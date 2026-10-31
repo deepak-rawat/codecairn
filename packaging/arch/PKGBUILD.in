@@ -1,0 +1,29 @@
+pkgname=codecairn
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Desktop source browser and editor"
+arch=('x86_64')
+url="https://github.com/deepak-rawat/codecairn"
+license=('MIT')
+depends=('qt6-base>=6.5' 'qt6-5compat' 'tree-sitter>=0.25' 'sqlite' 're2' 'clang' 'llvm-libs')
+makedepends=('cmake' 'ninja')
+source=("@SOURCE_URL@")
+sha256sums=('@SHA256@')
+
+build() {
+    cmake -S "codecairn-${pkgver}" -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCODECAIRN_BUNDLE_RUNTIME=OFF -DCODECAIRN_ALLOW_DOWNLOADS=OFF \
+        -DCODECAIRN_RELEASE=ON -DBUILD_TESTING=ON
+    cmake --build build --target codecairn cairn launcher_tests --parallel "$(nproc)"
+}
+
+check() {
+    QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure \
+        -R '^(application_version|application_help|launcher|launcher_version|managed_runtime|deployment_paths|packaging)$'
+}
+
+package() {
+    DESTDIR="${pkgdir}" cmake --install build
+    install -Dm644 "codecairn-${pkgver}/LICENSE" "${pkgdir}/usr/share/licenses/codecairn/LICENSE"
+}

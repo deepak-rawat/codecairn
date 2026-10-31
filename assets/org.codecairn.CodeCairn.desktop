@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=CodeCairn
+GenericName=Source Code Editor
+Comment=Find your way through code.
+Exec=codecairn %F
+Icon=codecairn
+Terminal=false
+Categories=Development;IDE;TextEditor;
+StartupNotify=true
+StartupWMClass=CodeCairn

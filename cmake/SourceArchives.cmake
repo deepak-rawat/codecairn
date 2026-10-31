@@ -1,0 +1,98 @@
+codecairn_source(
+    scintilla
+    CODECAIRN_SCINTILLA_SOURCE_DIR
+    https://www.scintilla.org/scintilla568.tgz
+    ca7fda23125289bbf473afd6fcd4959f65e828bff1a8ae60c603b34dfcb3a777
+    include/Scintilla.h
+    qt/ScintillaEditBase/ScintillaEditBase.cpp
+    License.txt
+)
+codecairn_source(
+    tree_sitter_c
+    CODECAIRN_C_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-c/tar.gz/b780e47fc780ddc8da13afa35a3f4ed5c157823d
+    dc3979e40fce678c27273ba8ab93b48b5acd6b91d1dfde6a4451222d366d689f
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_cpp
+    CODECAIRN_CPP_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-cpp/tar.gz/v0.23.4
+    7a2c55afe3028f4105f25762ea58cc16537d1f5a1dcd9cca90410b3cd5d46051
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_python
+    CODECAIRN_PYTHON_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-python/tar.gz/293fdc02038ee2bf0e2e206711b69c90ac0d413f
+    b74d8ba6730535354175436208fe1452fd464f235263959ca40b8bf32cb23dc6
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_bash
+    CODECAIRN_BASH_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-bash/tar.gz/a06c2e4415e9bc0346c6b86d401879ffb44058f7
+    879e8951ea2cc82455407e3eda0293319657ec53e83191e0fb5a67430d10d804
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_javascript
+    CODECAIRN_JAVASCRIPT_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-javascript/tar.gz/44c892e0be055ac465d5eeddae6d3e194424e7de
+    a13fa28148e41bb939b2c2b8cd73c4b4295273b70cbac55a7a589020f52b9611
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_go
+    CODECAIRN_GO_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-go/tar.gz/1547678a9da59885853f5f5cc8a99cc203fa2e2c
+    a71543d63f82b917457f47a3f6dbecd8087592fabc49a757da82c3e00c0e93de
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_rust
+    CODECAIRN_RUST_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-rust/tar.gz/77a3747266f4d621d0757825e6b11edcbf991ca5
+    dee82ddfd01bfc3a8ed201cc03b56448107d3217a4b3a7a8fc7fa6bc32b2405b
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_json
+    CODECAIRN_JSON_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-json/tar.gz/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24
+    9e4a7391cc3a9f4b87b382956dd01bc1f99fb1afcdc86b2c152c8a1bd14444d5
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_yaml
+    CODECAIRN_YAML_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter-grammars/tree-sitter-yaml/tar.gz/7708026449bed86239b1cd5bce6e3c34dbca6415
+    6e8cb69a4f7a05478b1143d38bd10df2163170a6678df1848f3be89c8b7c5f3b
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_cmake
+    CODECAIRN_CMAKE_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/uyha/tree-sitter-cmake/tar.gz/a3ec2b2144daf7132e7ee824d8cab9610523d10f
+    06abc122b27af1a04fc4269705ec9c296c0457a796ecd7177f66deff5574432e
+    src/parser.c
+    LICENSE
+)
+codecairn_source(
+    tree_sitter_typescript
+    CODECAIRN_TYPESCRIPT_GRAMMAR_SOURCE_DIR
+    https://codeload.github.com/tree-sitter/tree-sitter-typescript/tar.gz/f975a621f4e7f532fe322e13c4f79495e0a7b2e7
+    4de2e82e557810eecb93cb3b31fbb3bd28ba4c91ba9a6c6164bcaa074125b7b5
+    typescript/src/parser.c
+    tsx/src/parser.c
+    LICENSE
+)

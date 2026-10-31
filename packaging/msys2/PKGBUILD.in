@@ -1,0 +1,45 @@
+_realname=codecairn
+pkgbase="mingw-w64-${_realname}"
+pkgname="${MINGW_PACKAGE_PREFIX}-${_realname}"
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc="Desktop source browser and editor (Windows 11 x64)"
+arch=('any')
+mingw_arch=('ucrt64')
+url="https://github.com/deepak-rawat/codecairn"
+license=('spdx:MIT')
+depends=("${MINGW_PACKAGE_PREFIX}-gcc-libs"
+         "${MINGW_PACKAGE_PREFIX}-qt6-base"
+         "${MINGW_PACKAGE_PREFIX}-qt6-5compat"
+         "${MINGW_PACKAGE_PREFIX}-libtree-sitter"
+         "${MINGW_PACKAGE_PREFIX}-sqlite3"
+         "${MINGW_PACKAGE_PREFIX}-re2"
+         "${MINGW_PACKAGE_PREFIX}-clang"
+         "${MINGW_PACKAGE_PREFIX}-clang-tools-extra")
+makedepends=("${MINGW_PACKAGE_PREFIX}-cc"
+             "${MINGW_PACKAGE_PREFIX}-cmake"
+             "${MINGW_PACKAGE_PREFIX}-ninja")
+source=("@SOURCE_URL@")
+sha256sums=('@SHA256@')
+
+build() {
+    [[ ${MSYSTEM} == UCRT64 ]] || { echo "Use MSYS2 UCRT64" >&2; return 1; }
+    MSYS2_ARG_CONV_EXCL="-DCMAKE_INSTALL_PREFIX=" \
+        "${MINGW_PREFIX}/bin/cmake" -S "${srcdir}/codecairn-${pkgver}" -B "${srcdir}/build" -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
+        -DCMAKE_INSTALL_PREFIX="${MINGW_PREFIX}" -DCODECAIRN_BUNDLE_RUNTIME=OFF \
+        -DCODECAIRN_ALLOW_DOWNLOADS=OFF -DCODECAIRN_RELEASE=ON -DBUILD_TESTING=ON
+    "${MINGW_PREFIX}/bin/cmake" --build "${srcdir}/build" --target codecairn cairn launcher_tests \
+        --parallel "$(nproc)"
+}
+
+check() {
+    "${MINGW_PREFIX}/bin/ctest" --test-dir "${srcdir}/build" --output-on-failure \
+        -R '^(application_version|application_help|launcher|launcher_version|managed_runtime|packaging)$'
+}
+
+package() {
+    DESTDIR="${pkgdir}" "${MINGW_PREFIX}/bin/cmake" --install "${srcdir}/build"
+    install -Dm644 "${srcdir}/codecairn-${pkgver}/LICENSE" \
+        "${pkgdir}${MINGW_PREFIX}/share/licenses/${_realname}/LICENSE"
+}

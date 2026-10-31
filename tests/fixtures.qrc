@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/fixtures">
+        <file alias="typography.cpp">fixtures/typography.cpp</file>
+        <file alias="typography.h">fixtures/typography.h</file>
+    </qresource>
+</RCC>
