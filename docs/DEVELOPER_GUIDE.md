@@ -698,6 +698,12 @@ with a matching target, for example `-DCMAKE_OSX_DEPLOYMENT_TARGET=27.0`.
 This changes only the build cache, not the default macOS 26 release target.
 Release/CI dependencies must themselves support macOS 26.
 
+In VS Code CMake Tools, kit mode uses `cmake.configureSettings` in local
+`.vscode/settings.json` for dependency prefixes. Preset mode uses
+`CMakeUserPresets.json`; set `cmake.useCMakePresets` to `always` if there is no
+shared `CMakePresets.json`. Both local configuration files are Git-ignored;
+do not commit machine-specific paths.
+
 ### Dependency resolution
 
 | Input | Provider |
