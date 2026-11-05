@@ -3,12 +3,17 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 add_test(NAME application_version COMMAND codecairn --version)
 set_tests_properties(
     application_version
-    PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-               PASS_REGULAR_EXPRESSION "CodeCairn ${PROJECT_VERSION}"
-               TIMEOUT 20
+    PROPERTIES ENVIRONMENT
+               "QT_QPA_PLATFORM=offscreen"
+               PASS_REGULAR_EXPRESSION
+               "CodeCairn ${PROJECT_VERSION}"
+               TIMEOUT
+               20
 )
 add_test(NAME launcher_version COMMAND cairn --version)
-set_tests_properties(launcher_version PROPERTIES PASS_REGULAR_EXPRESSION "CodeCairn ${PROJECT_VERSION}")
+set_tests_properties(
+    launcher_version PROPERTIES PASS_REGULAR_EXPRESSION "CodeCairn ${PROJECT_VERSION}"
+)
 add_executable(launcher_fixture LauncherFixture.cpp)
 target_link_libraries(launcher_fixture PRIVATE Qt6::Core)
 set_target_properties(launcher_fixture PROPERTIES MACOSX_BUNDLE FALSE WIN32_EXECUTABLE FALSE)
@@ -16,42 +21,69 @@ qt_add_executable(launcher_tests LauncherTests.cpp)
 target_link_libraries(launcher_tests PRIVATE Qt6::Test)
 set_target_properties(launcher_tests PROPERTIES MACOSX_BUNDLE FALSE WIN32_EXECUTABLE FALSE)
 add_dependencies(launcher_tests cairn launcher_fixture)
-add_test(NAME launcher COMMAND launcher_tests "$<TARGET_FILE:cairn>" "$<TARGET_FILE:launcher_fixture>")
+add_test(NAME launcher COMMAND launcher_tests "$<TARGET_FILE:cairn>"
+                               "$<TARGET_FILE:launcher_fixture>"
+)
 set_tests_properties(launcher PROPERTIES TIMEOUT 40)
 add_test(NAME application_help COMMAND codecairn --help)
 set_tests_properties(
     application_help
-    PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-               PASS_REGULAR_EXPRESSION "CodeCairn - Find your way through code\\."
-               TIMEOUT 20
+    PROPERTIES ENVIRONMENT
+               "QT_QPA_PLATFORM=offscreen"
+               PASS_REGULAR_EXPRESSION
+               "CodeCairn - Find your way through code\\."
+               TIMEOUT
+               20
 )
 
 add_test(
     NAME deployment_paths
     COMMAND
         "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-        "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/deployment-paths"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/DeploymentPathsTests.cmake"
+        "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/deployment-paths" -P
+        "${CMAKE_CURRENT_SOURCE_DIR}/DeploymentPathsTests.cmake"
 )
 add_test(
     NAME packaging
-    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-            "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/packaging"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/PackagingTests.cmake"
+    COMMAND
+        "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+        "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/packaging" -P
+        "${CMAKE_CURRENT_SOURCE_DIR}/PackagingTests.cmake"
 )
-add_test(
-    NAME release_work
-    COMMAND "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-            "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/release-work"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/ReleaseWorkTests.cmake"
-)
+foreach(spec "CPack|cpack" "SourcePackage|source_package" "ReleaseAssets|release_assets")
+    string(
+        REPLACE "|"
+                ";"
+                parts
+                "${spec}"
+    )
+    list(
+        GET
+        parts
+        0
+        suite
+    )
+    list(
+        GET
+        parts
+        1
+        name
+    )
+    add_test(
+        NAME "${name}"
+        COMMAND
+            "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
+            "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/${name}" -P
+            "${CMAKE_CURRENT_SOURCE_DIR}/${suite}Tests.cmake"
+    )
+endforeach()
 if(NOT CODECAIRN_BUNDLE_RUNTIME)
     add_test(
         NAME managed_runtime
         COMMAND
             "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:codecairn>"
-            "-DRUNTIME_ROOT=${PROJECT_BINARY_DIR}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/VerifyManagedRuntime.cmake"
+            "-DRUNTIME_ROOT=${PROJECT_BINARY_DIR}" -P
+            "${CMAKE_CURRENT_SOURCE_DIR}/VerifyManagedRuntime.cmake"
     )
 endif()
 
@@ -70,7 +102,9 @@ function(
                    RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
     )
     if(WIN32)
-        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
+        set_target_properties(
+            ${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin"
+        )
     endif()
     if(CODECAIRN_CLANGD)
         target_compile_definitions(${target} PRIVATE CODECAIRN_TEST_CLANGD="${CODECAIRN_CLANGD}")
@@ -157,7 +191,9 @@ codecairn_test(
 )
 codecairn_test(reference_tests ReferenceTests.cpp references)
 codecairn_test(index_parity_tests IndexParityTests.cpp index_parity)
-codecairn_test(reference_candidate_index_tests ReferenceCandidateIndexTests.cpp reference_candidate_index)
+codecairn_test(
+    reference_candidate_index_tests ReferenceCandidateIndexTests.cpp reference_candidate_index
+)
 codecairn_test(analysis_parity_tests AnalysisParityTests.cpp analysis_parity)
 codecairn_test(
     codecairn_benchmarks

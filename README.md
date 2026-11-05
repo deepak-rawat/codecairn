@@ -78,3 +78,10 @@ Windows has local runtime-test coverage; Linux/macOS still need native certifica
 
 See the [user guide](docs/USER_GUIDE.md) for usage and troubleshooting, and the
 [developer guide](docs/DEVELOPER_GUIDE.md#build-system) for build options and offline builds.
+
+## Packages and releases
+
+See the [release guide](docs/RELEASING.md) for CPack standalone Windows ZIP/macOS
+DMG packages, pinned source archives, and source-only Homebrew/MSYS2/Arch recipes.
+GitHub Actions builds and tests packages before creating a draft release;
+publication remains manual.

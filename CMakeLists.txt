@@ -3,8 +3,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
     message(FATAL_ERROR "Use an out-of-source build: cmake -S . -B build")
 endif()
 if(CMAKE_HOST_APPLE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "26.0" CACHE STRING "Minimum supported macOS")
-    set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "Supported macOS architecture")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET
+        "26.0"
+        CACHE STRING "Minimum supported macOS"
+    )
+    set(CMAKE_OSX_ARCHITECTURES
+        "arm64"
+        CACHE STRING "Supported macOS architecture"
+    )
 endif()
 
 project(
@@ -27,8 +33,14 @@ endif()
 option(CODECAIRN_BUNDLE_RUNTIME "Deploy runtime dependencies alongside CodeCairn" ON)
 option(CODECAIRN_RELEASE "Require complete release runtime dependencies" OFF)
 if(APPLE AND CODECAIRN_RELEASE)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "26.0" CACHE STRING "" FORCE)
-    set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "" FORCE)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET
+        "26.0"
+        CACHE STRING "" FORCE
+    )
+    set(CMAKE_OSX_ARCHITECTURES
+        "arm64"
+        CACHE STRING "" FORCE
+    )
 endif()
 include(cmake/Dependencies.cmake)
 if(CODECAIRN_RELEASE AND NOT CODECAIRN_CLANGD)
@@ -104,16 +116,17 @@ target_link_libraries(
 )
 target_compile_options(
     codecairn_core PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic>"
-                            "$<$<CXX_COMPILER_ID:MSVC>:/W4>"
+                           "$<$<CXX_COMPILER_ID:MSVC>:/W4>"
 )
 get_filename_component(codecairn_libclang_directory "${LIBCLANG_LIBRARY}" DIRECTORY)
 set(codecairn_clang_resource_root "${codecairn_libclang_directory}/clang")
 target_compile_definitions(
-    codecairn_core PRIVATE CODECAIRN_CLANG_RESOURCE_ROOT="${codecairn_clang_resource_root}"
-                            CODECAIRN_BUNDLE_RUNTIME=$<BOOL:${CODECAIRN_BUNDLE_RUNTIME}>
-                            CODECAIRN_BUILD_CONFIGURATION="$<CONFIG>"
-                            CODECAIRN_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
-                            CODECAIRN_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
+    codecairn_core
+    PRIVATE CODECAIRN_CLANG_RESOURCE_ROOT="${codecairn_clang_resource_root}"
+            CODECAIRN_BUNDLE_RUNTIME=$<BOOL:${CODECAIRN_BUNDLE_RUNTIME}>
+            CODECAIRN_BUILD_CONFIGURATION="$<CONFIG>"
+            CODECAIRN_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
+            CODECAIRN_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
 )
 if(CODECAIRN_CLANGD)
     target_compile_definitions(
@@ -132,8 +145,8 @@ if(WIN32)
     target_sources(codecairn PRIVATE assets/icons/codecairn.rc)
     target_include_directories(codecairn PRIVATE "${PROJECT_SOURCE_DIR}/assets/icons")
     set_source_files_properties(
-        assets/icons/codecairn.rc
-        PROPERTIES OBJECT_DEPENDS "${PROJECT_SOURCE_DIR}/assets/icons/codecairn.ico"
+        assets/icons/codecairn.rc PROPERTIES OBJECT_DEPENDS
+                                             "${PROJECT_SOURCE_DIR}/assets/icons/codecairn.ico"
     )
     set_target_properties(codecairn PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
     set_target_properties(cairn PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin")
@@ -143,8 +156,9 @@ elseif(APPLE)
         assets/icons/codecairn.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources
     )
     set_target_properties(
-        codecairn PROPERTIES MACOSX_BUNDLE_ICON_FILE codecairn.icns
-                            MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/cmake/Info.plist.in"
+        codecairn
+        PROPERTIES MACOSX_BUNDLE_ICON_FILE codecairn.icns
+                   MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/packaging/Info.plist.in"
     )
 endif()
 set_target_properties(
@@ -156,7 +170,10 @@ set_target_properties(
                MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
                MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
-if(UNIX AND NOT APPLE AND CODECAIRN_BUNDLE_RUNTIME)
+if(UNIX
+   AND NOT APPLE
+   AND CODECAIRN_BUNDLE_RUNTIME
+)
     set_target_properties(codecairn PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 endif()
 
@@ -169,16 +186,34 @@ install(
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
-install(TARGETS cairn RUNTIME DESTINATION bin)
 if(APPLE)
     install(PROGRAMS "$<TARGET_FILE:cairn>" DESTINATION codecairn.app/Contents/MacOS)
+    if(NOT CODECAIRN_BUNDLE_RUNTIME)
+        install(TARGETS cairn RUNTIME DESTINATION bin)
+    endif()
+else()
+    install(TARGETS cairn RUNTIME DESTINATION bin)
 endif()
 install(FILES config/default-settings.json DESTINATION "${CODECAIRN_DATA_DIRECTORY}")
-install(FILES LICENSE DESTINATION "${CODECAIRN_DATA_DIRECTORY}/licenses" RENAME CodeCairn.txt)
+install(
+    FILES LICENSE
+    DESTINATION "${CODECAIRN_DATA_DIRECTORY}/licenses"
+    RENAME CodeCairn.txt
+)
 if(UNIX AND NOT APPLE)
     install(FILES assets/org.codecairn.CodeCairn.desktop DESTINATION share/applications)
     install(FILES assets/icons/codecairn.svg DESTINATION share/icons/hicolor/scalable/apps)
-    foreach(size 16 24 32 48 64 128 256 512)
+    foreach(
+        size
+        16
+        24
+        32
+        48
+        64
+        128
+        256
+        512
+    )
         install(
             FILES "assets/icons/codecairn-${size}.png"
             DESTINATION "share/icons/hicolor/${size}x${size}/apps"
@@ -186,9 +221,11 @@ if(UNIX AND NOT APPLE)
         )
     endforeach()
 endif()
-include(cmake/Deployment.cmake)
 install(
     FILES "${scintilla_SOURCE_DIR}/License.txt"
     DESTINATION "${CODECAIRN_DATA_DIRECTORY}/licenses"
     RENAME Scintilla.txt
 )
+install(FILES packaging/THIRD-PARTY-NOTICES.txt DESTINATION "${CODECAIRN_DATA_DIRECTORY}/licenses")
+include(packaging/Deployment.cmake)
+include(packaging/CPack.cmake)

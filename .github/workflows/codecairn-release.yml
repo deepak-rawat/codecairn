@@ -1,0 +1,98 @@
+name: CodeCairn release
+
+on:
+  push:
+    tags: ["codecairn-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag, such as codecairn-v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codecairn-release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate tag and source version
+        id: version
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^codecairn-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a codecairn-vMAJOR.MINOR.PATCH tag"
+            exit 1
+          fi
+          git show-ref --verify "refs/tags/$TAG"
+          sha=$(git rev-parse "refs/tags/$TAG^{commit}")
+          git checkout --detach "$sha"
+          version=$(sed -n 's/^    VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt)
+          if [[ "$TAG" != "codecairn-v$version" ]]; then
+            echo "::error::Tag does not match CMake version $version"
+            exit 1
+          fi
+          printf 'tag=%s\nsha=%s\n' "$TAG" "$sha" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: validate
+    uses: ./.github/workflows/codecairn-build.yml
+    with:
+      source-ref: ${{ needs.validate.outputs.sha }}
+      release-tag: ${{ needs.validate.outputs.tag }}
+
+  release:
+    needs: [validate, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.validate.outputs.tag }}
+      SOURCE_SHA: ${{ needs.validate.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: codecairn-*
+          path: release-artifacts
+      - name: Verify and assemble release assets
+        run: |
+          cmake "-DARTIFACTS=$PWD/release-artifacts" "-DOUTPUT=$PWD/release-assets" \
+            "-DRELEASE_TAG=$TAG" -P packaging/PrepareReleaseAssets.cmake
+          cd release-assets
+          sha256sum --check SHA256SUMS
+      - name: Create verified draft release
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/tags/$TAG"
+          if [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" != "$SOURCE_SHA" ]]; then
+            echo "::error::Release tag moved after validation"
+            exit 1
+          fi
+          gh release create "$TAG" release-assets/* --verify-tag --draft \
+            --title "CodeCairn ${TAG#codecairn-v}" \
+            --notes "Source revision: $SOURCE_SHA. Windows 11 x64 UCRT64 ZIP; macOS 26+ ARM64 DMG (ad-hoc signed, not notarized); Arch and MSYS2 managed packages; pinned sources and source-only Homebrew/native recipes. Publish manually only after native installation and license verification. Public recipe URLs work after publication."
+          if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != true ]]; then
+            echo "::error::Expected the release to remain a draft"
+            exit 1
+          fi
+          url=$(gh release view "$TAG" --json url --jq .url)
+          printf 'Draft release: %s\n\nVerify installation and assets before publishing manually.\n' \
+            "$url" >> "$GITHUB_STEP_SUMMARY"

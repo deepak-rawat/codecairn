@@ -1,0 +1,122 @@
+set(prefix "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}")
+set(app "${prefix}/codecairn.app")
+set(resources "${prefix}")
+if(@APPLE@)
+    set(resources "${app}/Contents/Resources")
+endif()
+
+if(@CODECAIRN_RELEASE@)
+    include("@PROJECT_SOURCE_DIR@/packaging/ReleaseCommon.cmake")
+    if(DIRTY)
+        message(FATAL_ERROR "Release packages require clean, committed sources.")
+    endif()
+    file(
+        WRITE "${resources}/BUILD-MANIFEST.txt"
+        "CodeCairn ${VERSION}\nrevision=${REVISION}\ndirty=${DIRTY}\n"
+        "system=@CMAKE_SYSTEM_NAME@\narchitecture=@CMAKE_SYSTEM_PROCESSOR@\n"
+        "compiler=@CMAKE_CXX_COMPILER_ID@ @CMAKE_CXX_COMPILER_VERSION@\n"
+        "cmake=@CMAKE_VERSION@\n"
+    )
+    if(@WIN32@)
+        find_program(PACMAN pacman REQUIRED)
+        execute_process(
+            COMMAND "${PACMAN}" -Q OUTPUT_FILE "${resources}/DEPENDENCIES.txt"
+                                               COMMAND_ERROR_IS_FATAL ANY
+        )
+        set(license_root "@CMAKE_CXX_COMPILER@")
+        get_filename_component(license_root "${license_root}" DIRECTORY)
+        set(license_root "${license_root}/../share/licenses")
+        if(NOT EXISTS "${license_root}/qt6-base/LGPL-3.0-only.txt")
+            message(FATAL_ERROR "MSYS2 dependency license texts missing: ${license_root}")
+        endif()
+        file(COPY "${license_root}/" DESTINATION "${resources}/share/codecairn/licenses/runtime")
+    elseif(@APPLE@)
+        set(BREW "@CODECAIRN_BREW@")
+        execute_process(
+            COMMAND "${BREW}" list --versions OUTPUT_FILE "${resources}/DEPENDENCIES.txt"
+                                                          COMMAND_ERROR_IS_FATAL ANY
+        )
+        execute_process(
+            COMMAND "${BREW}" info --json=v2 --installed
+            OUTPUT_FILE "${resources}/HOMEBREW-RECEIPTS.json" COMMAND_ERROR_IS_FATAL ANY
+        )
+        file(STRINGS "${resources}/RUNTIME-SOURCES.txt" runtime_sources)
+        set(dependencies llvm)
+        foreach(library IN LISTS runtime_sources)
+            file(REAL_PATH "${library}" library)
+            if(library MATCHES "/Cellar/([^/]+)/")
+                list(APPEND dependencies "${CMAKE_MATCH_1}")
+            elseif(
+                NOT
+                library
+                MATCHES
+                "^/System/|^/usr/lib/"
+            )
+                message(FATAL_ERROR "Cannot identify runtime dependency owner: ${library}")
+            endif()
+        endforeach()
+        list(REMOVE_DUPLICATES dependencies)
+        include("@PROJECT_SOURCE_DIR@/packaging/HomebrewNotices.cmake")
+        foreach(package IN LISTS dependencies)
+            execute_process(
+                COMMAND "${BREW}" --prefix "${package}"
+                OUTPUT_VARIABLE dependency_prefix
+                OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
+            )
+            file(
+                GLOB
+                notices
+                "${dependency_prefix}/LICENSE*"
+                "${dependency_prefix}/COPYING*"
+                "${dependency_prefix}/share/licenses/*"
+                "${dependency_prefix}/share/qtbase/LICENSES/*"
+                "${dependency_prefix}/share/doc/${package}/*"
+                "${dependency_prefix}/share/qt/LICENSES/*"
+            )
+            set(destination "${resources}/share/codecairn/licenses/runtime/${package}")
+            if(notices)
+                file(COPY ${notices} DESTINATION "${destination}")
+            else()
+                collect_source_notices(
+                    "${package}"
+                    "${dependency_prefix}"
+                    "${destination}"
+                    "@PROJECT_BINARY_DIR@/source-notice-cache"
+                )
+            endif()
+        endforeach()
+    endif()
+endif()
+
+if(@APPLE@)
+    file(
+        GLOB_RECURSE binaries
+        LIST_DIRECTORIES FALSE
+        "${app}/Contents/MacOS/*" "${app}/Contents/Frameworks/*" "${app}/Contents/PlugIns/*"
+    )
+    foreach(binary IN LISTS binaries)
+        if(IS_DIRECTORY "${binary}")
+            continue()
+        endif()
+        execute_process(
+            COMMAND otool -L "${binary}"
+            RESULT_VARIABLE result
+            OUTPUT_VARIABLE libraries
+            ERROR_VARIABLE error
+        )
+        if(result EQUAL 0)
+            if(libraries MATCHES "/opt/homebrew/|/usr/local/|/Cellar/")
+                message(FATAL_ERROR "Standalone app links to Homebrew: ${binary}\n${libraries}")
+            endif()
+        elseif(
+            NOT
+            error
+            MATCHES
+            "not an object file|is not an object file"
+        )
+            message(FATAL_ERROR "Cannot inspect ${binary}: ${error}")
+        endif()
+    endforeach()
+    execute_process(COMMAND codesign --force --deep --sign - "${app}" COMMAND_ERROR_IS_FATAL ANY)
+    execute_process(COMMAND codesign --verify --deep --strict "${app}" COMMAND_ERROR_IS_FATAL ANY)
+endif()

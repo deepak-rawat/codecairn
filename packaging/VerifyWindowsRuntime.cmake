@@ -89,14 +89,42 @@ if(NOT
 )
     message(FATAL_ERROR "Native launch without MSYS2 PATH failed (${result}): ${output}\n${error}")
 endif()
-if(NOT output MATCHES "^CodeCairn [0-9]+\\.[0-9]+\\.[0-9]+")
+if(NOT
+   output
+   MATCHES
+   "^CodeCairn [0-9]+\\.[0-9]+\\.[0-9]+"
+)
     message(FATAL_ERROR "Unexpected application identity: ${output}\n${error}")
 endif()
 string(STRIP "${output}" identity)
-if(DEFINED EXPECTED_VERSION AND NOT identity STREQUAL "CodeCairn ${EXPECTED_VERSION}")
+if(DEFINED EXPECTED_VERSION
+   AND NOT
+       identity
+       STREQUAL
+       "CodeCairn ${EXPECTED_VERSION}"
+)
     message(FATAL_ERROR "Expected CodeCairn ${EXPECTED_VERSION}, got ${identity}")
 endif()
 message(STATUS "Native Windows startup and dependency closure verified without MSYS2 PATH.")
+execute_process(
+    COMMAND "${directory}/cairn.exe" --version
+    TIMEOUT 20
+    RESULT_VARIABLE launcher_result
+    OUTPUT_VARIABLE launcher_output
+    ERROR_VARIABLE launcher_error
+)
+string(STRIP "${launcher_output}" launcher_output)
+if(NOT
+   launcher_result
+   EQUAL
+   0
+   OR NOT
+      launcher_output
+      STREQUAL
+      identity
+)
+    message(FATAL_ERROR "Packaged launcher failed: ${launcher_output}\n${launcher_error}")
+endif()
 if(EXISTS "${directory}/clangd.exe")
     execute_process(
         COMMAND "${directory}/clangd.exe" --version
@@ -119,15 +147,13 @@ if(EXISTS "${directory}/clangd.exe")
     file(REAL_PATH "${TEST_DIRECTORY}" check_directory)
     set(check_source "${check_directory}/resource-check.c")
     file(WRITE "${check_source}" "#include <stddef.h>\nsize_t value;\n")
-    file(
-        WRITE "${check_directory}/compile_commands.json"
-        "[{\"directory\":\"${check_directory}\",\"file\":\"${check_source}\","
-        "\"arguments\":[\"clang\",\"-fsyntax-only\",\"${check_source}\"]}]"
+    file(WRITE "${check_directory}/compile_commands.json"
+         "[{\"directory\":\"${check_directory}\",\"file\":\"${check_source}\","
+         "\"arguments\":[\"clang\",\"-fsyntax-only\",\"${check_source}\"]}]"
     )
     execute_process(
-        COMMAND
-            "${directory}/clangd.exe" "--check=${check_source}"
-            "--compile-commands-dir=${check_directory}" --enable-config=false --log=verbose
+        COMMAND "${directory}/clangd.exe" "--check=${check_source}"
+                "--compile-commands-dir=${check_directory}" --enable-config=false --log=verbose
         TIMEOUT 30
         RESULT_VARIABLE check_result
         OUTPUT_VARIABLE check_output
@@ -135,7 +161,15 @@ if(EXISTS "${directory}/clangd.exe")
     )
     file(REAL_PATH "${CLANG_RESOURCE_DESTINATION}" resource_root)
     string(FIND "${check_output}${check_error}" "-resource-dir=${resource_root}/" resource_position)
-    if(NOT check_result EQUAL 0 OR resource_position EQUAL -1)
-        message(FATAL_ERROR "Packaged clangd did not use deployed resource headers: ${check_output}\n${check_error}")
+    if(NOT
+       check_result
+       EQUAL
+       0
+       OR resource_position EQUAL -1
+    )
+        message(
+            FATAL_ERROR
+                "Packaged clangd did not use deployed resource headers: ${check_output}\n${check_error}"
+        )
     endif()
 endif()

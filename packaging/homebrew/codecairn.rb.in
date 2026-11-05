@@ -33,7 +33,7 @@ class Codecairn < Formula
            "--parallel", Hardware::CPU.cores.to_s
     ENV["QT_QPA_PLATFORM"] = "offscreen"
     system Formula["cmake"].opt_bin/"ctest", "--test-dir", "build", "--output-on-failure",
-           "-R", "^(application_version|application_help|launcher|launcher_version|managed_runtime|packaging|release_work)$"
+           "-R", "^(application_version|application_help|launcher|launcher_version|managed_runtime|packaging)$"
     system cmake, "--install", "build"
     system "/usr/bin/codesign", "--force", "--sign", "-", prefix/"codecairn.app"
     system "/usr/bin/codesign", "--verify", "--deep", "--strict", prefix/"codecairn.app"

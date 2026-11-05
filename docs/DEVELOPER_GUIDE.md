@@ -685,7 +685,8 @@ do not run a Tree-sitter generator or qmake.
 | [CMakeLists.txt](../CMakeLists.txt) | Application/core targets and install rules |
 | [Dependencies.cmake](../cmake/Dependencies.cmake) | System/source providers, ABI probe, Scintilla |
 | [LanguageGrammars.cmake](../cmake/LanguageGrammars.cmake) | Grammar pins, parser targets, licenses |
-| [Deployment.cmake](../cmake/Deployment.cmake) | Platform deployment registration |
+| [Deployment.cmake](../packaging/Deployment.cmake) | Platform deployment registration |
+| [CPack.cmake](../packaging/CPack.cmake) | Standalone generators, names, checksums, metadata hook |
 | [tests/CMakeLists.txt](../tests/CMakeLists.txt) | QtTest setup and CTest registration |
 
 Configuration generates build rules; building compiles/links; tests exercise
@@ -763,13 +764,14 @@ CODECAIRN_ALLOW_DOWNLOADS and clear overrides.
 ### Release builds
 
 Version 0.1.0 targets Windows 11 x64, macOS 26+ ARM64, and Arch Linux x64.
-Use the [release guide](RELEASING.md) for reproducible staging, native package
-recipes, the `cairn` launcher contract, CI, and publication gates. The source
+Use the [release guide](RELEASING.md) for CPack packages, native package recipes,
+the `cairn` launcher contract, CI, and publication gates. The source
 archive includes hash-pinned source dependencies for offline package builds;
 its shared pin manifest is [SourceArchives.cmake](../cmake/SourceArchives.cmake).
 CodeCairn's own code is MIT licensed; dependency terms remain separate.
 
-Use a separate directory and the README's platform-specific compiler/prefix options:
+Use a separate directory and the README's platform-specific compiler/prefix options.
+This example stages a development installation, not a release package:
 
 ```sh
 cmake -S . -B build/release -G Ninja \
@@ -794,7 +796,7 @@ not installation or dependency acquisition. Use a fresh build directory for OFF.
 | macOS | Builds the app bundle | macdeployqt gathers GUI, launcher, and clangd dependencies |
 | Linux | Builds the executable | Qt deployment API and executable-relative library search |
 
-[DeployWindows.cmake](../cmake/DeployWindows.cmake) runs windeployqt, copies optional
+[DeployWindows.cmake](../packaging/DeployWindows.cmake) runs windeployqt, copies optional
 clangd/resource headers, scans transitive executable/plugin dependencies with
 objdump, copies non-system DLLs, and writes qt.conf. Unresolved dependencies are
 errors; deployed/toolchain conflicts prefer the active toolchain prefix.
@@ -807,23 +809,23 @@ Windows executables/DLLs live in `build/bin`, with Clang headers in sibling
 builds use configured toolchain headers. No deployment writes above the build.
 
 Installation is explicit; destinations remain prefix-relative for `--prefix`
-and DESTDIR. [InstallWindows.cmake.in](../cmake/InstallWindows.cmake.in) supplies the
-install adapter. [VerifyWindowsRuntime.cmake](../cmake/VerifyWindowsRuntime.cmake)
+and DESTDIR. [InstallWindows.cmake.in](../packaging/InstallWindows.cmake.in) supplies the
+install adapter. [VerifyWindowsRuntime.cmake](../packaging/VerifyWindowsRuntime.cmake)
 checks dependency closure and native startup with developer paths removed.
 Its registered test checks the build copy, not a clean machine or installed copy.
 
 Building only codecairn bypasses deploy. Close running Windows applications
 before replacing binaries. macOS bundled installation also deploys clangd when
 found, while Linux does not explicitly bundle it. Release builds require clangd.
-The macOS release script applies ad-hoc signatures after library rewriting;
+The final macOS install hook applies ad-hoc signatures after library rewriting
+and package metadata/license installation;
 Developer ID signing, notarization, portable Linux packaging, and native
 certification remain separate release work.
 
-macOS distribution has two options: bundled standalone app ZIP and managed
+macOS distribution has two options: bundled standalone app DMG and managed
 source-only Homebrew formula. There is no cask or CodeCairn bottle generation.
 Homebrew recipe generation uses `PrepareRecipes.cmake`, recording the source
-archive URL, version and hash. Removed `BOTTLE_JSON` arguments are rejected
-explicitly instead of silently ignored. The formula lives in
+archive URL, version and hash. The formula lives in
 `homebrew/Formula/codecairn.rb`. The formula resolves real dependency prefixes, uses
 declared CMake/Ninja tools, runs tests offscreen, and ad-hoc signs the managed app.
 `PrepareLocalTap.cmake` reuses that generator, stores immutable release archives
@@ -833,24 +835,42 @@ same-name archives, preserves other packages, and never invokes Homebrew.
 `COMMIT_TAP=ON` explicitly permits initializing/committing the generated tap;
 it never commits the source checkout or unrelated tap files.
 The packaging test covers source-only formula checksums, absence of cask generation,
-removed bottle-option rejection, stable local URLs, idempotency, multi-package
+stable local URLs, idempotency, multi-package
 preservation, and protection of local edits/artifacts.
 Homebrew compiles in its temporary build area, installs to the Cellar, and links
 `cairn` through its bin directory; it does not build inside the project checkout.
 Recipe generation does not install or validate upgrade behavior.
 
-Release scripts mark unique work directories with `.codecairn-work.json` through
-`ReleaseWork.cmake`. A run starts as `incomplete` and becomes `complete` only after
-the final artifact checksum or local-tap preparation succeeds. Failed/active
-and legacy unmarked directories remain intact. Successful tap staging is removed
-immediately; standalone/source release builds are retained until explicitly pruned.
-`PruneReleaseWork.cmake` previews by default and requires `APPLY=ON` for deletion.
-It keeps the latest completed directory per target with its build/symbols and
-removes only older, completed, marked immediate children with matching names and
-recorded paths. Symlinked work/markers, malformed metadata, protected output/tap/
-cache locations, and out-of-scope paths are preserved. `release_work` tests use
-isolated fixtures for preview/apply, retention, symlinks, and deletion guards;
-`packaging` verifies automatic staging cleanup and failed-run preservation.
+All packaging scripts/templates live in [packaging](../packaging). CMake owns
+installation and deployment; CPack owns standalone ZIP/DMG generation and checksums.
+The main project disables generic CPack source generation. Instead,
+`PrepareSource.cmake` stages Git-scoped files and verified pinned source dependencies,
+then invokes a source-only CPack project. Its archive has one `codecairn-<version>`
+root and can configure/build with `CODECAIRN_ALLOW_DOWNLOADS=OFF`.
+
+Release bundled installs require clean source provenance, record the revision,
+compiler and dependency inventory, and include runtime license notices.
+macOS standalone installation keeps `cairn` inside the app only; managed installs
+also expose it through the prefix's bin directory.
+`cpack` tests verify generators, archive layout, checksums, and managed-mode
+exclusion; `source_package` verifies source provenance, pinned licenses, and an
+offline fixture build. `release_assets` verifies the complete artifact set and
+rejects missing/empty/duplicate/unexpected packages, incorrect checksums, source
+URLs, tags, and Arch metadata.
+
+The [build workflow](../.github/workflows/codecairn-build.yml) owns dependency
+installation, builds, tests, native packaging, and extracted/mounted runtime
+verification. The [release workflow](../.github/workflows/codecairn-release.yml)
+validates the version tag, builds an immutable revision through the reusable
+workflow, verifies assembled assets, rechecks the tag, and creates a draft release.
+Only the publication job has repository write permission.
+
+Build directories are not automatically pruned. Retain matching binaries/symbols,
+revision, and diagnostics when investigating failures. Scripts remove only their
+own staging directory after success and retain failed staging; CPack owns its
+package staging. CI uploads failure logs and matching application symbols as
+workflow artifacts, subject to GitHub retention. The old release orchestrator,
+arguments, directory markers, and pruning interface are not supported.
 
 With bundling OFF:
 
