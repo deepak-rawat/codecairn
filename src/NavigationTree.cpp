@@ -30,6 +30,14 @@ void NavigationTree::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void NavigationTree::keyPressEvent(QKeyEvent *event) {
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        (event->modifiers() == Qt::NoModifier || event->modifiers() == Qt::KeypadModifier)) {
+        if (auto *item = currentItem(); item && (item->flags() & Qt::ItemIsEnabled)) {
+            emit itemActivated(item, currentColumn());
+            event->accept();
+            return;
+        }
+    }
     const auto *previous = currentItem();
     QTreeWidget::keyPressEvent(event);
     if (previous != currentItem() && event->key() != Qt::Key_Return &&

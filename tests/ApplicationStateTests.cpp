@@ -43,6 +43,7 @@ private slots:
     void missingFilesDoNotCreateState();
     void stateRoundTripUsesVersionedJsonAndBase64();
     void sessionsAreOrderedAndWorkspaceSpecific();
+    void missingFilesUseCanonicalParent();
     void invalidState_data();
     void invalidState();
     void invalidSession_data();
@@ -72,8 +73,9 @@ void ApplicationStateTests::defaultPathsHaveOneApplicationComponent() {
     QVERIFY(state.endsWith("/CodeCairn"));
 #endif
     QTemporaryDir source;
-    const auto hash = QCryptographicHash::hash(workspacePath(source.path()).toUtf8(),
-                                              QCryptographicHash::Sha256).toHex();
+    const auto hash =
+        QCryptographicHash::hash(workspacePath(source.path()).toUtf8(), QCryptographicHash::Sha256)
+            .toHex();
     ApplicationStateStore store(state);
     QCOMPARE(store.sessionPath(source.path()),
              QDir(state).filePath("workspaces/" + QString::fromLatin1(hash) + "/session.json"));
@@ -145,6 +147,38 @@ void ApplicationStateTests::sessionsAreOrderedAndWorkspaceSpecific() {
     QVERIFY(empty.session.has_value());
     QVERIFY(empty.session->files.isEmpty());
     QVERIFY(!QFileInfo::exists(restored.sessionPath(other.path())));
+}
+
+void ApplicationStateTests::missingFilesUseCanonicalParent() {
+#ifdef Q_OS_WIN
+    QSKIP("Directory symlink fixture requires Unix symlink semantics.");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto root = directory.filePath("source");
+    const auto alias = directory.filePath("alias");
+    QVERIFY(QDir().mkpath(root));
+    QVERIFY(QFile::link(root, alias));
+    const auto missing = QDir(alias).filePath("nested/missing.cpp");
+    QCOMPARE(workspacePath(missing), QDir(workspacePath(root)).filePath("nested/missing.cpp"));
+    QVERIFY(pathInWorkspace(missing, root));
+    QVERIFY(!pathInWorkspace(directory.filePath("outside.cpp"), root));
+    const auto outside = directory.filePath("outside");
+    QVERIFY(QDir().mkpath(outside));
+    QVERIFY(QFile::link(outside, QDir(root).filePath("escape")));
+    QVERIFY(!pathInWorkspace(QDir(root).filePath("escape/missing.cpp"), root));
+    ApplicationStateStore store(directory.filePath("state"));
+    QVERIFY(store.loadSession(root).session.has_value());
+    WorkspaceSession session;
+    session.files = {{missing, 0, 0, 0, {}}};
+    session.activeFile = missing;
+    const auto error = store.saveSession(alias, session);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(store.loadSession(root).session.has_value());
+    QVERIFY(QDir().mkpath(QDir(root).filePath("nested")));
+    write(missing, "int value;\n");
+    QCOMPARE(workspacePath(missing), QDir(workspacePath(root)).filePath("nested/missing.cpp"));
+#endif
 }
 
 void ApplicationStateTests::invalidState_data() {

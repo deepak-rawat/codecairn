@@ -42,6 +42,7 @@ class ReferenceCandidateIndexTests : public QObject {
     TestStorage storage_;
 private slots:
     void allTextAndExactCase();
+    void pathAliasesPreserveFilteringAndOrder();
     void freshnessUsesContentsNotMetadata();
     void incrementalRefreshAndDeletion();
     void missingLegacyAndVersionedPostings();
@@ -80,6 +81,25 @@ void ReferenceCandidateIndexTests::allTextAndExactCase() {
     const QStringList repeated{paths[0], paths[3], paths[0]};
     QCOMPARE(referenceCandidateFiles(fixture.root, repeated, "Needle", true).files,
              (QStringList{paths[0], paths[0]}));
+}
+
+void ReferenceCandidateIndexTests::pathAliasesPreserveFilteringAndOrder() {
+#ifdef Q_OS_WIN
+    QSKIP("Directory symlink fixture requires Unix symlink semantics.");
+#else
+    Fixture fixture;
+    fixture.write("found.cpp", "int Needle;\n");
+    fixture.write("absent.cpp", "int other;\n");
+    QVERIFY(fixture.build().error.isEmpty());
+    const auto alias = QDir(fixture.root).filePath("alias");
+    QVERIFY(QFile::link(fixture.root, alias));
+    const QStringList paths{QDir(alias).filePath("found.cpp"), QDir(alias).filePath("absent.cpp"),
+                            QDir(alias).filePath("found.cpp")};
+    const auto result = referenceCandidateFiles(alias, paths, "Needle", true);
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    QCOMPARE(result.files, (QStringList{paths[0], paths[2]}));
+    QVERIFY(result.sourceHashes.contains(workspacePath(paths[1])));
+#endif
 }
 
 void ReferenceCandidateIndexTests::freshnessUsesContentsNotMetadata() {

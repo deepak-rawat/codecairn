@@ -64,9 +64,9 @@ CompilationDatabaseResult prepareCompilationDatabase(const QString &root,
             return fail("Compilation database entry has no directory/file.");
         if (QDir::isRelativePath(working))
             working = QFileInfo(source).dir().absoluteFilePath(working);
-        entry["directory"] = QDir::cleanPath(working);
-        if (QDir::isRelativePath(file))
-            entry["file"] = QDir(working).absoluteFilePath(file);
+        entry["directory"] = workspacePath(working);
+        entry["file"] =
+            workspacePath(QDir::isRelativePath(file) ? QDir(working).absoluteFilePath(file) : file);
         normalized.append(entry);
     }
     QSaveFile output(target);

@@ -465,7 +465,7 @@ void LanguageServerClient::locations(const QString &path, const QByteArray &sour
     }
     syncDocument(path, source, version);
     cancelLocations(channel);
-    QJsonObject parameters{{"textDocument", QJsonObject{{"uri", uri(path)}}},
+    QJsonObject parameters{{"textDocument", QJsonObject{{"uri", uri(workspacePath(path))}}},
                            {"position", lspPosition(source, position)}};
     if (references)
         parameters["context"] = QJsonObject{{"includeDeclaration", includeDeclaration}};

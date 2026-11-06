@@ -270,8 +270,7 @@ void WorkspaceTests::cancellationPreservesCompletedIndex() {
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto progress = std::make_shared<IndexProgress>();
     auto future = QtConcurrent::run([&] {
-        return buildWorkspaceIndex(workspacePath(dir.path()), true, true, {}, cancel,
-                                   progress);
+        return buildWorkspaceIndex(workspacePath(dir.path()), true, true, {}, cancel, progress);
     });
     QTRY_VERIFY_WITH_TIMEOUT(progress->parsed.load() > 0, 10000);
     cancel->store(true);
@@ -302,8 +301,7 @@ void WorkspaceTests::unwritableMetadataIsReported() {
     write(dir.filePath("source.cpp"), "int source();\n");
     const auto result = index(dir.path());
     QVERIFY(!result.error.isEmpty());
-    QCOMPARE(readSourceFile(metadata).bytes,
-             QByteArray("a file occupies the metadata directory"));
+    QCOMPARE(readSourceFile(metadata).bytes, QByteArray("a file occupies the metadata directory"));
 }
 
 void WorkspaceTests::workspaceStorageIsIsolatedAndCoLocated() {
@@ -321,7 +319,8 @@ void WorkspaceTests::workspaceStorageIsIsolatedAndCoLocated() {
              workspaceStorageDirectory(QDir(first).filePath(".")));
     ApplicationStateStore state(defaultStateDirectory());
     QCOMPARE(QFileInfo(state.sessionPath(first)).absolutePath(), workspaceStorageDirectory(first));
-    QCOMPARE(QFileInfo(workspaceOptionsPath(first)).absolutePath(), workspaceStorageDirectory(first));
+    QCOMPARE(QFileInfo(workspaceOptionsPath(first)).absolutePath(),
+             workspaceStorageDirectory(first));
     QCOMPARE(QFileInfo(workspaceDatabase(first)).absolutePath(), workspaceStorageDirectory(first));
     QCOMPARE(QFileInfo(workspaceClangdDirectory(first)).absolutePath(),
              workspaceStorageDirectory(first));
@@ -410,13 +409,21 @@ void WorkspaceTests::compilerRecoveryUsesRelocatedCompilationDatabase() {
                                 "#else\nint fallback_symbol(void);\n#endif\n";
     write(path, contents);
     const QJsonArray commands{QJsonObject{
-        {"directory", source.path()}, {"file", path},
+        {"directory", source.path()},
+        {"file", path},
         {"arguments", QJsonArray{"clang", "-DUSE_SELECTED_CONFIGURATION", "-c", path}}}};
     write(build.filePath("compile_commands.json"), QJsonDocument(commands).toJson());
     const auto database = prepareCompilationDatabase(source.path(), build.path());
     QVERIFY2(database.error.isEmpty(), qPrintable(database.error));
     QVERIFY(database.configured);
     QCOMPARE(database.directory, workspaceClangdDirectory(source.path()));
+    QFile normalized(QDir(database.directory).filePath("compile_commands.json"));
+    QVERIFY(normalized.open(QIODevice::ReadOnly));
+    const auto normalizedEntry =
+        QJsonDocument::fromJson(normalized.readAll()).array().first().toObject();
+    QCOMPARE(normalizedEntry.value("directory").toString(), workspacePath(source.path()));
+    QCOMPARE(normalizedEntry.value("file").toString(), workspacePath(path));
+    QCOMPARE(normalizedEntry.value("arguments"), commands.first().toObject().value("arguments"));
     SourceAnalysis analysis;
     analysis.language = LanguageId::C;
     recoverCompilerSymbols(analysis, contents, path);
@@ -732,11 +739,12 @@ void WorkspaceTests::realClangdCrossFileOverloads() {
     QCOMPARE(targets.size(), 1);
     QVERIFY2(targets.first().path.endsWith("impl.cpp"), qPrintable(targets.first().path));
     QCOMPARE(targets.first().line, 2);
-    QVERIFY(QFileInfo::exists(QDir(workspaceClangdDirectory(dir.path()))
-                                  .filePath("compile_commands.json")));
+    QVERIFY(QFileInfo::exists(
+        QDir(workspaceClangdDirectory(dir.path())).filePath("compile_commands.json")));
     QTRY_VERIFY_WITH_TIMEOUT(
         !QDir(QDir(workspaceClangdDirectory(dir.path())).filePath(".cache/clangd/index"))
-             .entryList({"*.idx"}, QDir::Files).isEmpty(),
+             .entryList({"*.idx"}, QDir::Files)
+             .isEmpty(),
         15000);
     QCOMPARE(QDir(dir.path()).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot),
              QStringList({"api.h", "caller.cpp", "compile_commands.json", "impl.cpp"}));

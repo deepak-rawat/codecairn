@@ -151,7 +151,8 @@ void ReferenceTests::regexAndInvalidExpressions() {
 void ReferenceTests::commentsStringsAndScopes() {
     QTemporaryDir dir;
     const auto path = dir.filePath("a.cpp");
-    QVERIFY(writeSourceFile(path, "int count;\n// count\nconst char *s = \"count\";\n", false).isEmpty());
+    QVERIFY(writeSourceFile(path, "int count;\n// count\nconst char *s = \"count\";\n", false)
+                .isEmpty());
     auto r = request(path, "count");
     r.options.comments = CommentSearch::Only;
     QCOMPARE(run(r).hits.size(), 1);
@@ -190,7 +191,8 @@ void ReferenceTests::keywordExpressions() {
     QVERIFY(!validateReferenceSearch("(cat", r.options).isEmpty());
     QVERIFY(!validateReferenceSearch("cat OR", r.options).isEmpty());
     QVERIFY(!validateReferenceSearch("\"cat", r.options).isEmpty());
-    QVERIFY(!validateReferenceSearch(QString(140, '(') + "cat" + QString(140, ')'), r.options).isEmpty());
+    QVERIFY(!validateReferenceSearch(QString(140, '(') + "cat" + QString(140, ')'), r.options)
+                 .isEmpty());
 }
 
 void ReferenceTests::keywordVariationsAndFragments() {
@@ -257,14 +259,18 @@ void ReferenceTests::inactiveRegions() {
     QVERIFY2(filtered.warnings.isEmpty(), qPrintable(filtered.warnings.join('\n')));
     QCOMPARE(filtered.hits.size(), 1);
     QCOMPARE(filtered.hits.first().line, 3);
-    QVERIFY(writeSourceFile(path,
-        "#ifdef FEATURE\nint hidden;\n#else\nint visible;\n#endif\n", false).isEmpty());
+    QVERIFY(
+        writeSourceFile(path, "#ifdef FEATURE\nint hidden;\n#else\nint visible;\n#endif\n", false)
+            .isEmpty());
     const auto uncertain = run(r);
     QCOMPARE(uncertain.hits.size(), 1);
     QVERIFY(!uncertain.warnings.isEmpty());
-    const auto commands = QJsonDocument(QJsonArray{QJsonObject{
-        {"directory", dir.path()}, {"file", path},
-        {"arguments", QJsonArray{"clang++", "-DFEATURE=1", "-c", path}}}}).toJson();
+    const auto commands =
+        QJsonDocument(QJsonArray{QJsonObject{
+                          {"directory", dir.path()},
+                          {"file", path},
+                          {"arguments", QJsonArray{"clang++", "-DFEATURE=1", "-c", path}}}})
+            .toJson();
     QVERIFY(writeSourceFile(dir.filePath("compile_commands.json"), commands, false).isEmpty());
     r.query = "visible";
     const auto configured = run(r);
@@ -272,8 +278,11 @@ void ReferenceTests::inactiveRegions() {
     QCOMPARE(configured.hits.size(), 0);
     const auto header = dir.filePath("settings.h");
     QVERIFY(writeSourceFile(header, "#define FEATURE 0\n", false).isEmpty());
-    QVERIFY(writeSourceFile(path,
-        "#include \"settings.h\"\n#if FEATURE\nint hidden;\n#else\nint visible;\n#endif\n", false).isEmpty());
+    QVERIFY(writeSourceFile(
+                path,
+                "#include \"settings.h\"\n#if FEATURE\nint hidden;\n#else\nint visible;\n#endif\n",
+                false)
+                .isEmpty());
     const QByteArray liveHeader = "#define FEATURE 1\n";
     r.overlays.append({header, liveHeader, analyzeSource(liveHeader, header)});
     const auto dirtyInclude = run(r);
@@ -356,11 +365,13 @@ void ReferenceTests::sessionHistoryRoundTrip() {
     ApplicationStateStore restored(state.path());
     const auto result = restored.loadSession(dir.path());
     QVERIFY2(result.session.has_value(), qPrintable(result.error));
-    QCOMPARE(referenceHistoryJson(result.session->references), referenceHistoryJson(session.references));
+    QCOMPARE(referenceHistoryJson(result.session->references),
+             referenceHistoryJson(session.references));
 }
 
 void ReferenceTests::legacySettingsAndIndependentState() {
-    const auto result = parseSettings(R"({"references":{"semantic":false,"comments":true,"strings":true}})");
+    const auto result =
+        parseSettings(R"({"references":{"semantic":false,"comments":true,"strings":true}})");
     QVERIFY(result.settings);
     QCOMPARE(result.settings->references.search.method, SearchMethod::Occurrences);
     QCOMPARE(result.settings->references.search.comments, CommentSearch::Include);
@@ -482,7 +493,9 @@ void ReferenceTests::outputOptionsAndExport() {
 
     const auto config = dir.filePath("settings.json");
     QVERIFY(writeSourceFile(config, R"({"references":{"semantic":false,"search":{"output":{
-        "container":false,"line":false,"text":false,"links":false}}}})", false).isEmpty());
+        "container":false,"line":false,"text":false,"links":false}}}})",
+                            false)
+                .isEmpty());
     MainWindow window(false, nullptr, config);
     window.show();
     QVERIFY(window.openFile(path));
@@ -534,7 +547,14 @@ void ReferenceTests::realSemanticOverloadsAndMembers() {
     QSKIP("clangd is not configured.");
 #else
     QTemporaryDir dir;
+#ifndef Q_OS_WIN
+    QTemporaryDir aliases;
+    const auto alias = aliases.filePath("workspace");
+    QVERIFY(QFile::link(dir.path(), alias));
+    const auto path = QDir(alias).filePath("a.cpp");
+#else
     const auto path = dir.filePath("a.cpp");
+#endif
     const QByteArray source =
         "int pick(int x) { return x; }\n"
         "int pick(double x) { return int(x); }\n"
@@ -552,17 +572,19 @@ void ReferenceTests::realSemanticOverloadsAndMembers() {
     QVERIFY2(reply[3].toString().isEmpty(), qPrintable(reply[3].toString()));
     const auto targets = qvariant_cast<QVector<LspLocation>>(reply[2]);
     const auto results = resolveSemanticReferences(targets, {path}, "pick",
-        {{path, source, analyzeSource(source, path)}}, std::make_shared<std::atomic_bool>(false));
+                                                   {{path, source, analyzeSource(source, path)}},
+                                                   std::make_shared<std::atomic_bool>(false));
     QCOMPARE(results.hits.size(), 1);
     QCOMPARE(results.hits.first().location.start, source.indexOf("pick(1)"));
-    client.locations(path, source, 1, source.indexOf("int value") + 4,
-                     2, "references", true, false);
+    client.locations(path, source, 1, source.indexOf("int value") + 4, 2, "references", true,
+                     false);
     QTRY_VERIFY_WITH_TIMEOUT(!locations.isEmpty(), 20000);
     reply = locations.takeFirst();
     QVERIFY2(reply[3].toString().isEmpty(), qPrintable(reply[3].toString()));
     const auto memberTargets = qvariant_cast<QVector<LspLocation>>(reply[2]);
     const auto members = resolveSemanticReferences(memberTargets, {path}, "value",
-        {{path, source, analyzeSource(source, path)}}, std::make_shared<std::atomic_bool>(false));
+                                                   {{path, source, analyzeSource(source, path)}},
+                                                   std::make_shared<std::atomic_bool>(false));
     QCOMPARE(members.hits.size(), 1);
     QCOMPARE(members.hits.first().location.start, source.indexOf("a.value") + 2);
 #endif
@@ -663,7 +685,8 @@ void ReferenceTests::clickableReferenceIconsAndToolbar() {
     QTRY_COMPARE_WITH_TIMEOUT(tree->topLevelItemCount(), 1, 10000);
     auto *row = tree->topLevelItem(0)->child(1);
     QTRY_VERIFY(!tree->itemIconRect(row).isEmpty());
-    QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier, tree->itemIconRect(row).center());
+    QTest::mouseClick(tree->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      tree->itemIconRect(row).center());
     QTRY_COMPARE(window.activeEditor(), editor);
     QCOMPARE(editor->send(SCI_GETSELECTIONSTART), source.indexOf("int caller"));
     QCOMPARE(editor->send(SCI_GETSELECTIONEND), source.size() - 1);
@@ -677,8 +700,10 @@ void ReferenceTests::clickableReferenceIconsAndToolbar() {
     QTRY_COMPARE(tabs->currentWidget(), window.findChild<QWidget *>("searchResultsPage"));
     QCOMPARE(tree->currentItem(), row);
     auto *toolbar = window.findChild<QToolBar *>("mainToolbar");
-    auto *previous = qobject_cast<QToolButton *>(toolbar->widgetForAction(window.findChild<QAction *>("previousReference")));
-    auto *next = qobject_cast<QToolButton *>(toolbar->widgetForAction(window.findChild<QAction *>("nextReference")));
+    auto *previous = qobject_cast<QToolButton *>(
+        toolbar->widgetForAction(window.findChild<QAction *>("previousReference")));
+    auto *next = qobject_cast<QToolButton *>(
+        toolbar->widgetForAction(window.findChild<QAction *>("nextReference")));
     QVERIFY(previous);
     QVERIFY(next);
     QTest::mouseClick(previous, Qt::LeftButton);
@@ -785,12 +810,15 @@ void ReferenceTests::searchedSymbolsPreviewAndDelete() {
     QCOMPARE(context->send(SCI_GETSELECTIONEND), source.indexOf('\n'));
     QTest::keyClick(outline, Qt::Key_Down);
     QTRY_COMPARE(context->send(SCI_GETSELECTIONSTART), source.indexOf("int second"));
-    QCOMPARE(context->send(SCI_GETSELECTIONEND), source.indexOf('\n', source.indexOf("int second")));
-    QCOMPARE(static_cast<quint32>(context->send(SCI_GETELEMENTCOLOUR, SC_ELEMENT_SELECTION_INACTIVE_BACK)),
+    QCOMPARE(context->send(SCI_GETSELECTIONEND),
+             source.indexOf('\n', source.indexOf("int second")));
+    QCOMPARE(static_cast<quint32>(
+                 context->send(SCI_GETELEMENTCOLOUR, SC_ELEMENT_SELECTION_INACTIVE_BACK)),
              quint32(0xff9e9750));
     QTest::qWait(300);
     QCOMPARE(context->send(SCI_GETSELECTIONSTART), source.indexOf("int second"));
-    QVERIFY(window.grab().save(QDir(QCoreApplication::applicationDirPath()).filePath("compact-reference-results.png")));
+    QVERIFY(window.grab().save(
+        QDir(QCoreApplication::applicationDirPath()).filePath("compact-reference-results.png")));
     QTest::keyClick(outline, Qt::Key_Delete);
     QCOMPARE(results->topLevelItemCount(), 1);
     QCOMPARE(outline->topLevelItemCount(), 1);
@@ -827,7 +855,8 @@ void ReferenceTests::resultsTextCaretAndHover() {
     auto *row = view->topLevelItem(0)->child(0);
     const auto rect = view->visualItemRect(row);
     const QPoint point(rect.left() + view->iconSize().width() + 10 +
-                       view->fontMetrics().horizontalAdvance(row->text(0).left(4)), rect.center().y());
+                           view->fontMetrics().horizontalAdvance(row->text(0).left(4)),
+                       rect.center().y());
     QTest::mouseClick(view->viewport(), Qt::LeftButton, Qt::NoModifier, point);
     view->setFocus();
     QTRY_VERIFY(view->hasFocus());
@@ -961,7 +990,8 @@ void ReferenceTests::lookupDialogLayoutAndOptions() {
     QTest::keyClick(dialog, Qt::Key_F1);
     QVERIFY(!dialog->findChild<QDialog *>("referenceHelpDialog"));
     QVERIFY(dialog->isVisible());
-    QVERIFY(dialog->grab().save(QDir(QCoreApplication::applicationDirPath()).filePath("lookup-reference-dialog.png")));
+    QVERIFY(dialog->grab().save(
+        QDir(QCoreApplication::applicationDirPath()).filePath("lookup-reference-dialog.png")));
     patterns->setText("*.cpp");
     query->setFocus();
     QTest::keyClick(query, Qt::Key_Return);
@@ -1003,13 +1033,12 @@ void ReferenceTests::dialogTouchRequiresConfirmation() {
     int confirmations = 0;
     QTimer cancelConfirmation;
     connect(&cancelConfirmation, &QTimer::timeout, &window, [&] {
-        for (auto *widget : QApplication::topLevelWidgets())
-            if (auto *message = qobject_cast<QMessageBox *>(widget);
-                message && message->windowTitle() == "Touch matching files") {
-                ++confirmations;
-                message->button(QMessageBox::Cancel)->click();
-                cancelConfirmation.stop();
-            }
+        if (auto *message = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+            message && message->text().contains("matching files to now?")) {
+            ++confirmations;
+            message->button(QMessageBox::Cancel)->click();
+            cancelConfirmation.stop();
+        }
     });
     cancelConfirmation.start(10);
     dialog->findChild<QPushButton *>("runReferenceLookup")->click();
@@ -1039,7 +1068,8 @@ void ReferenceTests::closedResultsStayClearedAfterFailedSearch() {
             setReferenceMethod(dialog, SearchMethod::Occurrences);
             dialog->findChild<QPushButton *>("runReferenceLookup")->click();
             auto *results = window.findChild<QTreeWidget *>("referenceResults");
-            QTRY_COMPARE_WITH_TIMEOUT(results->topLevelItemCount(), query == "count" ? 1 : 2, 10000);
+            QTRY_COMPARE_WITH_TIMEOUT(results->topLevelItemCount(), query == "count" ? 1 : 2,
+                                      10000);
         }
         window.findChild<QAction *>("closeFile")->trigger();
         QVERIFY(!window.findChild<QWidget *>("searchResultsPage"));
@@ -1060,7 +1090,8 @@ void ReferenceTests::closedResultsStayClearedAfterFailedSearch() {
         dialog->findChild<QPushButton *>("runReferenceLookup")->click();
         auto *results = window.findChild<QTreeWidget *>("referenceResults");
         QVERIFY(results);
-        QTRY_VERIFY(window.findChild<QLabel *>("referenceResultsStatus")->text().contains("unavailable"));
+        QTRY_VERIFY(
+            window.findChild<QLabel *>("referenceResultsStatus")->text().contains("unavailable"));
         QCOMPARE(results->topLevelItemCount(), 0);
         QCOMPARE(window.findChild<QTreeWidget *>("outline")->topLevelItemCount(), 0);
         QVERIFY(window.close());
@@ -1114,8 +1145,9 @@ void ReferenceTests::replacementCommitsAndPersists() {
         QCOMPARE(session.session->references.size(), 1);
         QCOMPARE(session.session->references.first().query, "fresh");
         start("missing", true);
-        QTRY_COMPARE_WITH_TIMEOUT(results->topLevelItem(0)->data(0, ReferenceItemRole::Query).toString(),
-                                 QString("missing"), 10000);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            results->topLevelItem(0)->data(0, ReferenceItemRole::Query).toString(),
+            QString("missing"), 10000);
         QCOMPARE(results->topLevelItemCount(), 1);
         QCOMPARE(results->topLevelItem(0)->childCount(), 0);
         QVERIFY(window.close());
@@ -1186,10 +1218,13 @@ void ReferenceTests::incompleteReplacementKeepsHistory() {
     more = window.findChild<QAction *>("moreReferenceResults");
     QTRY_VERIFY_WITH_TIMEOUT(more->isEnabled(), 10000);
     more->trigger();
-    QTRY_VERIFY_WITH_TIMEOUT(results->topLevelItemCount() > 0 && !more->isEnabled() &&
-        results->topLevelItem(0)->data(0, ReferenceItemRole::Query).toString() == "count", 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        results->topLevelItemCount() > 0 && !more->isEnabled() &&
+            results->topLevelItem(0)->data(0, ReferenceItemRole::Query).toString() == "count",
+        15000);
     QCOMPARE(results->topLevelItemCount(), 2);
-    QCOMPARE(results->topLevelItem(0)->childCount() + results->topLevelItem(1)->childCount(), 10003);
+    QCOMPARE(results->topLevelItem(0)->childCount() + results->topLevelItem(1)->childCount(),
+             10003);
     QCOMPARE(oldEditor->send(SCI_MARKERGET, 0), 0);
 }
 
@@ -1225,8 +1260,10 @@ void ReferenceTests::replacementSaveFailureKeepsHistory() {
     setReferenceMethod(dialog, SearchMethod::Occurrences);
     dialog->findChild<QCheckBox *>("referenceReplaceResults")->setChecked(true);
     dialog->findChild<QPushButton *>("runReferenceLookup")->click();
-    QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QLabel *>("referenceResultsStatus")->text()
-                                 .contains("Could not save the replacement"), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QLabel *>("referenceResultsStatus")
+                                 ->text()
+                                 .contains("Could not save the replacement"),
+                             10000);
     QCOMPARE(results->topLevelItemCount(), 1);
     QCOMPARE(results->topLevelItem(0)->data(0, ReferenceItemRole::Query).toString(), "old");
     const auto session = store.loadSession(dir.path());
@@ -1302,11 +1339,12 @@ void ReferenceTests::closingPendingSearchIgnoresLateResults() {
     QTRY_COMPARE_WITH_TIMEOUT(results->topLevelItemCount(), 1, 10000);
     for (int attempt = 0; attempt < 5; ++attempt) {
         start("first");
-        QPointer<ReferenceResultsView> previous = window.findChild<ReferenceResultsView *>("referenceResults");
+        QPointer<ReferenceResultsView> previous =
+            window.findChild<ReferenceResultsView *>("referenceResults");
         previous->topLevelItem(0)->child(0)->setText(0, "Schedule a pending view rebuild");
         auto *tabs = window.findChild<QTabWidget *>("sourceTabs");
-        window.findChild<QTabBar *>("documentBar")->tabCloseRequested(
-            tabs->indexOf(window.findChild<QWidget *>("searchResultsPage")));
+        window.findChild<QTabBar *>("documentBar")
+            ->tabCloseRequested(tabs->indexOf(window.findChild<QWidget *>("searchResultsPage")));
         QVERIFY(!previous);
         QVERIFY(!window.findChild<QAction *>("showSearchResults")->isEnabled());
         start("second");
@@ -1345,8 +1383,8 @@ void ReferenceTests::searchDialogSurvivesResultsClose() {
     setReferenceMethod(lookup, SearchMethod::Occurrences);
     lookup->findChild<QLineEdit *>("referenceQuery")->setText("second");
     auto *tabs = window.findChild<QTabWidget *>("sourceTabs");
-    window.findChild<QTabBar *>("documentBar")->tabCloseRequested(
-        tabs->indexOf(window.findChild<QWidget *>("searchResultsPage")));
+    window.findChild<QTabBar *>("documentBar")
+        ->tabCloseRequested(tabs->indexOf(window.findChild<QWidget *>("searchResultsPage")));
     QVERIFY(lookup->isVisible());
     lookup->findChild<QPushButton *>("runReferenceLookup")->click();
     results = window.findChild<QTreeWidget *>("referenceResults");

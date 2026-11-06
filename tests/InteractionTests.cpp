@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "NavigationTree.h"
 #include "TestFixtures.h"
 #include "TestStorage.h"
 #include <QAction>
@@ -59,6 +60,8 @@ class InteractionTests : public QObject {
     Q_OBJECT
     TestStorage storage_;
 private slots:
+    void enterActivatesNavigationTree_data();
+    void enterActivatesNavigationTree();
     void previewTabsPinAndPreserveDirtyDocuments();
     void outlineClickAndKeyboardNavigate();
     void sourceAndContextLinks();
@@ -77,6 +80,26 @@ private slots:
     void escapeCancelsPendingSymbolActivation();
     void navigationBackClearsPanelFilters();
 };
+
+void InteractionTests::enterActivatesNavigationTree_data() {
+    QTest::addColumn<int>("key");
+    QTest::newRow("return") << int(Qt::Key_Return);
+    QTest::newRow("enter") << int(Qt::Key_Enter);
+}
+
+void InteractionTests::enterActivatesNavigationTree() {
+    QFETCH(int, key);
+    NavigationTree tree;
+    auto *item = new QTreeWidgetItem(&tree, {"entry"});
+    tree.setCurrentItem(item);
+    QSignalSpy activated(&tree, &QTreeWidget::itemActivated);
+    QTest::keyClick(&tree, static_cast<Qt::Key>(key));
+    QCOMPARE(activated.size(), 1);
+    activated.clear();
+    item->setDisabled(true);
+    QTest::keyClick(&tree, static_cast<Qt::Key>(key));
+    QVERIFY(activated.isEmpty());
+}
 
 void InteractionTests::previewTabsPinAndPreserveDirtyDocuments() {
     QTemporaryDir dir;
@@ -472,25 +495,25 @@ void InteractionTests::referenceLinksOpenUnopenedFilesTrackEditsAndRejectStaleLi
     for (const auto &message : messages)
         rejected = rejected || message[0].toString().contains("Source link is stale");
     QVERIFY(rejected);
-    QCOMPARE(editor->send(SCI_GETSELECTIONSTART), source.indexOf("int caller") + QByteArray("// changed\n").size());
+    QCOMPARE(editor->send(SCI_GETSELECTIONSTART),
+             source.indexOf("int caller") + QByteArray("// changed\n").size());
     QCOMPARE(readSourceFile(implementation).bytes, source);
 }
 
 void InteractionTests::editorSelectionTracksOutline() {
     QTemporaryDir dir;
     const auto path = dir.filePath("follow.cpp");
-    const QByteArray source =
-        "int alpha() {\n"
-        "    int local = 1;\n"
-        "    // inside alpha\n"
-        "    return local;\n"
-        "}\n\n"
-        "struct Holder {\n"
-        "    int field;\n"
-        "    int beta() {\n"
-        "        return field;\n"
-        "    }\n"
-        "};\n";
+    const QByteArray source = "int alpha() {\n"
+                              "    int local = 1;\n"
+                              "    // inside alpha\n"
+                              "    return local;\n"
+                              "}\n\n"
+                              "struct Holder {\n"
+                              "    int field;\n"
+                              "    int beta() {\n"
+                              "        return field;\n"
+                              "    }\n"
+                              "};\n";
     QVERIFY(writeSourceFile(path, source, false).isEmpty());
     MainWindow window(false);
     window.show();
@@ -543,7 +566,8 @@ void InteractionTests::panelFiltersAreTemporary() {
     const auto path = dir.filePath("alpha.cpp");
     const QByteArray source = "int alpha() { return 1; }\nint beta() { return 2; }\n";
     QVERIFY(writeSourceFile(path, source, false).isEmpty());
-    QVERIFY(writeSourceFile(dir.filePath("beta.cpp"), "int gamma() { return 3; }\n", false).isEmpty());
+    QVERIFY(
+        writeSourceFile(dir.filePath("beta.cpp"), "int gamma() { return 3; }\n", false).isEmpty());
     MainWindow window(false);
     window.show();
     window.activateWindow();
@@ -552,7 +576,11 @@ void InteractionTests::panelFiltersAreTemporary() {
     QTRY_COMPARE(outline->topLevelItemCount(), 2);
     auto *files = window.findChild<QTreeWidget *>("fileList");
     QTRY_COMPARE_WITH_TIMEOUT(files->topLevelItemCount(), 2, 10000);
-    struct Panel { const char *filter; const char *tree; int tab; };
+    struct Panel {
+        const char *filter;
+        const char *tree;
+        int tab;
+    };
     const Panel panels[]{{"outlineFilter", "outline", -1},
                          {"fileFilter", "fileList", 0},
                          {"symbolFilter", "symbolList", 1}};
@@ -597,12 +625,12 @@ void InteractionTests::confirmedPanelSelectionClearsFilter_data() {
     QTest::addColumn<bool>("doubleClick");
     for (const bool mouse : {false, true}) {
         const auto suffix = mouse ? "-double-click" : "-enter";
-        QTest::newRow(qPrintable("outline" + QString(suffix))) << QString("outlineFilter") << QString("outline")
-            << QString("beta") << -1 << mouse;
-        QTest::newRow(qPrintable("files" + QString(suffix))) << QString("fileFilter") << QString("fileList")
-            << QString("beta.cpp") << 0 << mouse;
-        QTest::newRow(qPrintable("symbols" + QString(suffix))) << QString("symbolFilter") << QString("symbolList")
-            << QString("beta") << 1 << mouse;
+        QTest::newRow(qPrintable("outline" + QString(suffix)))
+            << QString("outlineFilter") << QString("outline") << QString("beta") << -1 << mouse;
+        QTest::newRow(qPrintable("files" + QString(suffix)))
+            << QString("fileFilter") << QString("fileList") << QString("beta.cpp") << 0 << mouse;
+        QTest::newRow(qPrintable("symbols" + QString(suffix)))
+            << QString("symbolFilter") << QString("symbolList") << QString("beta") << 1 << mouse;
     }
 }
 
@@ -635,7 +663,8 @@ void InteractionTests::confirmedPanelSelectionClearsFilter() {
     filter->setFocus();
     QTRY_VERIFY(filter->hasFocus());
     QTest::keyClicks(filter, "beta");
-    QTRY_VERIFY_WITH_TIMEOUT(symbolItem(tree, target) && !symbolItem(tree, target)->isHidden(), 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(symbolItem(tree, target) && !symbolItem(tree, target)->isHidden(),
+                             10000);
     if (doubleClick) {
         clickRow(tree, target);
         QCOMPARE(filter->text(), "beta");
@@ -701,10 +730,13 @@ void InteractionTests::navigationBackClearsPanelFilters() {
     editor->selectRange(0, 0);
     clickRow(outline, "beta");
     QVERIFY(window.findChild<QAction *>("historyBack")->isEnabled());
-    struct Panel { const char *name; const char *text; int tab; };
-    const Panel panels[]{{"outlineFilter", "beta", -1},
-                         {"fileFilter", "file", 0},
-                         {"symbolFilter", "beta", 1}};
+    struct Panel {
+        const char *name;
+        const char *text;
+        int tab;
+    };
+    const Panel panels[]{
+        {"outlineFilter", "beta", -1}, {"fileFilter", "file", 0}, {"symbolFilter", "beta", 1}};
     for (const auto &panel : panels) {
         if (panel.tab >= 0)
             window.findChild<QTabWidget *>("browserTabs")->setCurrentIndex(panel.tab);

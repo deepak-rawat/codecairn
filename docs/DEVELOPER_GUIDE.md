@@ -605,6 +605,13 @@ It lives outside source folders and custom profiles; see the
 empty, so the standard path has one CodeCairn component.
 
 Workspace directory names are SHA-256 hashes of canonical-root UTF-8 paths.
+Missing file paths resolve through their nearest existing canonical ancestor,
+so deleted files and new buffers retain workspace membership through directory
+aliases. Reference posting lookups and LSP request URIs use the same canonical
+identity as indexing and document synchronization.
+Generated compilation databases canonicalize file and working-directory fields
+without rewriting compiler arguments. Result-page freshness checks reuse each
+document's revision-cached snapshot hash rather than hashing once per result.
 WorkspacePaths owns the locations; WorkspaceOptionsStore initializes versioned
 options before indexing/services. The stored root must match the requested
 workspace. An empty compilation directory enables discovery. Edit through the

@@ -118,7 +118,8 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
                 result.cancelled = true;
                 return result;
             }
-            metadata.bind(1, path);
+            const auto identity = workspacePath(path);
+            metadata.bind(1, identity);
             const bool found = metadata.next();
             const auto hash = found ? metadata.text(0) : QString{};
             const bool complete = found && metadata.integer(1) == ReferenceOccurrenceVersion &&
@@ -128,7 +129,7 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
                 candidates.append(path);
                 continue;
             }
-            posting.bind(1, path);
+            posting.bind(1, identity);
             posting.bind(2, key);
             const bool present = posting.next();
             posting.reset();

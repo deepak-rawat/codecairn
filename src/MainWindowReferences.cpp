@@ -48,7 +48,8 @@ QString queryFor(const ReferenceGroup &group) {
     return group.query.isEmpty() ? group.title.section(" - ", 0, 0) : group.query;
 }
 
-QString resultText(const ReferenceHit &hit, const SearchOutputOptions &output, const QString &root) {
+QString resultText(const ReferenceHit &hit, const SearchOutputOptions &output,
+                   const QString &root) {
     QString result;
     if (output.container && !hit.container.isEmpty())
         result = hit.container;
@@ -89,8 +90,9 @@ public:
                const QModelIndex &index) const override {
         painter->save();
         painter->fillRect(option.rect, background_);
-        painter->fillRect(QRect(option.rect.left(), option.rect.top(), iconSize_ + 6,
-                                option.rect.height()), gutter_);
+        painter->fillRect(
+            QRect(option.rect.left(), option.rect.top(), iconSize_ + 6, option.rect.height()),
+            gutter_);
         QStyleOptionViewItem item(option);
         initStyleOption(&item, index);
         item.text = index.data(ReferenceItemRole::DisplayText).toString();
@@ -108,12 +110,14 @@ public:
             }
         }
         const QPointF origin(option.rect.left() + iconSize_ + 10,
-                             option.rect.top() + (option.rect.height() - option.fontMetrics.height()) / 2);
+                             option.rect.top() +
+                                 (option.rect.height() - option.fontMetrics.height()) / 2);
         painter->setFont(option.font);
         if (const auto *view = qobject_cast<const ReferenceResultsView *>(option.widget))
             view->paintText(painter, origin, index, foreground_, heading_);
         painter->restore();
     }
+
 private:
     int iconSize_ = 16;
     QColor background_, foreground_, gutter_, heading_;
@@ -124,8 +128,12 @@ void outputDialog(QWidget *parent, const std::shared_ptr<SearchOutputOptions> &o
     dialog.setWindowTitle("Include in Results");
     auto *layout = new QVBoxLayout(&dialog);
     QVector<QCheckBox *> boxes;
-    const QStringList labels{"Container function or class", "File names", "Line numbers",
-                             "Source text", "Create source links", "Project-relative file names"};
+    const QStringList labels{"Container function or class",
+                             "File names",
+                             "Line numbers",
+                             "Source text",
+                             "Create source links",
+                             "Project-relative file names"};
     const auto &o = *options;
     const bool values[]{o.container, o.file, o.line, o.text, o.links, o.relativePaths};
     for (int i = 0; i < labels.size(); ++i) {
@@ -146,8 +154,8 @@ void outputDialog(QWidget *parent, const std::shared_ptr<SearchOutputOptions> &o
 }
 
 void MainWindow::cancelReferenceSearch() {
-    const bool wasBusy = referenceSearchBusy_ ||
-                         (replaceReferenceResults_ && !pendingReferenceGroups_.isEmpty());
+    const bool wasBusy =
+        referenceSearchBusy_ || (replaceReferenceResults_ && !pendingReferenceGroups_.isEmpty());
     referenceSearchBusy_ = false;
     ++referenceToken_;
     touchReferenceResults_ = false;
@@ -175,7 +183,8 @@ void MainWindow::ensureReferenceResults() {
     layout->setContentsMargins(0, 0, 0, 0);
     auto *bar = new QToolBar(referenceResultsPage_);
     bar->setIconSize(QSize(configuration_.ui.iconSize, configuration_.ui.iconSize));
-    cancelReferenceAction_ = bar->addAction("Cancel Search", this, &MainWindow::cancelReferenceSearch);
+    cancelReferenceAction_ =
+        bar->addAction("Cancel Search", this, &MainWindow::cancelReferenceSearch);
     cancelReferenceAction_->setObjectName("cancelReferenceSearch");
     cancelReferenceAction_->setEnabled(referenceSearchBusy_);
     moreReferencesAction_ = bar->addAction("Load More", this, &MainWindow::continueReferenceSearch);
@@ -185,7 +194,8 @@ void MainWindow::ensureReferenceResults() {
     remove->setObjectName("removeReferenceResults");
     auto *exportAction = bar->addAction("Export...", this, &MainWindow::exportReferenceResults);
     exportAction->setObjectName("exportReferenceResults");
-    auto *touch = bar->addAction("Touch Files...", this, [this] { touchReferenceHits(referenceHits_); });
+    auto *touch =
+        bar->addAction("Touch Files...", this, [this] { touchReferenceHits(referenceHits_); });
     touch->setObjectName("touchReferenceFiles");
     auto *clear = bar->addAction("Clear Results", this, [this] {
         cancelReferenceSearch();
@@ -194,13 +204,14 @@ void MainWindow::ensureReferenceResults() {
         referencesStatus_->setText("No search results.");
     });
     clear->setObjectName("clearReferenceResults");
-    for (const auto &name : {"firstReference", "previousReference", "nextReference", "jumpReference"})
+    for (const auto &name :
+         {"firstReference", "previousReference", "nextReference", "jumpReference"})
         bar->addAction(actions_.value(name));
     layout->addWidget(bar);
     bar->hide();
     referencesList_ = new ReferenceResultsView(referenceResultsPage_);
-    connect(qobject_cast<ReferenceResultsView *>(referencesList_), &ReferenceResultsView::textSelectionChanged,
-            this, &MainWindow::updateActions);
+    connect(qobject_cast<ReferenceResultsView *>(referencesList_),
+            &ReferenceResultsView::textSelectionChanged, this, &MainWindow::updateActions);
     referencesList_->setObjectName("referenceResults");
     referencesList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     UiAppearance::configureTree(referencesList_, {"Function / class", "File", "Line", "Source"},
@@ -210,17 +221,18 @@ void MainWindow::ensureReferenceResults() {
     delete oldDelegate;
     applyReferenceAppearance();
     referencesList_->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(referencesList_, &QWidget::customContextMenuRequested, this, [this, bar](const QPoint &point) {
-        auto *menu = new QMenu(referencesList_);
-        menu->setObjectName("referenceResultsMenu");
-        connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
-        auto *view = qobject_cast<ReferenceResultsView *>(referencesList_);
-        auto *copy = menu->addAction("Copy", view, &ReferenceResultsView::copySelection);
-        copy->setEnabled(view->textCursor().hasSelection());
-        menu->addSeparator();
-        menu->addActions(bar->actions());
-        menu->popup(referencesList_->viewport()->mapToGlobal(point));
-    });
+    connect(referencesList_, &QWidget::customContextMenuRequested, this,
+            [this, bar](const QPoint &point) {
+                auto *menu = new QMenu(referencesList_);
+                menu->setObjectName("referenceResultsMenu");
+                connect(menu, &QMenu::aboutToHide, menu, &QObject::deleteLater);
+                auto *view = qobject_cast<ReferenceResultsView *>(referencesList_);
+                auto *copy = menu->addAction("Copy", view, &ReferenceResultsView::copySelection);
+                copy->setEnabled(view->textCursor().hasSelection());
+                menu->addSeparator();
+                menu->addActions(bar->actions());
+                menu->popup(referencesList_->viewport()->mapToGlobal(point));
+            });
     layout->addWidget(referencesList_, 1);
     referencesStatus_ = new QLabel(referenceResultsPage_);
     referencesStatus_->setObjectName("referenceResultsStatus");
@@ -266,11 +278,12 @@ void MainWindow::touchReferenceHits(const QVector<ReferenceHit> &hits) {
         }
         paths.insert(hit.location.path);
     }
-    if (QMessageBox::warning(this, "Touch matching files",
+    if (QMessageBox::warning(
+            this, "Touch matching files",
             QString("Set the modification timestamp of %1 matching files to now?\n"
                     "This can trigger recompilation. File contents will not be changed.")
-                .arg(paths.size()), QMessageBox::Yes | QMessageBox::Cancel,
-                QMessageBox::Cancel) != QMessageBox::Yes)
+                .arg(paths.size()),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes)
         return;
     if (!page || page != referenceResultsPage_ || token != referenceToken_)
         return;
@@ -278,7 +291,7 @@ void MainWindow::touchReferenceHits(const QVector<ReferenceHit> &hits) {
     if (!errors.isEmpty())
         reportError("Some files could not be touched:\n" + errors.join('\n'));
     referencesStatus_->setText(errors.isEmpty() ? "Matching file timestamps updated."
-                                               : "File touch completed with errors; see status.");
+                                                : "File touch completed with errors; see status.");
 }
 
 void MainWindow::applyReferenceAppearance() {
@@ -291,7 +304,8 @@ void MainWindow::applyReferenceAppearance() {
     }
     rows->setAppearance(configuration_);
     auto font = QFont(configuration_.editor.typography.family.isEmpty()
-                          ? UiAppearance::sourceFont() : configuration_.editor.typography.family);
+                          ? UiAppearance::sourceFont()
+                          : configuration_.editor.typography.family);
     font.setPointSizeF(configuration_.editor.typography.pointSize);
     referencesList_->setFont(font);
     referencesList_->setIconSize(QSize(configuration_.ui.iconSize, configuration_.ui.iconSize));
@@ -306,8 +320,9 @@ void MainWindow::applyReferenceAppearance() {
         referencesList_->setColumnHidden(column, true);
     referencesList_->header()->setStretchLastSection(false);
     referencesList_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    referencesList_->setStyleSheet("QTreeWidget { background:" +
-        configuration_.color("source.background").name() + "; border:none; }");
+    referencesList_->setStyleSheet(
+        "QTreeWidget { background:" + configuration_.color("source.background").name() +
+        "; border:none; }");
     referencesList_->doItemsLayout();
     qobject_cast<ReferenceResultsView *>(referencesList_)->rebuildTextDocument();
     referencesList_->viewport()->update();
@@ -321,7 +336,8 @@ void MainWindow::rebuildReferenceResults() {
     referenceRows_.clear();
     for (const auto &group : referenceGroups_) {
         const auto query = queryFor(group);
-        auto *heading = referencesList_ ? new QTreeWidgetItem(referencesList_, {group.title}) : nullptr;
+        auto *heading =
+            referencesList_ ? new QTreeWidgetItem(referencesList_, {group.title}) : nullptr;
         if (heading) {
             QSet<QString> files;
             for (const auto &hit : group.hits)
@@ -329,8 +345,10 @@ void MainWindow::rebuildReferenceResults() {
             heading->setData(0, ReferenceItemRole::Heading, true);
             heading->setData(0, ReferenceItemRole::Query, query);
             heading->setData(0, ReferenceItemRole::DisplayText,
-                QString("---- %1 Matches (%2 in %3 files) ----")
-                    .arg(query).arg(group.hits.size()).arg(files.size()));
+                             QString("---- %1 Matches (%2 in %3 files) ----")
+                                 .arg(query)
+                                 .arg(group.hits.size())
+                                 .arg(files.size()));
         }
         const auto &o = group.output;
         for (const auto &hit : group.hits) {
@@ -340,19 +358,19 @@ void MainWindow::rebuildReferenceResults() {
             const auto path = o.relativePaths && !projectPath_.isEmpty()
                                   ? QDir(projectPath_).relativeFilePath(hit.location.path)
                                   : hit.location.path;
-            auto *row = new QTreeWidgetItem(heading,
-                {resultText(hit, o, projectPath_),
-                 o.file ? path : QString{}, o.line ? QString::number(hit.line + 1) : QString{},
-                 o.text ? hit.text : QString{}});
+            auto *row = new QTreeWidgetItem(
+                heading, {resultText(hit, o, projectPath_), o.file ? path : QString{},
+                          o.line ? QString::number(hit.line + 1) : QString{},
+                          o.text ? hit.text : QString{}});
             row->setData(0, Qt::UserRole, static_cast<int>(referenceHits_.size()) - 1);
             row->setData(0, ReferenceItemRole::Query, query);
             row->setData(0, ReferenceItemRole::DisplayText, resultText(hit, o, projectPath_));
             if (hit.linked)
                 row->setIcon(0, UiAppearance::icon(hit.stale ? "warning" : "referenceLink"));
             const auto tip = hit.location.path + ':' + QString::number(hit.line + 1) +
-                (hit.stale ? "\nStale target; rerun the search."
-                           : hit.linked ? "\nClick the link icon to open; click text to preview."
-                                        : "\nSource links were disabled for this search.");
+                             (hit.stale    ? "\nStale target; rerun the search."
+                              : hit.linked ? "\nClick the link icon to open; click text to preview."
+                                           : "\nSource links were disabled for this search.");
             for (int column = 0; column < 4; ++column)
                 row->setToolTip(column, tip);
             referenceRows_.append(row);
@@ -391,7 +409,8 @@ void MainWindow::updateSearchOutline() {
     }
     if (!outline_->currentItem() && outline_->topLevelItemCount())
         outline_->setCurrentItem(outline_->topLevelItem(0));
-    outlineState_->setText(QString("%1 searched symbols - Delete removes selected results").arg(queries.size()));
+    outlineState_->setText(
+        QString("%1 searched symbols - Delete removes selected results").arg(queries.size()));
     filterOutline();
     updateActions();
 }
@@ -446,7 +465,8 @@ void MainWindow::removeSearchQuery() {
 void MainWindow::showReferenceResults(int index) {
     if (!referenceResultsPage_) {
         ensureReferenceResults();
-        referencesStatus_->setText("Saved search history. Source links are validated before navigation.");
+        referencesStatus_->setText(
+            "Saved search history. Source links are validated before navigation.");
     }
     if (index < 0)
         index = selectedReferenceIndex_;
@@ -485,7 +505,8 @@ void MainWindow::returnToReferenceResults(const QString &path, int line) {
     const auto matches = [&](int i) {
         const auto &hit = referenceHits_[i];
         return hit.linked && !hit.stale && hit.line == line &&
-               workspacePath(hit.location.path) == identity && hit.location.expectedHash == sourceHash;
+               workspacePath(hit.location.path) == identity &&
+               hit.location.expectedHash == sourceHash;
     };
     if (selectedReferenceIndex_ >= 0 && selectedReferenceIndex_ < referenceHits_.size() &&
         matches(selectedReferenceIndex_)) {
@@ -518,7 +539,8 @@ void MainWindow::activateReferenceResult(bool open) {
     if (showingReferenceOutline_) {
         const QSignalBlocker block(outline_);
         for (int i = 0; i < outline_->topLevelItemCount(); ++i)
-            if (outline_->topLevelItem(i)->data(0, ReferenceItemRole::Query).toString() == selectedSearchQuery_)
+            if (outline_->topLevelItem(i)->data(0, ReferenceItemRole::Query).toString() ==
+                selectedSearchQuery_)
                 outline_->setCurrentItem(outline_->topLevelItem(i));
     }
     const auto &hit = referenceHits_[index];
@@ -528,15 +550,14 @@ void MainWindow::activateReferenceResult(bool open) {
                                   : "Source links were disabled for this search.");
         return;
     }
-    if (open)
-    {
+    if (open) {
         auto location = hit.location;
         location.wholeLine = true;
         navigateTo(location, true, true);
-    }
-    else {
+    } else {
         SourceSymbol symbol;
-        symbol.name = hit.container.isEmpty() ? QFileInfo(hit.location.path).fileName() : hit.container;
+        symbol.name =
+            hit.container.isEmpty() ? QFileInfo(hit.location.path).fileName() : hit.container;
         symbol.start = symbol.nameStart = hit.location.start;
         symbol.end = symbol.nameEnd = hit.location.end;
         previewTarget({hit.location.path, hit.location.expectedHash, symbol, false}, "Reference");
@@ -599,7 +620,8 @@ void MainWindow::lookupSymbolReferences() {
         const auto *item = outline_->currentItem();
         if (doc && item && item->data(0, Qt::UserRole).isValid()) {
             const int index = item->data(0, Qt::UserRole).toInt();
-            if (doc->revision != doc->analyzedRevision || index < 0 || index >= doc->analysis.symbols.size()) {
+            if (doc->revision != doc->analyzedRevision || index < 0 ||
+                index >= doc->analysis.symbols.size()) {
                 reportError("Symbols are updating; retry after analysis finishes.");
                 return;
             }
@@ -610,8 +632,8 @@ void MainWindow::lookupSymbolReferences() {
     lookupReferences();
 }
 
-void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
-                                  const QString &symbolPath, int symbolPosition) {
+void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const QString &symbolPath,
+                                  int symbolPosition) {
     if (!editor)
         editor = contextPreviewEditor_->hasFocus() ? contextPreviewEditor_ : activeEditor();
     auto *doc = currentDocument();
@@ -621,8 +643,12 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
     QString word;
     if (!path.isEmpty()) {
         auto *live = findDocument(path);
-        const auto file = live ? FileContents{snapshot(live), {}, live->hasUtf8Bom} : readSourceFile(path);
-        if (!file.error.isEmpty()) { reportError(file.error); return; }
+        const auto file =
+            live ? FileContents{snapshot(live), {}, live->hasUtf8Bom} : readSourceFile(path);
+        if (!file.error.isEmpty()) {
+            reportError(file.error);
+            return;
+        }
         bytes = file.bytes;
     } else if (editor && (doc || editor == contextPreviewEditor_)) {
         path = editor == contextPreviewEditor_ ? contextPath_ : doc->path;
@@ -636,8 +662,10 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
                    (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
         };
         int start = position, end = position;
-        while (start > 0 && identifierByte(bytes[start - 1])) --start;
-        while (end < bytes.size() && identifierByte(bytes[end])) ++end;
+        while (start > 0 && identifierByte(bytes[start - 1]))
+            --start;
+        while (end < bytes.size() && identifierByte(bytes[end]))
+            ++end;
         position = start;
         word = QString::fromUtf8(bytes.mid(start, end - start));
     }
@@ -687,7 +715,8 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
     mode->addItem("Regular Expression", static_cast<int>(SearchMethod::RegularExpression));
     mode->addItem("Keyword Expression", static_cast<int>(SearchMethod::KeywordExpression));
     mode->addItem("Look Up Reference", static_cast<int>(SearchMethod::References));
-    mode->addItem("Text Occurrences (Whole Identifiers)", static_cast<int>(SearchMethod::Occurrences));
+    mode->addItem("Text Occurrences (Whole Identifiers)",
+                  static_cast<int>(SearchMethod::Occurrences));
     mode->setCurrentIndex(mode->findData(static_cast<int>(initial.method)));
     auto *scope = new QComboBox(dialog);
     scope->setObjectName("referenceScope");
@@ -715,7 +744,8 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
     auto *declarations = new QCheckBox("Include Declarations", dialog);
     declarations->setObjectName("referenceDeclarations");
     declarations->setChecked(settings.declarations);
-    declarations->setToolTip("Include declarations as well as uses when smart reference matching is enabled.");
+    declarations->setToolTip(
+        "Include declarations as well as uses when smart reference matching is enabled.");
     auto *skipComments = new QCheckBox("Skip Co&mments", dialog);
     skipComments->setObjectName("referenceSkipComments");
     skipComments->setChecked(initial.comments == CommentSearch::Exclude);
@@ -742,14 +772,17 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
     auto *smart = new QCheckBox("Smart &Reference Matching", dialog);
     smart->setObjectName("referenceSmartMatching");
     smart->setChecked(initial.smartMatching);
-    smart->setToolTip("Find uses of the exact selected symbol through the language server, not unrelated names.");
+    smart->setToolTip(
+        "Find uses of the exact selected symbol through the language server, not unrelated names.");
     auto *inactive = new QCheckBox("Skip Inacti&ve Code", dialog);
     inactive->setObjectName("referenceSkipInactive");
     inactive->setChecked(initial.skipInactive);
-    inactive->setToolTip("Use C/C++ compiler configuration to skip inactive code; uncertain regions are retained with warnings.");
+    inactive->setToolTip("Use C/C++ compiler configuration to skip inactive code; uncertain "
+                         "regions are retained with warnings.");
     auto *touch = new QCheckBox("Touch files and cause recompile", dialog);
     touch->setObjectName("referenceTouchFiles");
-    touch->setToolTip("After all result pages are loaded, confirm before updating matching file timestamps. Contents are never rewritten.");
+    touch->setToolTip("After all result pages are loaded, confirm before updating matching file "
+                      "timestamps. Contents are never rewritten.");
     auto *context = new QSpinBox(dialog);
     context->setObjectName("referenceContextLines");
     context->setRange(0, 1000);
@@ -773,7 +806,8 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
     auto *replaceResults = new QCheckBox("Replace all results", dialog);
     replaceResults->setObjectName("referenceReplaceResults");
     replaceResults->setToolTip(
-        "Unchecked appends to existing searches. Checked replaces all searches only after every result page "
+        "Unchecked appends to existing searches. Checked replaces all searches only after every "
+        "result page "
         "completes successfully. Failed or cancelled searches keep the previous results.");
     rightOptions->addWidget(replaceResults);
     auto *contextControls = new QWidget(dialog);
@@ -791,7 +825,8 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
     include->setObjectName("referenceOutputOptions");
     include->setAutoDefault(false);
     include->setMinimumSize(158, 28);
-    connect(include, &QPushButton::clicked, dialog, [dialog, output] { outputDialog(dialog, output); });
+    connect(include, &QPushButton::clicked, dialog,
+            [dialog, output] { outputDialog(dialog, output); });
     optionsLayout->addWidget(include, 1, 0, Qt::AlignLeft);
     mainLayout->addWidget(optionsGroup, 1);
     auto *status = new QLabel(dialog);
@@ -838,10 +873,13 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
         context->setEnabled(keywords);
         variations->setEnabled(keywords);
         fragments->setEnabled(keywords);
-        status->setText(semantic
-            ? "Exact symbol references require a language server. Comments, strings, inactive branches "
-              "and project coverage depend on that provider; no text fallback is performed."
-            : "Text searches are not semantic. Keyword operators: AND, OR, NOT, +, !, -, =term, ? \"regex\".");
+        status->setText(
+            semantic
+                ? "Exact symbol references require a language server. Comments, strings, inactive "
+                  "branches "
+                  "and project coverage depend on that provider; no text fallback is performed."
+                : "Text searches are not semantic. Keyword operators: AND, OR, NOT, +, !, -, "
+                  "=term, ? \"regex\".");
     };
     connect(mode, &QComboBox::currentIndexChanged, dialog, updateMethod);
     connect(smart, &QCheckBox::toggled, dialog, updateMethod);
@@ -851,8 +889,9 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
         options.method = static_cast<SearchMethod>(mode->currentData().toInt());
         options.caseSensitive = sensitive->isChecked();
         options.wholeWords = whole->isChecked();
-        options.comments = onlyComments->isChecked() ? CommentSearch::Only
-                            : skipComments->isChecked() ? CommentSearch::Exclude : CommentSearch::Include;
+        options.comments = onlyComments->isChecked()   ? CommentSearch::Only
+                           : skipComments->isChecked() ? CommentSearch::Exclude
+                                                       : CommentSearch::Include;
         options.strings = strings->isChecked();
         options.skipInactive = inactive->isChecked();
         options.smartMatching = smart->isChecked();
@@ -863,11 +902,15 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
         options.output = *output;
         const auto text = query->text();
         const auto validation = validateReferenceSearch(text, options);
-        if (!validation.isEmpty()) { status->setText(validation); return; }
+        if (!validation.isEmpty()) {
+            status->setText(validation);
+            return;
+        }
         const bool semantic = options.method == SearchMethod::References && options.smartMatching;
         if (semantic && (path.isEmpty() || word.isEmpty() || text != word)) {
-            status->setText("Select the intended symbol in source or a symbol window for smart matching. "
-                            "For a typed name, disable Smart reference matching.");
+            status->setText(
+                "Select the intended symbol in source or a symbol window for smart matching. "
+                "For a typed name, disable Smart reference matching.");
             return;
         }
         if (scope->currentIndex() == 1 && path.isEmpty()) {
@@ -876,11 +919,13 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
         }
         if (semantic) {
             auto *live = findDocument(path);
-            const auto latest = live ? FileContents{snapshot(live), {}, live->hasUtf8Bom}
-                                     : readSourceFile(path);
+            const auto latest =
+                live ? FileContents{snapshot(live), {}, live->hasUtf8Bom} : readSourceFile(path);
             if (!latest.error.isEmpty() || latest.bytes != bytes) {
-                status->setText(latest.error.isEmpty()
-                    ? "Source changed. Select the symbol again before smart matching." : latest.error);
+                status->setText(
+                    latest.error.isEmpty()
+                        ? "Source changed. Select the symbol again before smart matching."
+                        : latest.error);
                 return;
             }
         }
@@ -903,10 +948,13 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
         referenceOverlays_ = liveOverlays();
         if (auto *origin = findDocument(path);
             origin && std::none_of(referenceOverlays_.cbegin(), referenceOverlays_.cend(),
-                [&](const auto &overlay) { return workspacePath(overlay.path) == workspacePath(path); }))
-            referenceOverlays_.append({path, snapshot(origin),
-                origin->analyzedRevision == origin->revision ? origin->analysis : SourceAnalysis{},
-                origin->snapshotHash});
+                                   [&](const auto &overlay) {
+                                       return workspacePath(overlay.path) == workspacePath(path);
+                                   }))
+            referenceOverlays_.append(
+                {path, snapshot(origin),
+                 origin->analyzedRevision == origin->revision ? origin->analysis : SourceAnalysis{},
+                 origin->snapshotHash});
         referencesFiles_.clear();
         referencesScope_ = scope->currentText();
         if (scope->currentIndex() == 1)
@@ -920,16 +968,25 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
                 if (!referencesFiles_.contains(overlay.path))
                     referencesFiles_ << overlay.path;
         }
-        const auto filters = options.filePatterns.split(QRegularExpression("[;\\s]+"), Qt::SkipEmptyParts);
+        const auto filters =
+            options.filePatterns.split(QRegularExpression("[;\\s]+"), Qt::SkipEmptyParts);
         referencesFiles_.removeDuplicates();
         if (!filters.isEmpty())
-            referencesFiles_.removeIf([&](const auto &file) { return !QDir::match(filters, QFileInfo(file).fileName()); });
+            referencesFiles_.removeIf([&](const auto &file) {
+                return !QDir::match(filters, QFileInfo(file).fileName());
+            });
         if (referencesFiles_.isEmpty()) {
             status->setText("No files in the selected scope and file types.");
             return;
         }
-        referenceRequest_ = {text, referencesFiles_, referenceOverlays_, options, projectPath_,
-                             0, RuntimeLimits::ReferenceResults, {}};
+        referenceRequest_ = {text,
+                             referencesFiles_,
+                             referenceOverlays_,
+                             options,
+                             projectPath_,
+                             0,
+                             RuntimeLimits::ReferenceResults,
+                             {}};
         referenceSemantic_ = semantic;
         referenceTargets_.clear();
         referenceOriginPath_ = path;
@@ -951,12 +1008,14 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch,
                 for (const auto &overlay : referenceOverlays_)
                     if (auto *live = findDocument(overlay.path);
                         live && languageService(overlay.path, overlay.source) == service)
-                        service->syncDocument(overlay.path, overlay.source, static_cast<int>(live->revision));
+                        service->syncDocument(overlay.path, overlay.source,
+                                              static_cast<int>(live->revision));
                 auto *live = findDocument(path);
                 service->locations(path, bytes, live ? static_cast<int>(live->revision) : 0,
                                    position, token, "references", true, saved.declarations);
             } else
-                displayReferences({}, "No semantic provider is available. Select a text search explicitly.");
+                displayReferences(
+                    {}, "No semantic provider is available. Select a text search explicitly.");
         } else {
             // continueReferenceSearch creates its own generation and watcher.
             referenceSearchBusy_ = false;
@@ -974,7 +1033,8 @@ void MainWindow::continueReferenceSearch() {
     for (const auto &overlay : referenceRequest_.overlays)
         if (auto *doc = findDocument(overlay.path); doc && snapshot(doc) != overlay.source) {
             cancelReferenceSearch();
-            referencesStatus_->setText("Source changed since the search started. Previous results were kept; rerun the search.");
+            referencesStatus_->setText("Source changed since the search started. Previous results "
+                                       "were kept; rerun the search.");
             reportError(referencesStatus_->text());
             return;
         }
@@ -997,9 +1057,9 @@ void MainWindow::continueReferenceSearch() {
         const auto targets = referenceTargets_;
         const auto cancel = referenceCancelled_;
         job->setFuture(QtConcurrent::run([request, targets, cancel] {
-            return resolveSemanticReferences(targets, request.paths, request.query,
-                                               request.overlays, cancel, request.offset, request.limit,
-                                               request.options.skipInactive, request.expectedHashes);
+            return resolveSemanticReferences(
+                targets, request.paths, request.query, request.overlays, cancel, request.offset,
+                request.limit, request.options.skipInactive, request.expectedHashes);
         }));
     } else
         job->setFuture(QtConcurrent::run(searchReferences, request, referenceCancelled_));
@@ -1018,7 +1078,8 @@ void MainWindow::displayReferences(const QVector<LspLocation> &targets, const QS
     if (auto *doc = findDocument(referenceOriginPath_);
         doc && hash(snapshot(doc)) != referenceOriginHash_) {
         cancelReferenceSearch();
-        referencesStatus_->setText("Source changed during semantic lookup. Select the symbol again.");
+        referencesStatus_->setText(
+            "Source changed during semantic lookup. Select the symbol again.");
         reportError(referencesStatus_->text());
         return;
     }
@@ -1026,7 +1087,8 @@ void MainWindow::displayReferences(const QVector<LspLocation> &targets, const QS
         const auto source = readSourceFile(referenceOriginPath_);
         if (!source.error.isEmpty() || hash(source.bytes) != referenceOriginHash_) {
             cancelReferenceSearch();
-            referencesStatus_->setText("Source changed or became unreadable during semantic lookup. Rerun it.");
+            referencesStatus_->setText(
+                "Source changed or became unreadable during semantic lookup. Rerun it.");
             reportError(referencesStatus_->text());
             return;
         }
@@ -1053,17 +1115,22 @@ void MainWindow::displayReferenceHits(const ReferenceResults &results, bool sema
     for (const auto &hit : results.hits)
         files.insert(hit.location.path);
     const auto summary = QString("%1 - %2 matches in %3 files (%4; %5)%6%7")
-        .arg(referenceIdentifier_).arg(results.hits.size()).arg(files.size())
-        .arg(semantic ? "semantic references; provider coverage applies" : "text matches, not semantic",
-             referencesScope_)
-        .arg(results.cancelled ? " - cancelled" : "")
-        .arg(results.truncated ? " - more available" : "");
+                             .arg(referenceIdentifier_)
+                             .arg(results.hits.size())
+                             .arg(files.size())
+                             .arg(semantic ? "semantic references; provider coverage applies"
+                                           : "text matches, not semantic",
+                                  referencesScope_)
+                             .arg(results.cancelled ? " - cancelled" : "")
+                             .arg(results.truncated ? " - more available" : "");
     ReferenceGroup group{summary, referenceRequest_.options.output, {}, referenceIdentifier_};
     auto listed = referenceListedFiles_;
     for (auto hit : results.hits) {
-        if (auto *doc = findDocument(hit.location.path);
-            doc && hash(snapshot(doc)) != hit.location.expectedHash)
-            hit.stale = true;
+        if (auto *doc = findDocument(hit.location.path)) {
+            snapshot(doc);
+            if (doc->snapshotHash != hit.location.expectedHash)
+                hit.stale = true;
+        }
         hit.linked = group.output.links;
         if (group.output.file && !group.output.line && !group.output.text) {
             const auto identity = workspacePath(hit.location.path);
@@ -1078,14 +1145,17 @@ void MainWindow::displayReferenceHits(const ReferenceResults &results, bool sema
         previousHits = 0;
         for (const auto &pending : pendingReferenceGroups_)
             previousHits += pending.hits.size();
-        if (std::any_of(group.hits.cbegin(), group.hits.cend(), [](const auto &hit) { return hit.stale; })) {
+        if (std::any_of(group.hits.cbegin(), group.hits.cend(),
+                        [](const auto &hit) { return hit.stale; })) {
             cancelReferenceSearch();
-            referencesStatus_->setText("Source changed during replacement. Previous results were kept; rerun the search.");
+            referencesStatus_->setText(
+                "Source changed during replacement. Previous results were kept; rerun the search.");
             reportError(referencesStatus_->text());
             return;
         }
     }
-    const auto previousGroups = replaceReferenceResults_ ? pendingReferenceGroups_.size() : referenceGroups_.size();
+    const auto previousGroups =
+        replaceReferenceResults_ ? pendingReferenceGroups_.size() : referenceGroups_.size();
     if (previousGroups >= 1000 || previousHits + group.hits.size() > 100000) {
         cancelReferenceSearch();
         referencesStatus_->setText("Search history limit reached (1,000 groups / 100,000 rows). "
@@ -1106,7 +1176,8 @@ void MainWindow::displayReferenceHits(const ReferenceResults &results, bool sema
             referencesStatus_->setText(
                 QString("%1 - %2 matches pending replacement. Previous searches are unchanged. "
                         "Load More to finish, or Cancel Search to discard the pending results.")
-                    .arg(referenceIdentifier_).arg(referencePageOffset_));
+                    .arg(referenceIdentifier_)
+                    .arg(referencePageOffset_));
             referencesStatus_->setToolTip(summary + '\n' + results.warnings.join('\n'));
             for (const auto &warning : results.warnings)
                 qWarning().noquote() << warning;
@@ -1119,7 +1190,8 @@ void MainWindow::displayReferenceHits(const ReferenceResults &results, bool sema
         if (!saveProjectSession()) {
             referenceGroups_ = std::move(previous);
             cancelReferenceSearch();
-            referencesStatus_->setText("Could not save the replacement. Previous search results were kept.");
+            referencesStatus_->setText(
+                "Could not save the replacement. Previous search results were kept.");
             return;
         }
         replaceReferenceResults_ = false;
@@ -1145,7 +1217,8 @@ void MainWindow::displayReferenceHits(const ReferenceResults &results, bool sema
     if (touchReferenceResults_ && !results.cancelled) {
         referenceTouchHits_ += results.hits;
         if (results.truncated) {
-            referencesStatus_->setText(referencesStatus_->text() +
+            referencesStatus_->setText(
+                referencesStatus_->text() +
                 " Load all remaining pages before confirming timestamp updates.");
         } else {
             touchReferenceResults_ = false;
@@ -1174,7 +1247,8 @@ void MainWindow::removeReferenceResults() {
                 hits.removeAt(h);
     }
     rebuildReferenceResults();
-    referencesStatus_->setText("Selected results removed. Group headings describe the original search.");
+    referencesStatus_->setText(
+        "Selected results removed. Group headings describe the original search.");
 }
 
 void MainWindow::exportReferenceResults() {
@@ -1182,7 +1256,7 @@ void MainWindow::exportReferenceResults() {
     if (!page)
         return;
     const auto path = QFileDialog::getSaveFileName(this, "Export Search Results", {},
-                                                  "Text files (*.txt);;All files (*)");
+                                                   "Text files (*.txt);;All files (*)");
     if (path.isEmpty() || !page || page != referenceResultsPage_)
         return;
     const auto error = exportReferenceHistory(path, referenceGroups_, projectPath_);
@@ -1194,7 +1268,7 @@ void MainWindow::exportReferenceResults() {
 }
 
 void MainWindow::trackReferenceEdit(const QString &path, int position, int removed, int inserted,
-                                   const QByteArray &beforeHash, const QByteArray &source) {
+                                    const QByteArray &beforeHash, const QByteArray &source) {
     if (referenceGroups_.isEmpty())
         return;
     const auto identity = workspacePath(path);

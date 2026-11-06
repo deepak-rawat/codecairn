@@ -17,8 +17,21 @@ QString defaultStateDirectory() {
 QString workspacePath(const QString &path) {
     const QFileInfo info(path);
     const auto canonical = info.canonicalFilePath();
-    QString result = QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
-    return result;
+    if (!canonical.isEmpty())
+        return QDir::cleanPath(canonical);
+    auto ancestor = info.absoluteFilePath();
+    QStringList missing;
+    while (true) {
+        const QFileInfo parent(ancestor);
+        const auto resolved = parent.canonicalFilePath();
+        if (!resolved.isEmpty())
+            return QDir::cleanPath(QDir(resolved).filePath(missing.join('/')));
+        const auto directory = parent.absolutePath();
+        if (directory == ancestor)
+            return QDir::cleanPath(info.absoluteFilePath());
+        missing.prepend(parent.fileName());
+        ancestor = directory;
+    }
 }
 
 bool pathInWorkspace(const QString &path, const QString &root) {
