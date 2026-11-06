@@ -20,6 +20,14 @@ if(EXISTS "${tap}/.git")
         OUTPUT_VARIABLE repository
         OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
     )
+    if(CMAKE_HOST_WIN32 AND repository MATCHES "^/")
+        find_program(CYGPATH cygpath REQUIRED)
+        execute_process(
+            COMMAND "${CYGPATH}" -m "${repository}"
+            OUTPUT_VARIABLE repository
+            OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
+        )
+    endif()
     file(REAL_PATH "${tap}" tap_path)
     file(REAL_PATH "${repository}" repository_path)
     if(NOT

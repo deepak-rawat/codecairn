@@ -975,6 +975,11 @@ Use temporary workspaces/profiles and `MainWindow(false)` or explicit temporary
 state paths, never the user's settings/source. Test executables select isolated
 Qt test-mode identities and remove their temporary state.
 
+Navigation-tree Enter/Return activation must ignore disabled or absent current
+items without falling through to platform-dependent Qt activation. Packaging
+tests also cover MSYS2 Git's POSIX path output: local-tap ownership checks convert
+it with `cygpath` on Windows before comparing canonical native paths.
+
 Check skipped counts: real semantic tests may skip without clangd. Broader
 changes need broader suites. Offscreen success does not certify native focus,
 IME, font rasterization, accessibility, or platform packaging.

@@ -34,9 +34,9 @@ void NavigationTree::keyPressEvent(QKeyEvent *event) {
         (event->modifiers() == Qt::NoModifier || event->modifiers() == Qt::KeypadModifier)) {
         if (auto *item = currentItem(); item && (item->flags() & Qt::ItemIsEnabled)) {
             emit itemActivated(item, currentColumn());
-            event->accept();
-            return;
         }
+        event->accept();
+        return;
     }
     const auto *previous = currentItem();
     QTreeWidget::keyPressEvent(event);

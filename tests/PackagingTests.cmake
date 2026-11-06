@@ -106,6 +106,21 @@ if(EXISTS "${TEST_DIR}/uncommitted-tap/tap/.git")
     message(FATAL_ERROR "Local tap must not commit by default")
 endif()
 
+set(nested_root "${TEST_DIR}/nested-repository")
+invoke("${GIT}" init "${nested_root}")
+invoke("${GIT}" -C "${nested_root}" config core.worktree "${nested_root}")
+file(MAKE_DIRECTORY "${nested_root}/tap")
+file(WRITE "${nested_root}/tap/.git" "gitdir: ../.git\n")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DARCHIVE=${archive}" "-DOUTPUT=${TEST_DIR}/tap-work"
+        "-DLOCAL_ROOT=${nested_root}" -DCOMMIT_TAP=ON
+        -P "${SOURCE_DIR}/packaging/PrepareLocalTap.cmake"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+)
+if(result EQUAL 0 OR NOT error MATCHES "Local tap must be its own Git repository")
+    message(FATAL_ERROR "Nested tap repository was not rejected: ${output}\n${error}")
+endif()
+
 file(APPEND "${local_root}/tap/Formula/codecairn.rb" "# local edit\n")
 execute_process(COMMAND ${local_command} RESULT_VARIABLE result
                 OUTPUT_VARIABLE output ERROR_VARIABLE error)
@@ -118,7 +133,8 @@ if(NOT edited_formula MATCHES "# local edit")
 endif()
 execute_process(COMMAND "${GIT}" -C "${local_root}/tap" show HEAD:Formula/codecairn.rb
                 OUTPUT_VARIABLE committed_formula COMMAND_ERROR_IS_FATAL ANY)
-file(WRITE "${local_root}/tap/Formula/codecairn.rb" "${committed_formula}")
+file(CONFIGURE OUTPUT "${local_root}/tap/Formula/codecairn.rb"
+     CONTENT "${committed_formula}" @ONLY NEWLINE_STYLE UNIX)
 file(WRITE "${local_root}/artifacts/codecairn/codecairn-${VERSION}-source.tar.gz" "changed archive\n")
 execute_process(COMMAND ${local_command} RESULT_VARIABLE result
                 OUTPUT_VARIABLE output ERROR_VARIABLE error)

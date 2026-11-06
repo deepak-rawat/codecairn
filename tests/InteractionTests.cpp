@@ -99,6 +99,13 @@ void InteractionTests::enterActivatesNavigationTree() {
     item->setDisabled(true);
     QTest::keyClick(&tree, static_cast<Qt::Key>(key));
     QVERIFY(activated.isEmpty());
+    tree.setCurrentItem(nullptr);
+    QTest::keyClick(&tree, static_cast<Qt::Key>(key));
+    QVERIFY(activated.isEmpty());
+    item->setDisabled(false);
+    tree.setCurrentItem(item);
+    QTest::keyClick(&tree, static_cast<Qt::Key>(key), Qt::KeypadModifier);
+    QCOMPARE(activated.size(), 1);
 }
 
 void InteractionTests::previewTabsPinAndPreserveDirtyDocuments() {
