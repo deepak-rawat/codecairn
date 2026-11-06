@@ -189,7 +189,15 @@ codecairn_test(
     -o
     -,txt
 )
-codecairn_test(reference_tests ReferenceTests.cpp references)
+codecairn_test(
+    reference_tests
+    ReferenceTests.cpp
+    references
+    -o
+    reference-results.xml,junitxml
+    -o
+    reference-results.txt,txt
+)
 codecairn_test(index_parity_tests IndexParityTests.cpp index_parity)
 codecairn_test(
     reference_candidate_index_tests ReferenceCandidateIndexTests.cpp reference_candidate_index

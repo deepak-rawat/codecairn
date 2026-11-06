@@ -45,6 +45,7 @@ private slots:
     void pathAliasesPreserveFilteringAndOrder();
     void freshnessUsesContentsNotMetadata();
     void incrementalRefreshAndDeletion();
+    void initialSchemaIsNotVisibleUntilCommit();
     void missingLegacyAndVersionedPostings();
     void unsupportedAndUnreadableContent();
     void unchangedInvalidUtf8RefreshIsQuiet();
@@ -172,6 +173,36 @@ void ReferenceCandidateIndexTests::incrementalRefreshAndDeletion() {
     count.bind(2, paths[0]);
     QVERIFY(count.next());
     QCOMPARE(count.integer(0), 0);
+}
+
+void ReferenceCandidateIndexTests::initialSchemaIsNotVisibleUntilCommit() {
+    Fixture fixture;
+    fixture.write("a.cpp", "int other;\n");
+    const QStringList paths{fixture.path("a.cpp")};
+    QVERIFY(QDir().mkpath(QFileInfo(workspaceDatabase(fixture.root)).absolutePath()));
+    {
+        SymbolIndexStore writer(workspaceDatabase(fixture.root), true);
+        writer.exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;"
+                    "CREATE TABLE files(path TEXT PRIMARY KEY);");
+        const auto pending = referenceCandidateFiles(fixture.root, paths, "Needle", true);
+        QVERIFY2(pending.error.isEmpty(), qPrintable(pending.error));
+        QCOMPARE(pending.files, paths);
+        QVERIFY(pending.sourceHashes.isEmpty());
+        writer.exec("ROLLBACK; PRAGMA user_version=1;");
+        const auto legacy = referenceCandidateFiles(fixture.root, paths, "Needle", true);
+        QVERIFY2(legacy.error.isEmpty(), qPrintable(legacy.error));
+        QCOMPARE(legacy.files, paths);
+        writer.exec("PRAGMA user_version=3;");
+        const auto future = referenceCandidateFiles(fixture.root, paths, "Needle", true);
+        QVERIFY(future.error.contains("Unsupported workspace database version"));
+        QCOMPARE(future.files, paths);
+        writer.exec("PRAGMA user_version=0;");
+    }
+    const auto built = fixture.build();
+    QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
+    const auto ready = referenceCandidateFiles(fixture.root, paths, "Needle", true);
+    QVERIFY2(ready.error.isEmpty(), qPrintable(ready.error));
+    QVERIFY(ready.files.isEmpty());
 }
 
 void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {

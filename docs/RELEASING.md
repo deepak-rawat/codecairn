@@ -132,6 +132,8 @@ archives, preserves other packages, and does not invoke Homebrew.
 
 Homebrew compiles in its temporary build area, installs the app into its Cellar,
 and exposes `cairn` through its bin directory; it does not build in this checkout.
+The formula ad-hoc signs the managed app in `post_install`, after Homebrew's
+binary fixups, and `brew test` verifies that installed signature.
 After preparing an updated formula, run `brew update` and
 `brew upgrade local/releases/codecairn`. To remove it, run
 `brew uninstall local/releases/codecairn`. Never publish a formula with `file://`

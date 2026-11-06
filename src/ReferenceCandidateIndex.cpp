@@ -104,6 +104,19 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
     try {
         SymbolIndexStore database(workspaceDatabase(root), false);
         database.exec("BEGIN;");
+        {
+            IndexStatement version(database, "PRAGMA user_version");
+            version.next();
+            const auto schemaVersion = version.integer(0);
+            if (schemaVersion < 0 || schemaVersion > 2)
+                throw std::runtime_error(
+                    "Unsupported workspace database version; use a compatible CodeCairn version.");
+            if (schemaVersion < 2) {
+                qCDebug(indexLog) << "index.candidates_pending" << "root=" << root
+                                  << "schemaVersion=" << schemaVersion;
+                return result;
+            }
+        }
         IndexStatement metadata(
             database,
             "SELECT hash,version,ascii_only FROM reference_occurrence_files WHERE path=?");

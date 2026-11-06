@@ -687,17 +687,29 @@ void PrototypeTests::sourceBackgroundIsUniform() {
     QVERIFY(openTypographyFixture(window));
     QTRY_VERIFY_WITH_TIMEOUT(ready.count() > 0, 10000);
     QTest::qWait(50);
-    const auto image = window.activeEditor()->viewport()->grab().toImage();
-    // The fixture's lower lines are short; this strip contains no source text.
+    auto *editor = window.activeEditor();
+    const auto image = editor->viewport()->grab().toImage();
+    const auto scale = image.devicePixelRatio();
     const int x = image.width() - 10;
-    const int top = qRound(180 * window.devicePixelRatioF());
+    const int logicalX = static_cast<int>(x / scale);
+    const int lineHeight = static_cast<int>(editor->send(SCI_TEXTHEIGHT, 0));
+    const int top = qRound(180 * scale);
+    int sampled = 0;
     for (int y = top; y < image.height() - 10; ++y) {
+        const auto position =
+            editor->send(SCI_POSITIONFROMPOINTCLOSE, logicalX, static_cast<int>(y / scale));
+        const auto line = editor->send(SCI_LINEFROMPOSITION, position);
+        const auto end = editor->send(SCI_GETLINEENDPOSITION, line);
+        if (logicalX <= editor->send(SCI_POINTXFROMPOSITION, 0, end) + lineHeight)
+            continue;
         const auto color = image.pixelColor(x, y);
         QVERIFY2(qAbs(color.red() - 32) <= 1 && qAbs(color.green() - 32) <= 1 &&
                      qAbs(color.blue() - 32) <= 1,
                  qPrintable(
                      QString("Unexpected background %1 at %2,%3").arg(color.name()).arg(x).arg(y)));
+        ++sampled;
     }
+    QVERIFY(sampled >= qRound(lineHeight * scale));
 }
 
 void PrototypeTests::capturesTypographyPrototype() {
@@ -716,10 +728,12 @@ void PrototypeTests::capturesTypographyPrototype() {
     QVERIFY(writeSourceFile(path, fixture.bytes, false).isEmpty());
     QVERIFY(writeSourceFile(dir.filePath("typography.h"), header.bytes, false).isEmpty());
     const QJsonArray commands{QJsonObject{
-        {"directory", dir.path()}, {"file", path},
+        {"directory", dir.path()},
+        {"file", path},
         {"arguments", QJsonArray{"clang++", "-std=c++20", "-I" + dir.path(), "-c", path}}}};
     QVERIFY(writeSourceFile(compilation.filePath("compile_commands.json"),
-                           QJsonDocument(commands).toJson(), false).isEmpty());
+                            QJsonDocument(commands).toJson(), false)
+                .isEmpty());
     QVERIFY(WorkspaceOptionsStore::initialize(dir.path()).isEmpty());
     QVERIFY(WorkspaceOptionsStore::saveOptions(dir.path(), compilation.path(), {}).isEmpty());
     MainWindow window(false);
@@ -769,7 +783,7 @@ void PrototypeTests::capturesTypographyPrototype() {
     window.activeEditor()->send(SCI_SETFIRSTVISIBLELINE, 8);
     QTest::qWait(750);
     const QRegularExpression error("(diagnostic|error|failed|unavailable|warning)",
-                                  QRegularExpression::CaseInsensitiveOption);
+                                   QRegularExpression::CaseInsensitiveOption);
     for (const auto &status : statuses)
         QVERIFY2(!error.match(status.first().toString()).hasMatch(),
                  qPrintable(status.first().toString()));

@@ -573,6 +573,9 @@ clear dirty state, or replace dirty buffers in background.
 SQLite schema version is **2**. Version 1 migrates transactionally; unsupported
 newer versions are rejected. The reference tables are created when absent and
 carry a separate per-file posting version.
+Candidate readers check the schema version inside their read transaction. Before
+the initial schema or a legacy migration commits, they retain all source files
+for a full search; a version-2 database with missing tables remains an error.
 
 | Table | Purpose / fields |
 |---|---|
@@ -846,7 +849,9 @@ source-only Homebrew formula. There is no cask or CodeCairn bottle generation.
 Homebrew recipe generation uses `PrepareRecipes.cmake`, recording the source
 archive URL, version and hash. The formula lives in
 `homebrew/Formula/codecairn.rb`. The formula resolves real dependency prefixes, uses
-declared CMake/Ninja tools, runs tests offscreen, and ad-hoc signs the managed app.
+declared CMake/Ninja tools, and runs tests offscreen. Its `post_install` hook
+ad-hoc signs nested code and the managed app after Homebrew's linkage/cleanup
+fixups; the formula test verifies the installed signature without repairing it.
 `PrepareLocalTap.cmake` reuses that generator, stores immutable release archives
 under `<LOCAL_ROOT>/artifacts/codecairn`, and updates only `tap/Formula/codecairn.rb`
 in the generic `local/releases` tap. It protects modified formulas and different
@@ -985,6 +990,12 @@ changes need broader suites. Offscreen success does not certify native focus,
 IME, font rasterization, accessibility, or platform packaging.
 Reports live in the build directory, starting with
 `Testing/Temporary/LastTest.log` and each suite's XML/text output.
+Reference tests write `reference-results.xml` and `reference-results.txt` so
+failed or timed-out Windows runs retain per-test progress.
+Background rendering tests derive text-free probe rows from Scintilla geometry
+rather than assuming a particular platform font or fixture width.
+Offscreen rendering still needs installed fonts; the minimal Arch CI container
+installs `ttf-dejavu` so Qt and Scintilla have valid glyph metrics.
 Windows atomic-save fixtures wait for startup readers before replacement.
 
 ### Refactoring contracts and performance

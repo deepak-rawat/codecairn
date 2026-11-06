@@ -237,7 +237,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --needed --noconfirm git cmake ninja qt6-base qt6-5compat \
-            tree-sitter sqlite re2 clang llvm-libs namcap
+            tree-sitter sqlite re2 clang llvm-libs namcap ttf-dejavu
           useradd -m builder
       - uses: actions/download-artifact@v4
         with:
