@@ -699,11 +699,12 @@ with a matching target, for example `-DCMAKE_OSX_DEPLOYMENT_TARGET=27.0`.
 This changes only the build cache, not the default macOS 26 release target.
 Release/CI dependencies must themselves support macOS 26.
 
-In VS Code CMake Tools, kit mode uses `cmake.configureSettings` in local
-`.vscode/settings.json` for dependency prefixes. Preset mode uses
-`CMakeUserPresets.json`; set `cmake.useCMakePresets` to `always` if there is no
-shared `CMakePresets.json`. Both local configuration files are Git-ignored;
-do not commit machine-specific paths.
+The shared `.vscode/settings.json` enables compilation database export and the
+Microsoft C/C++ extension's CMake Tools configuration provider. After installing
+dependencies, select the platform compiler kit and configure; CMake Tools supplies
+the discovered header paths to IntelliSense. Keep personal overrides in VS Code
+user settings for kit mode, or Git-ignored `CMakeUserPresets.json` for preset mode.
+Set `cmake.useCMakePresets` to `always` when using only user presets.
 
 ### Dependency resolution
 
@@ -714,10 +715,21 @@ do not commit machine-specific paths.
 | clangd | Optional executable discovery |
 | Scintilla and grammars | Hash-pinned FetchContent archives or local overrides |
 
-Package managers install system dependencies; CMake finds them. Use
+Package managers install system dependencies; CMake finds them. Native macOS
+builds discover Homebrew through `brew --prefix`, including its keg-only LLVM
+and SQLite prefixes. Native MinGW builds search the selected compiler's prefix;
+Linux builds also query `llvm-config --prefix` when available. These discovered
+prefixes are appended after explicit `CMAKE_PREFIX_PATH` entries, and explicit
+dependency cache variables remain authoritative. Cross-compilation skips these
+host-package hints; provide the target toolchain and dependency paths instead.
+No packages are installed during configuration. Use
 `CMAKE_PREFIX_PATH` for nonstandard prefixes or explicit
 `LIBCLANG_INCLUDE_DIR` / `LIBCLANG_LIBRARY`. The Tree-sitter ABI probe checks
 support for grammar ABI 14 and 15; the CLI alone is insufficient.
+
+Existing caches retain previously selected libraries. To rediscover them, use a
+fresh build directory or clear the affected dependency cache entries; adding a
+prefix does not replace a cached system SQLite or LLVM selection.
 
 `codecairn_source()` prefers a local override, otherwise a pinned archive when
 downloads are allowed. `codecairn_grammar()` registers parser/scanner targets and

@@ -46,15 +46,14 @@ Use a recent distribution whose packages meet the requirements above:
 sudo apt install build-essential cmake ninja-build qt6-base-dev \
     qt6-5compat-dev libtree-sitter-dev libsqlite3-dev libre2-dev \
     libclang-dev llvm-dev clangd
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$(llvm-config --prefix)"
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
 ### macOS: Apple Silicon, macOS 26+
 
 ```sh
 brew install cmake ninja qt tree-sitter sqlite re2 llvm
-export PATH="$(brew --prefix llvm)/bin:$PATH"
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH="$(brew --prefix qt);$(brew --prefix tree-sitter);$(brew --prefix sqlite);$(brew --prefix re2);$(brew --prefix llvm)"
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 ```
 
 ### Build, test, and launch

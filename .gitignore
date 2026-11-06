@@ -1,4 +1,3 @@
 /build/
 .DS_Store
 /CMakeUserPresets.json
-/.vscode/settings.json
