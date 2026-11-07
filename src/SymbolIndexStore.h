@@ -7,7 +7,7 @@ struct sqlite3_stmt;
 
 namespace WorkspaceIndexDetail {
 
-inline constexpr const char *ParserVersion = "codecairn-multilanguage-compiler-v12";
+inline constexpr const char *ParserVersion = "codecairn-multilanguage-compiler-v13";
 inline constexpr qint64 ReferenceOccurrenceVersion = 1;
 
 // Closing the connection rolls back an uncommitted build after its statements are destroyed.

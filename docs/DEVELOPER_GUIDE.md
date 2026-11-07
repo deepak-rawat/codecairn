@@ -752,6 +752,10 @@ Downloaded sources currently use Scintilla 5.6.9, Linux Tree-sitter runtime
 snapshots may be newer than their last release tag; TypeScript and TSX share
 one pin. Generated grammars use ABI 14/15, supported by runtime 0.27.1.
 Changing grammar revisions also bumps ParserVersion to rebuild saved indexes.
+Compiler recovery distinguishes typedef-named anonymous records from named
+macro expansions using the token at the cursor location, not equal spelling
+and expansion offsets alone. Clang 18 reports equal offsets for object-like
+macros; regression coverage retains those named structs, unions and enums.
 
 ### Offline builds
 

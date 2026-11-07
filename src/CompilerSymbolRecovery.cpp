@@ -118,10 +118,17 @@ bool anonymousTag(CXCursor cursor, const Visitor &data) {
     const auto location = clang_getCursorLocation(cursor);
     clang_getSpellingLocation(location, &spellingFile, nullptr, nullptr, &spellingOffset);
     clang_getExpansionLocation(location, &expansionFile, nullptr, nullptr, &expansionOffset);
-    // Clang can give an unnamed tag its typedef's name at the tag keyword's location.
-    return spellingFile && expansionFile && clang_File_isEqual(spellingFile, expansionFile) &&
-           spellingOffset == expansionOffset &&
-           data.source.mid(expansionOffset, name.size()) != name;
+    if (!spellingFile || !expansionFile || !clang_File_isEqual(spellingFile, expansionFile) ||
+        spellingOffset != expansionOffset || data.source.mid(expansionOffset, name.size()) == name)
+        return false;
+    // Older Clang also reports equal offsets for named object-like macro expansions.
+    const auto unit = clang_Cursor_getTranslationUnit(cursor);
+    auto *token = clang_getToken(unit, location);
+    if (!token)
+        return false;
+    const auto text = string(clang_getTokenSpelling(unit, *token));
+    clang_disposeTokens(unit, token, 1);
+    return text == "struct" || text == "class" || text == "union" || text == "enum";
 }
 
 CXChildVisitResult collect(CXCursor cursor, CXCursor, CXClientData user) {
@@ -353,7 +360,7 @@ void recoverCompilerSymbols(SourceAnalysis &analysis, const QByteArray &source,
 }
 
 InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray &source,
-                                         const QVector<SymbolOverlay> &overlays) {
+                                          const QVector<SymbolOverlay> &overlays) {
     InactiveCodeRanges result;
     const auto fail = [&](const QString &error) {
         result.error = error;
@@ -376,7 +383,8 @@ InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray 
         while (matches.hasNext()) {
             const auto condition = matches.next();
             if ((condition.captured(1) != "if" && condition.captured(1) != "elif") ||
-                (condition.captured(2).trimmed() != "0" && condition.captured(2).trimmed() != "1")) {
+                (condition.captured(2).trimmed() != "0" &&
+                 condition.captured(2).trimmed() != "1")) {
                 return fail("No exact compilation command for conditional macros; uncertain text "
                             "was retained.");
             }
@@ -391,12 +399,13 @@ InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray 
     QVector<QByteArray> overlayNames;
     QVector<const SymbolOverlay *> included;
     for (const auto &overlay : overlays)
-        if (QDir::isAbsolutePath(overlay.path) && workspacePath(overlay.path) != workspacePath(path)) {
+        if (QDir::isAbsolutePath(overlay.path) &&
+            workspacePath(overlay.path) != workspacePath(path)) {
             overlayNames.append(QFileInfo(overlay.path).absoluteFilePath().toUtf8());
             included.append(&overlay);
         }
-    QVector<CXUnsavedFile> unsaved{{filename.constData(), source.constData(),
-                                  static_cast<unsigned long>(source.size())}};
+    QVector<CXUnsavedFile> unsaved{
+        {filename.constData(), source.constData(), static_cast<unsigned long>(source.size())}};
     for (int i = 0; i < included.size(); ++i)
         unsaved.append({overlayNames[i].constData(), included[i]->source.constData(),
                         static_cast<unsigned long>(included[i]->source.size())});
@@ -405,10 +414,9 @@ InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray 
         return fail("Compiler could not determine inactive regions; all text was retained.");
     CXTranslationUnit unit = nullptr;
     const auto error = clang_parseTranslationUnit2(
-        index, filename.constData(), raw.constData(), static_cast<int>(raw.size()),
-        unsaved.data(), static_cast<unsigned>(unsaved.size()),
-        CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_KeepGoing,
-        &unit);
+        index, filename.constData(), raw.constData(), static_cast<int>(raw.size()), unsaved.data(),
+        static_cast<unsigned>(unsaved.size()),
+        CXTranslationUnit_DetailedPreprocessingRecord | CXTranslationUnit_KeepGoing, &unit);
     if (error != CXError_Success || !unit) {
         qCWarning(analysisLog) << "analysis.compiler_failed" << "path=" << path
                                << "stage=inactive_parse" << "code=" << error;
@@ -420,7 +428,8 @@ InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray 
         for (unsigned i = 0; i < clang_getNumDiagnostics(unit); ++i) {
             const auto diagnostic = clang_getDiagnostic(unit, i);
             if (clang_getDiagnosticSeverity(diagnostic) >= CXDiagnostic_Error) {
-                result.error = "Compiler diagnostics prevent reliable inactive-code filtering; all text was retained.";
+                result.error = "Compiler diagnostics prevent reliable inactive-code filtering; all "
+                               "text was retained.";
                 if (reported < 12) {
                     qCWarning(analysisLog)
                         << "analysis.compiler_diagnostic" << "path=" << path << "stage=inactive"
@@ -437,10 +446,10 @@ InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray 
             if (ranges) {
                 for (unsigned i = 0; i < ranges->count; ++i) {
                     unsigned start = 0, end = 0;
-                    clang_getExpansionLocation(clang_getRangeStart(ranges->ranges[i]),
-                                                nullptr, nullptr, nullptr, &start);
-                    clang_getExpansionLocation(clang_getRangeEnd(ranges->ranges[i]),
-                                                nullptr, nullptr, nullptr, &end);
+                    clang_getExpansionLocation(clang_getRangeStart(ranges->ranges[i]), nullptr,
+                                               nullptr, nullptr, &start);
+                    clang_getExpansionLocation(clang_getRangeEnd(ranges->ranges[i]), nullptr,
+                                               nullptr, nullptr, &end);
                     result.ranges.append({static_cast<int>(start), static_cast<int>(end)});
                 }
                 clang_disposeSourceRangeList(ranges);

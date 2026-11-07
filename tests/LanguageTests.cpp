@@ -317,7 +317,11 @@ void LanguageTests::anonymousCompilerRecordsKeepOnlyNamedSymbols() {
                               "#define RECORD(name) struct name { int member; };\n"
                               "RECORD(Generated)\n"
                               "#define FIXED struct Fixed { int fixed_member; };\n"
-                              "FIXED\n";
+                              "FIXED\n"
+                              "#define FIXED_UNION union FixedUnion { int union_member; };\n"
+                              "FIXED_UNION\n"
+                              "#define FIXED_ENUM enum FixedEnum { FixedValue };\n"
+                              "FIXED_ENUM\n";
     QVERIFY(writeSourceFile(path, source, false).isEmpty());
     SourceAnalysis compiler;
     compiler.language = LanguageId::C;
@@ -328,9 +332,17 @@ void LanguageTests::anonymousCompilerRecordsKeepOnlyNamedSymbols() {
         QVERIFY2(!symbol.name.contains("(unnamed"), qPrintable(symbol.name));
         names.insert(symbol.name);
     }
-    for (const auto &name : {"Container", "value", "nested", "Alias", "count", "Generated",
-                             "member", "Fixed", "fixed_member"})
-        QVERIFY2(names.contains(name), name);
+    for (const auto &name :
+         {"Container", "value", "nested", "Alias", "count", "Generated", "member", "Fixed",
+          "fixed_member", "FixedUnion", "union_member", "FixedEnum", "FixedValue"})
+        QVERIFY2(names.contains(name), qPrintable(QString(name) + " missing; got: " +
+                                                  QStringList(names.values()).join(", ")));
+    const auto fixed = std::find_if(compiler.symbols.cbegin(), compiler.symbols.cend(),
+                                    [](const auto &symbol) { return symbol.name == "Fixed"; });
+    QVERIFY(fixed != compiler.symbols.cend());
+    QVERIFY(fixed->generated);
+    QCOMPARE(fixed->nameStart, static_cast<int>(source.lastIndexOf("FIXED\n")));
+    QCOMPARE(fixed->nameEnd - fixed->nameStart, 5);
     QCOMPARE(std::count_if(compiler.symbols.cbegin(), compiler.symbols.cend(),
                            [](const auto &symbol) { return symbol.name == "Alias"; }),
              1);
