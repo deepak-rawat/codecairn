@@ -1,0 +1,83 @@
+name: CodeCairn performance validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: Branch, tag, or commit to measure
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-26, windows-2025]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.os == 'windows-2025' && 'msys2 {0}' || 'bash' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source-ref }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config \
+            libsqlite3-dev libre2-dev clang clangd libclang-dev llvm-dev \
+            libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 fonts-dejavu-core
+      - uses: jurplel/install-qt-action@v4
+        if: runner.os == 'Linux'
+        with:
+          version: "6.8.3"
+          modules: "qt5compat"
+          cache: true
+      - name: Prepare pinned Linux runtime dependency
+        if: runner.os == 'Linux'
+        run: |
+          cmake "-DOUTPUT=$RUNNER_TEMP/codecairn-linux-deps" \
+            -P cmake/PrepareLinuxDependencies.cmake
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install cmake ninja qt tree-sitter sqlite re2 llvm
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-5compat mingw-w64-ucrt-x86_64-libtree-sitter
+            mingw-w64-ucrt-x86_64-sqlite3 mingw-w64-ucrt-x86_64-re2
+            mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-clang-tools-extra
+      - name: Configure and build benchmark
+        run: |
+          args=()
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            args+=("-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR;$RUNNER_TEMP/codecairn-linux-deps")
+          elif [[ "$RUNNER_OS" == Windows ]]; then
+            args+=("-DCMAKE_C_COMPILER=gcc" "-DCMAKE_CXX_COMPILER=g++")
+          fi
+          cmake -S . -B build/performance -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCODECAIRN_BUNDLE_RUNTIME=OFF -DBUILD_TESTING=ON \
+            -DCODECAIRN_BUILD_BENCHMARKS=ON "${args[@]}"
+          cmake --build build/performance --target codecairn_benchmarks --parallel
+      - name: Run benchmark fixtures
+        run: ctest --test-dir build/performance --output-on-failure -L benchmark
+      - name: Preserve measurements and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-${{ matrix.os }}
+          path: |
+            build/performance/benchmark-results.txt
+            build/performance/Testing/Temporary/

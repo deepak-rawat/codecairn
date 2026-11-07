@@ -4,7 +4,11 @@ include(CheckCSourceCompiles)
 include(CMakePushCheckState)
 
 if(APPLE AND NOT CMAKE_CROSSCOMPILING)
-    find_program(CODECAIRN_HOMEBREW NAMES brew HINTS /opt/homebrew/bin /usr/local/bin)
+    find_program(
+        CODECAIRN_HOMEBREW
+        NAMES brew
+        HINTS /opt/homebrew/bin /usr/local/bin
+    )
     if(CODECAIRN_HOMEBREW)
         execute_process(
             COMMAND "${CODECAIRN_HOMEBREW}" --prefix
@@ -13,14 +17,27 @@ if(APPLE AND NOT CMAKE_CROSSCOMPILING)
             ERROR_VARIABLE codecairn_homebrew_error
             RESULT_VARIABLE codecairn_homebrew_result
         )
-        if(NOT codecairn_homebrew_result EQUAL 0)
+        if(NOT
+           codecairn_homebrew_result
+           EQUAL
+           0
+        )
             message(FATAL_ERROR "Cannot query Homebrew prefix: ${codecairn_homebrew_error}")
         endif()
-        if(NOT IS_ABSOLUTE "${codecairn_homebrew_prefix}" OR
-           NOT IS_DIRECTORY "${codecairn_homebrew_prefix}")
+        if(NOT IS_ABSOLUTE "${codecairn_homebrew_prefix}" OR NOT IS_DIRECTORY
+                                                             "${codecairn_homebrew_prefix}"
+        )
             message(FATAL_ERROR "Invalid Homebrew prefix: ${codecairn_homebrew_prefix}")
         endif()
-        foreach(package qt qt5compat tree-sitter sqlite re2 llvm)
+        foreach(
+            package
+            qt
+            qt5compat
+            tree-sitter
+            sqlite
+            re2
+            llvm
+        )
             set(prefix "${codecairn_homebrew_prefix}/opt/${package}")
             if(IS_DIRECTORY "${prefix}")
                 list(APPEND CMAKE_PREFIX_PATH "${prefix}")
@@ -41,11 +58,16 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
             ERROR_VARIABLE codecairn_llvm_error
             RESULT_VARIABLE codecairn_llvm_result
         )
-        if(NOT codecairn_llvm_result EQUAL 0)
+        if(NOT
+           codecairn_llvm_result
+           EQUAL
+           0
+        )
             message(FATAL_ERROR "Cannot query LLVM prefix: ${codecairn_llvm_error}")
         endif()
-        if(NOT IS_ABSOLUTE "${codecairn_llvm_prefix}" OR
-           NOT IS_DIRECTORY "${codecairn_llvm_prefix}")
+        if(NOT IS_ABSOLUTE "${codecairn_llvm_prefix}" OR NOT IS_DIRECTORY
+                                                         "${codecairn_llvm_prefix}"
+        )
             message(FATAL_ERROR "Invalid LLVM prefix: ${codecairn_llvm_prefix}")
         endif()
         list(APPEND CMAKE_PREFIX_PATH "${codecairn_llvm_prefix}")
@@ -61,13 +83,27 @@ find_package(
                Concurrent
 )
 find_package(SQLite3 REQUIRED)
-find_package(re2 CONFIG REQUIRED)
+find_package(re2 CONFIG QUIET)
+if(NOT TARGET re2::re2)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(
+        CODECAIRN_RE2
+        REQUIRED
+        IMPORTED_TARGET
+        re2
+    )
+    add_library(re2::re2 ALIAS PkgConfig::CODECAIRN_RE2)
+endif()
 find_path(TREE_SITTER_INCLUDE_DIR tree_sitter/api.h REQUIRED)
 find_library(TREE_SITTER_LIBRARY NAMES tree-sitter REQUIRED)
 find_path(LIBCLANG_INCLUDE_DIR clang-c/Index.h REQUIRED)
 find_library(LIBCLANG_LIBRARY NAMES clang libclang REQUIRED)
 get_filename_component(codecairn_llvm_lib "${LIBCLANG_LIBRARY}" DIRECTORY)
-find_program(CODECAIRN_CLANGD NAMES clangd HINTS "${codecairn_llvm_lib}/../bin")
+find_program(
+    CODECAIRN_CLANGD
+    NAMES clangd
+    HINTS "${codecairn_llvm_lib}/../bin"
+)
 
 if(TARGET SQLite3::SQLite3)
     set(codecairn_sqlite SQLite3::SQLite3)

@@ -70,15 +70,65 @@ elseif(APPLE)
     )
     install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallMacOS.cmake")
 else()
-    # Qt deploys a bin/lib/plugins tree on Linux.
-    qt_generate_deploy_app_script(
+    if(Qt6_VERSION VERSION_LESS 6.7)
+        message(FATAL_ERROR "Bundled Linux packages require Qt 6.7 or newer.")
+    endif()
+    find_program(CODECAIRN_PATCHELF patchelf REQUIRED)
+    set(codecairn_linux_executables "\"bin/cairn\"")
+    if(CODECAIRN_CLANGD)
+        install(PROGRAMS "${CODECAIRN_CLANGD}" DESTINATION bin)
+        string(APPEND codecairn_linux_executables " \"bin/clangd\"")
+    endif()
+    # The loader, glibc, and graphics-driver libraries must come from the host.
+    set(codecairn_linux_system_libraries
+        "/(ld-linux[^/]*|lib(c|m|dl|pthread|rt|resolv|util|nss_[^/]*)\\.so[^/]*|lib(GL|GLX|GLdispatch|EGL|OpenGL|vulkan)\\.so[^/]*)$"
+    )
+    qt_generate_deploy_script(
         TARGET
         codecairn
         OUTPUT_SCRIPT
         codecairn_install_deploy
-        NO_TRANSLATIONS
+        CONTENT
+        "qt_deploy_runtime_dependencies(
+            EXECUTABLE \"$<TARGET_FILE:codecairn>\"
+            ADDITIONAL_EXECUTABLES ${codecairn_linux_executables}
+            GENERATE_QT_CONF NO_TRANSLATIONS
+            BIN_DIR bin LIB_DIR lib PLUGINS_DIR plugins
+            POST_EXCLUDE_REGEXES [==[${codecairn_linux_system_libraries}]==]
+        )"
+    )
+    install(
+        CODE "
+        if(POLICY CMP0207)
+            set(CMAKE_POLICY_DEFAULT_CMP0207 NEW)
+            cmake_policy(SET CMP0207 NEW)
+        endif()
+    "
     )
     install(SCRIPT "${codecairn_install_deploy}")
+    set(codecairn_linux_application "")
+    set(codecairn_linux_launcher "")
+    set(codecairn_qt_plugins "")
+    if(CODECAIRN_RELEASE)
+        set(codecairn_linux_application "$<TARGET_FILE:codecairn>")
+        set(codecairn_linux_launcher "$<TARGET_FILE:cairn>")
+        get_target_property(codecairn_qmake Qt6::qmake IMPORTED_LOCATION)
+        execute_process(
+            COMMAND "${codecairn_qmake}" -query QT_INSTALL_PLUGINS
+            OUTPUT_VARIABLE codecairn_qt_plugins
+            OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY
+        )
+    endif()
+    configure_file(
+        "${CMAKE_CURRENT_LIST_DIR}/InstallLinux.cmake.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/InstallLinux.cmake.in" @ONLY
+    )
+    file(
+        GENERATE
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/InstallLinux-$<CONFIG>.cmake"
+        INPUT "${CMAKE_CURRENT_BINARY_DIR}/InstallLinux.cmake.in"
+    )
+    install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/InstallLinux-$<CONFIG>.cmake")
 
     set(codecairn_install_clang_resources "lib/clang")
     file(

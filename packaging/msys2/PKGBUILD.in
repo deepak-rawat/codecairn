@@ -28,7 +28,8 @@ build() {
         "${MINGW_PREFIX}/bin/cmake" -S "${srcdir}/codecairn-${pkgver}" -B "${srcdir}/build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
         -DCMAKE_INSTALL_PREFIX="${MINGW_PREFIX}" -DCODECAIRN_BUNDLE_RUNTIME=OFF \
-        -DCODECAIRN_ALLOW_DOWNLOADS=OFF -DCODECAIRN_RELEASE=ON -DBUILD_TESTING=ON
+        -DCODECAIRN_ALLOW_DOWNLOADS=OFF -DCODECAIRN_RELEASE=ON -DBUILD_TESTING=ON \
+        -DCODECAIRN_BUILD_BENCHMARKS=OFF
     "${MINGW_PREFIX}/bin/cmake" --build "${srcdir}/build" --target codecairn cairn launcher_tests \
         --parallel "$(nproc)"
 }

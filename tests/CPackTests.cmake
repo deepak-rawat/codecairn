@@ -75,4 +75,28 @@ include("@SOURCE_DIR@/packaging/CPack.cmake")
         message(FATAL_ERROR "${platform}: CPack checksum differs")
     endif()
 endforeach()
+
+set(root "${TEST_DIR}/linux-metadata")
+file(MAKE_DIRECTORY "${root}/source/packaging" "${root}/stage")
+configure_file("${SOURCE_DIR}/packaging/ReleaseCommon.cmake"
+               "${root}/source/packaging/ReleaseCommon.cmake" COPYONLY)
+file(WRITE "${root}/source/CMakeLists.txt" "project(\n    VERSION 1.2.3\n)\n")
+file(WRITE "${root}/source/SOURCE-MANIFEST.txt"
+     "revision=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ndirty=false\n")
+set(PROJECT_SOURCE_DIR "${root}/source")
+set(PROJECT_VERSION 1.2.3)
+set(CODECAIRN_RELEASE ON)
+set(WIN32 FALSE)
+set(APPLE FALSE)
+set(CMAKE_SYSTEM_NAME Linux)
+set(CODECAIRN_DPKG_QUERY "${root}/missing-dpkg-query")
+configure_file("${SOURCE_DIR}/packaging/PackageMetadata.cmake.in"
+               "${root}/metadata.cmake" @ONLY)
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" "-DCMAKE_INSTALL_PREFIX=${root}/stage" -P "${root}/metadata.cmake"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+)
+if(result EQUAL 0 OR NOT error MATCHES "Linux release metadata requires dpkg-query")
+    message(FATAL_ERROR "Linux release metadata was skipped or failed unexpectedly: ${output}\n${error}")
+endif()
 message(STATUS "CPack generators, installed layout, checksums, and managed-mode exclusion verified")

@@ -203,16 +203,19 @@ codecairn_test(
     reference_candidate_index_tests ReferenceCandidateIndexTests.cpp reference_candidate_index
 )
 codecairn_test(analysis_parity_tests AnalysisParityTests.cpp analysis_parity)
-codecairn_test(
-    codecairn_benchmarks
-    RefactoringBenchmarks.cpp
-    benchmarks
-    -iterations
-    1
-    -o
-    benchmark-results.txt,txt
-)
-set_tests_properties(benchmarks PROPERTIES LABELS benchmark)
+option(CODECAIRN_BUILD_BENCHMARKS "Build and register benchmark fixtures" ON)
+if(CODECAIRN_BUILD_BENCHMARKS)
+    codecairn_test(
+        codecairn_benchmarks
+        RefactoringBenchmarks.cpp
+        benchmarks
+        -iterations
+        1
+        -o
+        benchmark-results.txt,txt
+    )
+    set_tests_properties(benchmarks PROPERTIES LABELS benchmark)
+endif()
 foreach(target codecairn_tests configuration_tests interaction_tests)
     target_sources(${target} PRIVATE fixtures.qrc)
 endforeach()

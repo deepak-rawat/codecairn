@@ -15,7 +15,8 @@ and find references without losing your place.
 ## Build and run
 
 Requires CMake 3.24+, Ninja, a C++20 compiler, Qt 6.5+ (including Core5Compat
-and Qt Test), Tree-sitter 0.25+ (grammar ABI 14/15), SQLite, RE2, and libclang.
+and Qt Test; Linux bundling needs 6.7+), Tree-sitter 0.25+ (grammar ABI 14/15),
+SQLite, RE2, and libclang.
 Install clangd for compiler-aware C/C++ navigation.
 The first configure downloads pinned Scintilla and grammar sources.
 
@@ -41,6 +42,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=gcc -DC
 ### Linux: Debian/Ubuntu
 
 Use a recent distribution whose packages meet the requirements above:
+Ubuntu 24.04 needs the Qt SDK and pinned Tree-sitter setup described in the
+[Linux release instructions](docs/RELEASING.md#ubuntu-2404-x64-linux).
 
 ```sh
 sudo apt install build-essential cmake ninja-build qt6-base-dev \
@@ -80,7 +83,8 @@ See the [user guide](docs/USER_GUIDE.md) for usage and troubleshooting, and the
 
 ## Packages and releases
 
-See the [release guide](docs/RELEASING.md) for CPack standalone Windows ZIP/macOS
-DMG packages, pinned source archives, and source-only Homebrew/MSYS2/Arch recipes.
+See the [release guide](docs/RELEASING.md) for standalone Windows ZIP, macOS DMG,
+Ubuntu 24.04+ x64 Linux TAR packages, pinned sources, and Homebrew/MSYS2/Arch recipes.
 GitHub Actions builds and tests packages before creating a draft release;
-publication remains manual.
+publication remains manual. Managed-package and performance validation run in
+separate manually dispatched workflows, not as standalone release gates.

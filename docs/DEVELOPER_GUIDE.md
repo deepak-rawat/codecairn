@@ -720,7 +720,7 @@ Set `cmake.useCMakePresets` to `always` when using only user presets.
 
 | Input | Provider |
 |---|---|
-| Qt, SQLite, RE2 | Installed development packages through `find_package` |
+| Qt, SQLite, RE2 | Installed development packages through `find_package`; RE2 also accepts pkg-config |
 | Tree-sitter runtime, libclang | Installed headers/libraries through `find_path` / `find_library` |
 | clangd | Optional executable discovery |
 | Scintilla and grammars | Hash-pinned FetchContent archives or local overrides |
@@ -785,7 +785,8 @@ CODECAIRN_ALLOW_DOWNLOADS and clear overrides.
 
 ### Release builds
 
-Version 0.1.0 targets Windows 11 x64, macOS 26+ ARM64, and Arch Linux x64.
+Standalone releases target Windows 11 x64, macOS 26+ ARM64, and Ubuntu 24.04+
+x64 Linux. Homebrew, Arch and MSYS2 managed validation is separate.
 Use the [release guide](RELEASING.md) for CPack packages, native package recipes,
 the `cairn` launcher contract, CI, and publication gates. The source
 archive includes hash-pinned source dependencies for offline package builds;
@@ -816,7 +817,7 @@ not installation or dependency acquisition. Use a fresh build directory for OFF.
 |---|---|---|
 | Windows | `deploy` gathers runtime beside executables | Reuses deployment for the installed copy |
 | macOS | Builds the app bundle | macdeployqt gathers GUI, launcher, and clangd dependencies |
-| Linux | Builds the executable | Qt deployment API and executable-relative library search |
+| Linux | Builds the executable | Qt deployment API, bundled clangd/resources and relative library search |
 
 [DeployWindows.cmake](../packaging/DeployWindows.cmake) runs windeployqt, copies optional
 clangd/resource headers, scans transitive executable/plugin dependencies with
@@ -837,12 +838,20 @@ checks dependency closure and native startup with developer paths removed.
 Its registered test checks the build copy, not a clean machine or installed copy.
 
 Building only codecairn bypasses deploy. Close running Windows applications
-before replacing binaries. macOS bundled installation also deploys clangd when
-found, while Linux does not explicitly bundle it. Release builds require clangd.
+before replacing binaries. macOS and Linux bundled installation also deploy
+clangd when found. Release builds require clangd.
 The final macOS install hook applies ad-hoc signatures after library rewriting
 and package metadata/license installation;
-Developer ID signing, notarization, portable Linux packaging, and native
+Developer ID signing, notarization, cross-distribution Linux certification, and native
 certification remain separate release work.
+
+Linux bundling requires Qt 6.7+ and patchelf. It includes non-system dependency
+closure and Qt plugins, excluding the host loader, glibc and graphics-driver
+libraries; binaries/plugins use package-relative RPATHs. Ubuntu 24.04 release CI
+uses Qt 6.8.3 and privately builds pinned Tree-sitter with
+`cmake/PrepareLinuxDependencies.cmake`. Linux release metadata collects dependency
+inventory and Ubuntu copyright/common-license files plus prepared Qt/Tree-sitter
+notices. Unidentified runtime owners or missing notices are release errors.
 
 macOS distribution has two options: bundled standalone app DMG and managed
 source-only Homebrew formula. There is no cask or CodeCairn bottle generation.
@@ -866,7 +875,7 @@ Homebrew compiles in its temporary build area, installs to the Cellar, and links
 Recipe generation does not install or validate upgrade behavior.
 
 All packaging scripts/templates live in [packaging](../packaging). CMake owns
-installation and deployment; CPack owns standalone ZIP/DMG generation and checksums.
+installation and deployment; CPack owns standalone ZIP/DMG/TAR generation and checksums.
 The main project disables generic CPack source generation. Instead,
 `PrepareSource.cmake` stages Git-scoped files and verified pinned source dependencies,
 then invokes a source-only CPack project. Its archive has one `codecairn-<version>`
@@ -880,14 +889,25 @@ also expose it through the prefix's bin directory.
 exclusion; `source_package` verifies source provenance, pinned licenses, and an
 offline fixture build. `release_assets` verifies the complete artifact set and
 rejects missing/empty/duplicate/unexpected packages, incorrect checksums, source
-URLs, tags, and Arch metadata.
+URLs, tags, and source provenance. Standalone drafts contain three native
+standalone formats, sources and recipes, with no managed packages or `.SRCINFO`.
 
 The [build workflow](../.github/workflows/codecairn-build.yml) owns dependency
-installation, builds, tests, native packaging, and extracted/mounted runtime
-verification. The [release workflow](../.github/workflows/codecairn-release.yml)
+installation, functional tests and standalone packaging. Extracted Windows ZIP
+checks match the lightweight version/plugin checks; macOS and Linux installed
+GUI/runtime verification is manual rather than a draft-release gate.
+The [release workflow](../.github/workflows/codecairn-release.yml)
 validates the version tag, builds an immutable revision through the reusable
 workflow, verifies assembled assets, rechecks the tag, and creates a draft release.
 Only the publication job has repository write permission.
+
+The [managed workflow](../.github/workflows/codecairn-managed.yml) resolves its
+selected ref once and validates Homebrew/Arch/MSYS2 installations at that exact
+revision, independently of standalone releases. The
+[performance workflow](../.github/workflows/codecairn-performance.yml) runs the
+benchmark label separately. `CODECAIRN_BUILD_BENCHMARKS` defaults ON for local
+testing; regular build CI and native package recipes set it OFF. Disabling it
+does not exclude any functional tests.
 
 Build directories are not automatically pruned. Retain matching binaries/symbols,
 revision, and diagnostics when investigating failures. Scripts remove only their

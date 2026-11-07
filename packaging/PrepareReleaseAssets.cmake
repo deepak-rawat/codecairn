@@ -13,8 +13,7 @@ set(expected_artifacts
     codecairn-source-recipes
     codecairn-windows
     codecairn-macos
-    codecairn-msys2
-    codecairn-arch
+    codecairn-linux
 )
 file(GLOB entries "${ARTIFACTS}/*")
 foreach(entry IN LISTS entries)
@@ -47,8 +46,7 @@ foreach(
     spec
     "codecairn-windows|codecairn-${VERSION}-windows11-x64.zip"
     "codecairn-macos|codecairn-${VERSION}-macos26-arm64-unsigned.dmg"
-    "codecairn-msys2|mingw-w64-ucrt-x86_64-codecairn-${VERSION}-*.pkg.tar.zst"
-    "codecairn-arch|codecairn-${VERSION}-*-x86_64.pkg.tar.zst"
+    "codecairn-linux|codecairn-${VERSION}-linux-ubuntu24.04-x64.tar.gz"
 )
     string(
         REPLACE "|"
@@ -88,11 +86,6 @@ foreach(
         "${ARTIFACTS}/${artifact}/*"
     )
     foreach(file IN LISTS files)
-        if(artifact STREQUAL codecairn-arch AND file STREQUAL
-                                                "${ARTIFACTS}/codecairn-arch/.SRCINFO"
-        )
-            continue()
-        endif()
         if(NOT
            file
            STREQUAL
@@ -156,22 +149,6 @@ foreach(recipe IN LISTS recipes)
         message(FATAL_ERROR "Public recipe version does not match: ${recipe}")
     endif()
 endforeach()
-set(srcinfo "${ARTIFACTS}/codecairn-arch/.SRCINFO")
-file(READ "${srcinfo}" content)
-foreach(
-    expected
-    "pkgbase = codecairn\n"
-    "pkgname = codecairn\n"
-    "pkgver = ${VERSION}\n"
-    "sha256sums = ${source_hash}\n"
-    "https://github.com/deepak-rawat/codecairn/releases/download/${RELEASE_TAG}/codecairn-${VERSION}-source.tar.gz"
-)
-    string(FIND "${content}" "${expected}" position)
-    if(position EQUAL -1)
-        message(FATAL_ERROR "Arch metadata does not match the release source: ${srcinfo}")
-    endif()
-endforeach()
-
 file(MAKE_DIRECTORY "${OUTPUT}")
 string(
     RANDOM
@@ -203,7 +180,6 @@ endforeach()
 foreach(recipe IN LISTS recipes)
     configure_file("${source}/${recipe}" "${work}/${recipe}" COPYONLY)
 endforeach()
-configure_file("${srcinfo}" "${work}/arch/.SRCINFO" COPYONLY)
 file(REMOVE_RECURSE "${work}/source")
 set(recipe_archive "${OUTPUT}/codecairn-${VERSION}-recipes.tar.gz")
 run("${CMAKE_COMMAND}"

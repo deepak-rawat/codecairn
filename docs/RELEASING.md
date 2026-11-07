@@ -4,6 +4,7 @@ CMake defines the installed distribution and CPack creates standalone packages.
 Scripts in [packaging](../packaging) prepare sources, recipes, and release assets;
 they do not build the application, install dependencies, or publish releases.
 GitHub Actions owns the build/test/package pipeline and draft publication.
+Standalone releases do not wait for managed-package or performance validation.
 
 Run commands from the project directory using Bash/zsh, including MSYS2 UCRT64
 on Windows. Install the [platform dependencies](../README.md#build-and-run),
@@ -36,6 +37,28 @@ cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCODECAIRN_RELEASE=ON -DCODECAIRN_BUNDLE_RUNTIME=ON -DBUILD_TESTING=ON
 ```
 
+### Ubuntu 24.04+ x64 Linux
+
+The release workflow builds on Ubuntu 24.04 with Qt 6.8.3. Install that Qt SDK
+(including Core5Compat) and the Ubuntu development packages:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y build-essential cmake ninja-build pkg-config patchelf \
+  libsqlite3-dev libre2-dev clang clangd libclang-dev llvm-dev \
+  libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 fonts-dejavu-core
+cmake "-DOUTPUT=$PWD/build/linux-deps" -P cmake/PrepareLinuxDependencies.cmake
+cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  "-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR;$PWD/build/linux-deps" \
+  -DCODECAIRN_RELEASE=ON -DCODECAIRN_BUNDLE_RUNTIME=ON \
+  -DBUILD_TESTING=ON -DCODECAIRN_BUILD_BENCHMARKS=OFF
+```
+
+Set `QT_ROOT_DIR` to the Qt SDK prefix. Dependency preparation builds hash-pinned
+Tree-sitter 0.25.10 privately because Ubuntu's default runtime is too old for the
+grammar ABI. It also prepares runtime license notices; it does not install
+system packages. General Linux bundling requires Qt 6.7+ and patchelf.
+
 ### Build, test, package
 
 After the matching platform configure:
@@ -56,6 +79,7 @@ For version `0.1.0`, the standalone outputs are:
 |---|---|
 | macOS | `codecairn-0.1.0-macos26-arm64-unsigned.dmg` |
 | Windows | `codecairn-0.1.0-windows11-x64.zip` |
+| Linux | `codecairn-0.1.0-linux-ubuntu24.04-x64.tar.gz` |
 
 Open the DMG and drag `codecairn.app` into Applications. Do not overwrite an
 existing installation without checking it first. The app bundles its runtime
@@ -78,8 +102,12 @@ Extract the entire Windows ZIP and run `./bin/codecairn.exe`, or add its `bin`
 directory to PATH for `cairn`. Keep all DLLs, plugins, configuration, and resource
 headers together. Save and close an existing running app before replacing it.
 
-Linux's release package is the system-managed Arch package below. The available
-CPack TGZ generator is not a certified portable Linux distribution.
+Extract the whole Linux TAR and run `./bin/cairn`, or add its `bin` directory to
+PATH. It bundles Qt, parser/compiler libraries, clangd and Clang resource headers.
+Keep `bin`, `lib`, `plugins`, configuration and notices together. The supported
+baseline is Ubuntu 24.04 x64 or newer, not every Linux distribution: glibc,
+graphics drivers, X11/XWayland display services and installed fonts still come
+from the host.
 
 ## Source archive and managed recipes
 
@@ -156,24 +184,40 @@ contain private runtime libraries, Qt configuration, or copied Clang headers.
 
 The [build workflow](../.github/workflows/codecairn-build.yml) runs only through
 manual dispatch or a call from the release workflow, not on branch pushes or
-pull requests. It prepares
-sources, builds/tests Windows and macOS, runs the full suite through the Arch
-recipe, and validates Homebrew and MSYS2 managed installations. Standalone CPack
-packages are produced only when called with a validated release tag.
+pull requests. It prepares sources, builds/tests Windows, macOS and Ubuntu Linux,
+and produces standalone CPack packages only when called with a validated release
+tag. Regular functional tests remain enabled; benchmarks are disabled in this
+workflow.
 
 The [release workflow](../.github/workflows/codecairn-release.yml) runs for
 `codecairn-v*` tags or manual selection of an existing tag:
 
 1. Validate the tag against the version and resolve its immutable commit.
 2. Call the build workflow for that revision.
-3. Verify the mounted DMG/extracted ZIP without developer dependency paths.
-4. Assemble the complete package/source/recipe set and `SHA256SUMS`.
+3. Check the extracted Windows ZIP's platform plugin and application/launcher
+   versions with MSYS2 removed from PATH.
+4. Assemble the Windows ZIP, macOS DMG, Linux TAR, source archive, recipe archive
+   and `SHA256SUMS`.
 5. Recheck that the tag has not moved and create a **draft** GitHub release.
 
 Release-asset assembly rejects missing, empty, duplicate, unexpected, or
-checksum-mismatched packages, incorrect source URLs/revisions, dirty sources, and inconsistent Arch
-metadata. Recipe archives include the Homebrew formula, both PKGBUILDs, and
-native-generated `.SRCINFO`. Public download URLs work after publication.
+checksum-mismatched packages, incorrect source URLs/revisions, and dirty sources.
+Recipe archives include the Homebrew formula and both PKGBUILDs; native managed
+packages and build-generated `.SRCINFO` are not draft assets. Public download
+URLs work after publication. macOS packaging still ad-hoc signs and verifies the
+app, but the release workflow does not mount/test the DMG. Linux TAR installation
+and native GUI launch must also be checked manually before publication.
+
+The [managed workflow](../.github/workflows/codecairn-managed.yml) separately
+builds/tests and installs Homebrew, MSYS2 and Arch packages. Select a branch, tag
+or commit through its `source-ref` input; it resolves one immutable revision for
+all jobs. Run it against the exact release tag before distributing managed
+recipes/packages. Its native packages, checksums and `.SRCINFO` are workflow
+artifacts, not automatic release assets.
+
+The [performance workflow](../.github/workflows/codecairn-performance.yml) runs
+benchmark fixtures separately on all three platforms and preserves measurements.
+Both workflows are manual and neither blocks standalone draft creation.
 
 Before publishing manually, verify native installation/startup and license/source
 obligations. Offscreen tests are not native interaction certification.

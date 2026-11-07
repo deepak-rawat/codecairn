@@ -14,7 +14,7 @@ build() {
     cmake -S "codecairn-${pkgver}" -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
         -DCODECAIRN_BUNDLE_RUNTIME=OFF -DCODECAIRN_ALLOW_DOWNLOADS=OFF \
-        -DCODECAIRN_RELEASE=ON -DBUILD_TESTING=ON
+        -DCODECAIRN_RELEASE=ON -DBUILD_TESTING=ON -DCODECAIRN_BUILD_BENCHMARKS=OFF
     cmake --build build --parallel "$(nproc)"
 }
 

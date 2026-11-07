@@ -174,7 +174,7 @@ if(UNIX
    AND NOT APPLE
    AND CODECAIRN_BUNDLE_RUNTIME
 )
-    set_target_properties(codecairn PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
+    set_target_properties(codecairn cairn PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 endif()
 
 if(BUILD_TESTING)

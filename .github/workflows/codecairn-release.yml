@@ -20,6 +20,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       sha: ${{ steps.version.outputs.sha }}
@@ -57,6 +58,7 @@ jobs:
   release:
     needs: [validate, build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     env:
@@ -88,7 +90,7 @@ jobs:
           fi
           gh release create "$TAG" release-assets/* --verify-tag --draft \
             --title "CodeCairn ${TAG#codecairn-v}" \
-            --notes "Source revision: $SOURCE_SHA. Windows 11 x64 UCRT64 ZIP; macOS 26+ ARM64 DMG (ad-hoc signed, not notarized); Arch and MSYS2 managed packages; pinned sources and source-only Homebrew/native recipes. Publish manually only after native installation and license verification. Public recipe URLs work after publication."
+            --notes "Source revision: $SOURCE_SHA. Windows 11 x64 UCRT64 ZIP; macOS 26+ ARM64 DMG (ad-hoc signed, not notarized); Ubuntu 24.04+ x64 Linux TAR; pinned sources and source-only Homebrew/Arch/MSYS2 recipes. Managed package and performance validation run separately by manual dispatch and are not release gates. Native managed packages and .SRCINFO are not draft assets. Publish manually only after native installation and license verification. Public recipe URLs work after publication."
           if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != true ]]; then
             echo "::error::Expected the release to remain a draft"
             exit 1

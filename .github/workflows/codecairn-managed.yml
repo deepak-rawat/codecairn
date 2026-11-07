@@ -1,0 +1,166 @@
+name: CodeCairn managed package validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: Branch, tag, or commit to validate
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      sha: ${{ steps.revision.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source-ref }}
+      - name: Resolve immutable revision
+        id: revision
+        run: printf 'sha=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Prepare pinned source and public recipes
+        run: |
+          cmake -P packaging/PrepareSource.cmake
+          cmake -P packaging/PrepareRecipes.cmake
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codecairn-source-recipes
+          path: build/releases/
+          if-no-files-found: error
+
+  homebrew:
+    needs: source
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: codecairn-source-recipes
+          path: build/releases
+      - name: Build and test source-only formula
+        run: |
+          cmake -DCOMMIT_TAP=ON "-DLOCAL_ROOT=$RUNNER_TEMP/codecairn-local" \
+            -P packaging/PrepareLocalTap.cmake
+          brew tap local/releases "$RUNNER_TEMP/codecairn-local/tap"
+          brew install --build-from-source local/releases/codecairn
+          brew test local/releases/codecairn
+      - name: Preserve failed Homebrew diagnostics
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-homebrew
+          path: ~/Library/Logs/Homebrew/codecairn/
+
+  msys2:
+    needs: source
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: codecairn-source-recipes
+          path: build/releases
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel git mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-qt6-base mingw-w64-ucrt-x86_64-qt6-5compat
+            mingw-w64-ucrt-x86_64-libtree-sitter mingw-w64-ucrt-x86_64-sqlite3
+            mingw-w64-ucrt-x86_64-re2 mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-clang-tools-extra
+      - name: Build and validate managed UCRT64 package
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cp build/releases/*-source.tar.gz build/releases/msys2/
+          cd build/releases/msys2
+          makepkg-mingw --syncdeps --noconfirm --cleanbuild
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          cairn --version
+          QT_QPA_PLATFORM=offscreen codecairn --version
+          for package in ./*.pkg.tar.zst; do
+            if bsdtar -tf "$package" | grep -Ei '\.dll$|qt\.conf$|/lib/clang/'; then
+              echo "Managed package contains private runtime dependencies" >&2
+              exit 1
+            fi
+            sha256sum "$(basename "$package")" > "$package.sha256"
+          done
+      - name: Preserve failed test diagnostics
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-msys2
+          path: |
+            build/releases/msys2/src/build/*-results.*
+            build/releases/msys2/src/build/Testing/Temporary/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codecairn-msys2
+          path: build/releases/msys2/*.pkg.tar.zst*
+          if-no-files-found: error
+
+  arch:
+    needs: source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container: archlinux:base-devel
+    steps:
+      - name: Install native build tools
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --needed --noconfirm git cmake ninja qt6-base qt6-5compat \
+            tree-sitter sqlite re2 clang llvm-libs namcap ttf-dejavu
+          useradd -m builder
+      - uses: actions/download-artifact@v4
+        with:
+          name: codecairn-source-recipes
+          path: build/releases
+      - name: Build, test, and validate managed Arch package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp build/releases/*-source.tar.gz build/releases/arch/
+          chown -R builder:builder build/releases/arch
+          cd build/releases/arch
+          runuser -u builder -- makepkg --cleanbuild --noconfirm
+          runuser -u builder -- makepkg --printsrcinfo > .SRCINFO
+          namcap PKGBUILD ./*.pkg.tar.zst
+          pacman -U --noconfirm ./*.pkg.tar.zst
+          cairn --version
+          QT_QPA_PLATFORM=offscreen codecairn --version
+          for package in ./*.pkg.tar.zst; do
+            if bsdtar -tf "$package" | grep -E '/lib/clang/|qt\.conf$|\.so(\.|$)'; then
+              echo "Managed package contains private runtime dependencies" >&2
+              exit 1
+            fi
+            sha256sum "$(basename "$package")" > "$package.sha256"
+          done
+      - name: Preserve failed test diagnostics
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-arch
+          path: |
+            build/releases/arch/src/build/*-results.*
+            build/releases/arch/src/build/Testing/Temporary/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codecairn-arch
+          path: |
+            build/releases/arch/*.pkg.tar.zst*
+            build/releases/arch/.SRCINFO
+          include-hidden-files: true
+          if-no-files-found: error

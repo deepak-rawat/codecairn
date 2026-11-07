@@ -13,7 +13,8 @@ contributing, use the [developer guide](DEVELOPER_GUIDE.md).
 
 ## Installing and launching
 
-Supported releases target Windows 11 x64, macOS 26+ ARM64, and Arch Linux x64.
+Standalone releases target Windows 11 x64, macOS 26+ ARM64, and Ubuntu 24.04+
+x64 Linux. Homebrew, MSYS2, and Arch managed packages are validated separately.
 Use the [release instructions](RELEASING.md) for artifacts, package-manager
 installation, and unsigned macOS limitations.
 

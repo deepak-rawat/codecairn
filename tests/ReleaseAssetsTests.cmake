@@ -20,18 +20,13 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-DARCHIVE=${archive}" "-DOUTPUT=${so
 set(assets
     "codecairn-windows/codecairn-${VERSION}-windows11-x64.zip"
     "codecairn-macos/codecairn-${VERSION}-macos26-arm64-unsigned.dmg"
-    "codecairn-msys2/mingw-w64-ucrt-x86_64-codecairn-${VERSION}-1-any.pkg.tar.zst"
-    "codecairn-arch/codecairn-${VERSION}-1-x86_64.pkg.tar.zst")
+    "codecairn-linux/codecairn-${VERSION}-linux-ubuntu24.04-x64.tar.gz")
 foreach(asset IN LISTS assets)
     get_filename_component(directory "${artifacts}/${asset}" DIRECTORY)
     file(MAKE_DIRECTORY "${directory}")
     file(WRITE "${artifacts}/${asset}" "package fixture\n")
     checksum("${artifacts}/${asset}")
 endforeach()
-file(WRITE "${artifacts}/codecairn-arch/.SRCINFO"
-    "pkgbase = codecairn\n\tpkgver = ${VERSION}\n"
-    "\tsource = https://github.com/deepak-rawat/codecairn/releases/download/codecairn-v${VERSION}/codecairn-${VERSION}-source.tar.gz\n"
-    "\tsha256sums = ${source_hash}\n\npkgname = codecairn\n")
 set(command "${CMAKE_COMMAND}" "-DARTIFACTS=${artifacts}"
     "-DRELEASE_TAG=codecairn-v${VERSION}")
 
@@ -53,12 +48,12 @@ execute_process(COMMAND ${command} "-DOUTPUT=${TEST_DIR}/valid"
                 COMMAND_ERROR_IS_FATAL ANY)
 file(GLOB files LIST_DIRECTORIES FALSE "${TEST_DIR}/valid/*")
 list(LENGTH files count)
-if(NOT count EQUAL 13)
-    message(FATAL_ERROR "Expected six assets, six sidecars, and SHA256SUMS; found ${count}")
+if(NOT count EQUAL 11)
+    message(FATAL_ERROR "Expected five assets, five sidecars, and SHA256SUMS; found ${count}")
 endif()
 file(STRINGS "${TEST_DIR}/valid/SHA256SUMS" lines)
 list(LENGTH lines count)
-if(NOT count EQUAL 12)
+if(NOT count EQUAL 10)
     message(FATAL_ERROR "Release manifest has the wrong number of entries")
 endif()
 foreach(line IN LISTS lines)
@@ -71,11 +66,14 @@ foreach(line IN LISTS lines)
 endforeach()
 file(ARCHIVE_EXTRACT INPUT "${TEST_DIR}/valid/codecairn-${VERSION}-recipes.tar.gz"
      DESTINATION "${TEST_DIR}/extracted")
-foreach(recipe homebrew/Formula/codecairn.rb arch/PKGBUILD msys2/PKGBUILD arch/.SRCINFO)
+foreach(recipe homebrew/Formula/codecairn.rb arch/PKGBUILD msys2/PKGBUILD)
     if(NOT EXISTS "${TEST_DIR}/extracted/${recipe}")
         message(FATAL_ERROR "Recipe archive is incomplete: ${recipe}")
     endif()
 endforeach()
+if(EXISTS "${TEST_DIR}/extracted/arch/.SRCINFO")
+    message(FATAL_ERROR "Standalone recipe archive must not include unvalidated native metadata")
+endif()
 expect_failure(valid "output must be empty")
 execute_process(COMMAND "${CMAKE_COMMAND}" "-DARTIFACTS=${artifacts}"
     "-DOUTPUT=${TEST_DIR}/wrong-tag" -DRELEASE_TAG=codecairn-v99.0.0
@@ -99,16 +97,17 @@ file(WRITE "${windows}" "package fixture\n")
 file(WRITE "${artifacts}/codecairn-windows/unexpected.zip" "unexpected\n")
 expect_failure(unexpected "Unexpected release artifact")
 file(REMOVE "${artifacts}/codecairn-windows/unexpected.zip")
-file(WRITE "${artifacts}/codecairn-arch/codecairn-${VERSION}-2-x86_64.pkg.tar.zst" "duplicate\n")
-expect_failure(duplicate "Expected one")
-file(REMOVE "${artifacts}/codecairn-arch/codecairn-${VERSION}-2-x86_64.pkg.tar.zst")
+file(WRITE "${artifacts}/codecairn-macos/codecairn-${VERSION}-macos26-arm64-unsigned.zip" "unexpected\n")
+expect_failure(unexpected-macos "Unexpected release artifact")
+file(REMOVE "${artifacts}/codecairn-macos/codecairn-${VERSION}-macos26-arm64-unsigned.zip")
+file(MAKE_DIRECTORY "${artifacts}/codecairn-msys2")
+expect_failure(managed-artifact "Unexpected workflow artifact")
+file(REMOVE_RECURSE "${artifacts}/codecairn-msys2")
 file(WRITE "${source}/homebrew/Formula/codecairn.rb" "wrong source recipe\n")
 expect_failure(wrong-recipe "Public recipe does not match")
 execute_process(COMMAND "${CMAKE_COMMAND}" "-DARCHIVE=${archive}" "-DOUTPUT=${source}"
                 -P "${SOURCE_DIR}/packaging/PrepareRecipes.cmake"
                 COMMAND_ERROR_IS_FATAL ANY)
-file(WRITE "${artifacts}/codecairn-arch/.SRCINFO" "wrong source metadata\n")
-expect_failure(wrong-metadata "Arch metadata does not match")
 file(WRITE "${TEST_DIR}/source/codecairn-${VERSION}/SOURCE-MANIFEST.txt"
     "CodeCairn ${VERSION}\nrevision=${REVISION}\ndirty=true\n")
 run("${CMAKE_COMMAND}" -E chdir "${TEST_DIR}/source" "${CMAKE_COMMAND}" -E tar czf
@@ -118,9 +117,5 @@ file(SHA256 "${archive}" source_hash)
 execute_process(COMMAND "${CMAKE_COMMAND}" "-DARCHIVE=${archive}" "-DOUTPUT=${source}"
                 -P "${SOURCE_DIR}/packaging/PrepareRecipes.cmake"
                 COMMAND_ERROR_IS_FATAL ANY)
-file(WRITE "${artifacts}/codecairn-arch/.SRCINFO"
-    "pkgbase = codecairn\n\tpkgver = ${VERSION}\n"
-    "\tsource = https://github.com/deepak-rawat/codecairn/releases/download/codecairn-v${VERSION}/codecairn-${VERSION}-source.tar.gz\n"
-    "\tsha256sums = ${source_hash}\n\npkgname = codecairn\n")
 expect_failure(dirty-source "Source archive provenance does not match")
 message(STATUS "Complete release assembly and invalid-asset rejection verified")

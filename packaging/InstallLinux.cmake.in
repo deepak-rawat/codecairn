@@ -1,0 +1,79 @@
+set(prefix "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}")
+file(
+    GLOB_RECURSE binaries
+    LIST_DIRECTORIES FALSE
+    "${prefix}/bin/codecairn"
+    "${prefix}/bin/cairn"
+    "${prefix}/bin/clangd"
+    "${prefix}/lib/*.so*"
+    "${prefix}/plugins/*.so*"
+)
+list(REMOVE_DUPLICATES binaries)
+foreach(binary IN LISTS binaries)
+    if(IS_SYMLINK "${binary}")
+        continue()
+    endif()
+    get_filename_component(directory "${binary}" DIRECTORY)
+    file(
+        RELATIVE_PATH
+        relative
+        "${directory}"
+        "${prefix}/lib"
+    )
+    if(relative STREQUAL "" OR relative STREQUAL ".")
+        set(rpath "$ORIGIN")
+    else()
+        set(rpath "$ORIGIN/${relative}")
+    endif()
+    execute_process(
+        COMMAND "@CODECAIRN_PATCHELF@" --set-rpath "${rpath}" "${binary}" COMMAND_ERROR_IS_FATAL
+                ANY
+    )
+endforeach()
+if("@CODECAIRN_RELEASE@")
+    file(
+        GLOB_RECURSE installed_plugins
+        LIST_DIRECTORIES FALSE
+        "${prefix}/plugins/*.so*"
+    )
+    set(plugins "")
+    foreach(plugin IN LISTS installed_plugins)
+        file(
+            RELATIVE_PATH
+            relative
+            "${prefix}/plugins"
+            "${plugin}"
+        )
+        set(source "@codecairn_qt_plugins@/${relative}")
+        if(NOT EXISTS "${source}")
+            message(FATAL_ERROR "Cannot identify Qt plugin source: ${plugin}")
+        endif()
+        list(APPEND plugins "${source}")
+    endforeach()
+    file(
+        GET_RUNTIME_DEPENDENCIES
+        EXECUTABLES
+        "@codecairn_linux_application@"
+        "@codecairn_linux_launcher@"
+        "@CODECAIRN_CLANGD@"
+        MODULES
+        ${plugins}
+        POST_EXCLUDE_REGEXES
+        [==[@codecairn_linux_system_libraries@]==]
+        RESOLVED_DEPENDENCIES_VAR
+        dependencies
+        UNRESOLVED_DEPENDENCIES_VAR
+        unresolved
+    )
+    if(unresolved)
+        message(FATAL_ERROR "Cannot inventory Linux runtime dependencies: ${unresolved}")
+    endif()
+    list(SORT dependencies)
+    string(
+        REPLACE ";"
+                "\n"
+                inventory
+                "${dependencies}"
+    )
+    file(WRITE "${prefix}/RUNTIME-SOURCES.txt" "${inventory}\n")
+endif()
