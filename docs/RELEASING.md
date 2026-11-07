@@ -56,7 +56,7 @@ cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 ```
 
 Set `QT_ROOT_DIR` to the Qt SDK prefix. Dependency preparation builds hash-pinned
-Tree-sitter 0.25.10 privately because Ubuntu's default runtime is too old for the
+Tree-sitter 0.27.1 privately because Ubuntu's default runtime is too old for the
 grammar ABI. It also prepares runtime license notices; it does not install
 system packages. General Linux bundling requires Qt 6.7+ and patchelf.
 

@@ -747,6 +747,12 @@ licenses. TypeScript/TSX share a repository. Downloads normally live in `_deps`;
 do not patch disposable dependency trees. System packages are not locked by
 archive hashes. Change source pins deliberately and validate upgrades.
 
+Downloaded sources currently use Scintilla 5.6.9, Linux Tree-sitter runtime
+0.27.1, and immutable grammar revisions in `SourceArchives.cmake`. Grammar
+snapshots may be newer than their last release tag; TypeScript and TSX share
+one pin. Generated grammars use ABI 14/15, supported by runtime 0.27.1.
+Changing grammar revisions also bumps ParserVersion to rebuild saved indexes.
+
 ### Offline builds
 
 Installed development packages are still required. Supply all source overrides

@@ -1,8 +1,8 @@
 codecairn_source(
     scintilla
     CODECAIRN_SCINTILLA_SOURCE_DIR
-    https://www.scintilla.org/scintilla568.tgz
-    ca7fda23125289bbf473afd6fcd4959f65e828bff1a8ae60c603b34dfcb3a777
+    https://www.scintilla.org/scintilla569.tgz
+    1622546ce1d3804b589292f1adae98ad1d87fa8c43bb401edc098adae12dcacb
     include/Scintilla.h
     qt/ScintillaEditBase/ScintillaEditBase.cpp
     License.txt
@@ -18,16 +18,16 @@ codecairn_source(
 codecairn_source(
     tree_sitter_cpp
     CODECAIRN_CPP_GRAMMAR_SOURCE_DIR
-    https://codeload.github.com/tree-sitter/tree-sitter-cpp/tar.gz/v0.23.4
-    7a2c55afe3028f4105f25762ea58cc16537d1f5a1dcd9cca90410b3cd5d46051
+    https://codeload.github.com/tree-sitter/tree-sitter-cpp/tar.gz/c009222808634c1014f82438d4883753516a2c24
+    6c6efaf024f5c02fee0403e4e2373346eeadc40828587bcfad9351df2f0a7986
     src/parser.c
     LICENSE
 )
 codecairn_source(
     tree_sitter_python
     CODECAIRN_PYTHON_GRAMMAR_SOURCE_DIR
-    https://codeload.github.com/tree-sitter/tree-sitter-python/tar.gz/293fdc02038ee2bf0e2e206711b69c90ac0d413f
-    b74d8ba6730535354175436208fe1452fd464f235263959ca40b8bf32cb23dc6
+    https://codeload.github.com/tree-sitter/tree-sitter-python/tar.gz/26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64
+    43e71c4d0cbbd2350e83e0b2da3558eab09b8dc78153a8990508b0c9eec754e6
     src/parser.c
     LICENSE
 )
@@ -42,16 +42,16 @@ codecairn_source(
 codecairn_source(
     tree_sitter_javascript
     CODECAIRN_JAVASCRIPT_GRAMMAR_SOURCE_DIR
-    https://codeload.github.com/tree-sitter/tree-sitter-javascript/tar.gz/44c892e0be055ac465d5eeddae6d3e194424e7de
-    a13fa28148e41bb939b2c2b8cd73c4b4295273b70cbac55a7a589020f52b9611
+    https://codeload.github.com/tree-sitter/tree-sitter-javascript/tar.gz/58404d8cf191d69f2674a8fd507bd5776f46cb11
+    f3e51e9f7b129f62a817551ae22a878dac5c18d71c456d5ad73e9c82d687f33d
     src/parser.c
     LICENSE
 )
 codecairn_source(
     tree_sitter_go
     CODECAIRN_GO_GRAMMAR_SOURCE_DIR
-    https://codeload.github.com/tree-sitter/tree-sitter-go/tar.gz/1547678a9da59885853f5f5cc8a99cc203fa2e2c
-    a71543d63f82b917457f47a3f6dbecd8087592fabc49a757da82c3e00c0e93de
+    https://codeload.github.com/tree-sitter/tree-sitter-go/tar.gz/2346a3ab1bb3857b48b29d779a1ef9799a248cd7
+    94d08fc0f727a8dbe03203e2aaf1c5dc33a57e496b583049324eddc79769797b
     src/parser.c
     LICENSE
 )
@@ -66,16 +66,16 @@ codecairn_source(
 codecairn_source(
     tree_sitter_json
     CODECAIRN_JSON_GRAMMAR_SOURCE_DIR
-    https://codeload.github.com/tree-sitter/tree-sitter-json/tar.gz/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24
-    9e4a7391cc3a9f4b87b382956dd01bc1f99fb1afcdc86b2c152c8a1bd14444d5
+    https://codeload.github.com/tree-sitter/tree-sitter-json/tar.gz/254c42a6476413b776221e03982ac8ae159eeb72
+    5735ec109268bdc25eb67875b96bc891de1f405253a1d3f9528a504249b0f832
     src/parser.c
     LICENSE
 )
 codecairn_source(
     tree_sitter_yaml
     CODECAIRN_YAML_GRAMMAR_SOURCE_DIR
-    https://codeload.github.com/tree-sitter-grammars/tree-sitter-yaml/tar.gz/7708026449bed86239b1cd5bce6e3c34dbca6415
-    6e8cb69a4f7a05478b1143d38bd10df2163170a6678df1848f3be89c8b7c5f3b
+    https://codeload.github.com/tree-sitter-grammars/tree-sitter-yaml/tar.gz/a1c4812a73ec5e089de8e441fdea3a921e8d5079
+    6548cd059983e8073dfa39f102641f71d045b37f3a05b7ebd799ad17df8471d1
     src/parser.c
     LICENSE
 )
@@ -90,8 +90,8 @@ codecairn_source(
 codecairn_source(
     tree_sitter_typescript
     CODECAIRN_TYPESCRIPT_GRAMMAR_SOURCE_DIR
-    https://codeload.github.com/tree-sitter/tree-sitter-typescript/tar.gz/f975a621f4e7f532fe322e13c4f79495e0a7b2e7
-    4de2e82e557810eecb93cb3b31fbb3bd28ba4c91ba9a6c6164bcaa074125b7b5
+    https://codeload.github.com/tree-sitter/tree-sitter-typescript/tar.gz/75b3874edb2dc714fb1fd77a32013d0f8699989f
+    96ce4d1b513767d414bcca408efd9b49879162cceecdbed79a88e8ad2184f385
     typescript/src/parser.c
     tsx/src/parser.c
     LICENSE

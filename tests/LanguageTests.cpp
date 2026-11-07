@@ -21,6 +21,8 @@ private slots:
     void examples();
     void multiFileExamples_data();
     void multiFileExamples();
+    void updatedGrammarSyntax_data();
+    void updatedGrammarSyntax();
     void compilerRegressions();
     void compilerBuiltinHeaders();
     void forwardTagsInTypedefs();
@@ -103,6 +105,48 @@ void LanguageTests::examples() {
     }
     for (const auto &name : expected)
         QVERIFY2(names.contains(name), qPrintable(name + " missing; got: " + names.join(", ")));
+}
+
+void LanguageTests::updatedGrammarSyntax_data() {
+    QTest::addColumn<QByteArray>("source");
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<QStringList>("names");
+    QTest::newRow("cpp-explicit-object")
+        << QByteArray("struct Box { int value; int get(this Box &self) { return self.value; } };\n")
+        << QString(":/updated.cpp") << QStringList{"Box", "get", "value"};
+    QTest::newRow("cpp-module")
+        << QByteArray("export module sample;\nexport int answer() { return 42; }\n")
+        << QString(":/updated.cpp") << QStringList{"answer"};
+    QTest::newRow("python-expression-statement")
+        << QByteArray("value = 1\nprint(value)\ndef answer():\n    return value\n")
+        << QString(":/updated.py") << QStringList{"value", "answer"};
+    QTest::newRow("json-signed-exponents")
+        << QByteArray("{\"values\": [1e10, 1e+10, 1E+10, 1e-10, 1.5e+10, -1.5E+10]}\n")
+        << QString(":/updated.json") << QStringList{"values"};
+    QTest::newRow("yaml-unindented-escaped-newlines")
+        << QByteArray("root: \"a\\\nb\\\nc\"\n") << QString(":/updated.yaml")
+        << QStringList{"root"};
+}
+
+void LanguageTests::updatedGrammarSyntax() {
+    QFETCH(QByteArray, source);
+    QFETCH(QString, path);
+    QFETCH(QStringList, names);
+    const auto result = analyzeSource(source, path);
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    QVERIFY(result.supported);
+    QVERIFY2(!result.syntaxErrors, qPrintable(result.diagnostics.join('\n')));
+    QCOMPARE(result.styles.size(), source.size());
+    QStringList actual;
+    for (const auto &symbol : result.symbols) {
+        actual.append(symbol.name);
+        QVERIFY(symbol.nameStart >= 0);
+        QVERIFY(symbol.nameEnd <= source.size());
+        QCOMPARE(QString::fromUtf8(source.mid(symbol.nameStart, symbol.nameEnd - symbol.nameStart)),
+                 symbol.name);
+    }
+    for (const auto &name : names)
+        QVERIFY2(actual.contains(name), qPrintable(name + " missing; got: " + actual.join(", ")));
 }
 
 void LanguageTests::multiFileExamples_data() {

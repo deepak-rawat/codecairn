@@ -11,11 +11,11 @@ if(NOT DEFINED OUTPUT OR NOT IS_ABSOLUTE "${OUTPUT}")
 endif()
 find_program(MAKE make REQUIRED)
 file(MAKE_DIRECTORY "${OUTPUT}/sources" "${OUTPUT}/share/codecairn/linux-notices/qt")
-set(archive "${OUTPUT}/sources/tree-sitter-0.25.10.tar.gz")
+set(archive "${OUTPUT}/sources/tree-sitter-0.27.1.tar.gz")
 file(
-    DOWNLOAD "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.25.10.tar.gz"
+    DOWNLOAD "https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.27.1.tar.gz"
     "${archive}"
-    EXPECTED_HASH SHA256=ad5040537537012b16ef6e1210a572b927c7cdc2b99d1ee88d44a7dcdc3ff44c
+    EXPECTED_HASH SHA256=982cd3d4d9eb7be18c243240a622423fd2e4ecb4bec2cd98832c2f3fa1f0f333
     STATUS status
     TLS_VERIFY ON
 )
@@ -41,12 +41,12 @@ file(
 )
 cmake_host_system_information(RESULT cpus QUERY NUMBER_OF_LOGICAL_CORES)
 execute_process(
-    COMMAND "${MAKE}" -C "${OUTPUT}/sources/tree-sitter-0.25.10" "-j${cpus}" "PREFIX=${OUTPUT}"
+    COMMAND "${MAKE}" -C "${OUTPUT}/sources/tree-sitter-0.27.1" "-j${cpus}" "PREFIX=${OUTPUT}"
             install COMMAND_ERROR_IS_FATAL ANY
 )
 file(MAKE_DIRECTORY "${OUTPUT}/share/codecairn/linux-notices/tree-sitter")
 configure_file(
-    "${OUTPUT}/sources/tree-sitter-0.25.10/LICENSE"
+    "${OUTPUT}/sources/tree-sitter-0.27.1/LICENSE"
     "${OUTPUT}/share/codecairn/linux-notices/tree-sitter/LICENSE" COPYONLY
 )
 foreach(

@@ -129,6 +129,7 @@ class IndexParityTests : public QObject {
 private slots:
     void fieldsOrderingFiltersAndOverlays();
     void cancellationRollsBackWrites();
+    void parserUpgradeRebuildsUnchangedFiles();
 };
 
 void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
@@ -275,7 +276,35 @@ void IndexParityTests::cancellationRollsBackWrites() {
     SymbolIndexStore database(workspaceDatabase(fixture.root), false);
     IndexStatement row(database, "SELECT parser FROM files");
     QVERIFY(row.next());
-    QCOMPARE(row.text(0), QString("codecairn-multilanguage-compiler-v11"));
+    QCOMPARE(row.text(0), QString::fromLatin1(ParserVersion));
+}
+
+void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
+    WorkspaceFixture fixture;
+    const auto path = fixture.path("a.cpp");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("int preserved();\n"), qint64{17});
+    file.close();
+    auto cancel = std::make_shared<std::atomic_bool>(false);
+    const auto initial = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    QVERIFY2(initial.error.isEmpty(), qPrintable(initial.error));
+    {
+        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        database.exec("UPDATE files SET parser='codecairn-multilanguage-compiler-v11';");
+    }
+    const auto refreshed = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    QVERIFY2(refreshed.error.isEmpty(), qPrintable(refreshed.error));
+    QCOMPARE(refreshed.parsed, 1);
+    QCOMPARE(refreshed.reused, 0);
+    SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+    IndexStatement row(database, "SELECT parser FROM files");
+    QVERIFY(row.next());
+    QCOMPARE(row.text(0), QString::fromLatin1(ParserVersion));
+    const auto symbols = queryWorkspaceSymbols(fixture.root, {});
+    QVERIFY2(symbols.error.isEmpty(), qPrintable(symbols.error));
+    QCOMPARE(symbols.total, 1);
+    QCOMPARE(symbols.symbols.first().symbol.name, QString("preserved"));
 }
 
 QTEST_GUILESS_MAIN(IndexParityTests)

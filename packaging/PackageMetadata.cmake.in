@@ -150,7 +150,7 @@ if("@CODECAIRN_RELEASE@")
         file(
             WRITE "${resources}/SOURCE-REFERENCES.txt"
             "Qt @Qt6_VERSION@: https://download.qt.io/archive/qt/\n"
-            "Tree-sitter 0.25.10: https://github.com/tree-sitter/tree-sitter/tree/v0.25.10\n"
+            "Tree-sitter 0.27.1: https://github.com/tree-sitter/tree-sitter/tree/v0.27.1\n"
             "ICU (see runtime library ABI in RUNTIME-SOURCES.txt): https://github.com/unicode-org/icu/tags\n"
             "Ubuntu packages: https://packages.ubuntu.com/noble/\n"
         )
