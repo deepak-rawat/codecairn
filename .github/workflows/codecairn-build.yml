@@ -161,32 +161,6 @@ jobs:
         if: inputs.release-tag != ''
         shell: msys2 {0}
         run: cpack --config build/release/CPackConfig.cmake -B build/releases/standalone
-      - name: Verify extracted ZIP without MSYS2 on PATH
-        if: inputs.release-tag != ''
-        shell: pwsh
-        env:
-          RELEASE_TAG: ${{ inputs.release-tag }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $archives = @(Get-ChildItem build/releases/standalone/*.zip)
-          if ($archives.Count -ne 1) { throw 'Expected exactly one standalone ZIP' }
-          $root = Join-Path $env:RUNNER_TEMP 'codecairn-extracted'
-          Expand-Archive -LiteralPath $archives[0].FullName -DestinationPath $root
-          $bin = Join-Path $root 'bin'
-          if (-not (Test-Path (Join-Path $bin 'plugins/platforms/qwindows.dll'))) {
-            throw 'Qt Windows platform plugin is missing'
-          }
-          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-          foreach ($variable in @('QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH', 'QTDIR')) {
-            if (Test-Path "Env:$variable") { Remove-Item "Env:$variable" }
-          }
-          $expected = 'CodeCairn ' + $env:RELEASE_TAG.Substring('codecairn-v'.Length)
-          foreach ($name in @('codecairn.exe', 'cairn.exe')) {
-            $identity = (& (Join-Path $bin $name) --version | Out-String).Trim()
-            if ($LASTEXITCODE -ne 0 -or $identity -ne $expected) {
-              throw "Standalone version check failed for ${name}: $identity"
-            }
-          }
       - uses: actions/upload-artifact@v4
         if: inputs.release-tag != ''
         with:

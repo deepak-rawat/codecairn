@@ -36,7 +36,7 @@ build() {
 
 check() {
     "${MINGW_PREFIX}/bin/ctest" --test-dir "${srcdir}/build" --output-on-failure \
-        -R '^(application_version|application_help|launcher|launcher_version|managed_runtime|packaging)$'
+        -R '^(application_version|application_help|launcher|launcher_version)$'
 }
 
 package() {

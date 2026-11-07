@@ -786,7 +786,7 @@ CODECAIRN_ALLOW_DOWNLOADS and clear overrides.
 ### Release builds
 
 Standalone releases target Windows 11 x64, macOS 26+ ARM64, and Ubuntu 24.04+
-x64 Linux. Homebrew, Arch and MSYS2 managed validation is separate.
+x64 Linux. Standalone and Homebrew/Arch/MSYS2 package validation is manual.
 Use the [release guide](RELEASING.md) for CPack packages, native package recipes,
 the `cairn` launcher contract, CI, and publication gates. The source
 archive includes hash-pinned source dependencies for offline package builds;
@@ -806,7 +806,7 @@ cmake --install build/release --prefix "$PWD/build/release-package"
 ```
 
 Add compiler/prefix settings as needed. BUILD_TESTING=OFF excludes tests/Qt Test,
-not runtime validation or error reporting.
+not package creation or error reporting.
 
 ### Deployment
 
@@ -833,9 +833,8 @@ builds use configured toolchain headers. No deployment writes above the build.
 
 Installation is explicit; destinations remain prefix-relative for `--prefix`
 and DESTDIR. [InstallWindows.cmake.in](../packaging/InstallWindows.cmake.in) supplies the
-install adapter. [VerifyWindowsRuntime.cmake](../packaging/VerifyWindowsRuntime.cmake)
-checks dependency closure and native startup with developer paths removed.
-Its registered test checks the build copy, not a clean machine or installed copy.
+install adapter. There is no automated build-tree or installed-package runtime
+validation; check deployed dependencies and native startup manually.
 
 Building only codecairn bypasses deploy. Close running Windows applications
 before replacing binaries. macOS and Linux bundled installation also deploy
@@ -860,16 +859,13 @@ archive URL, version and hash. The formula lives in
 `homebrew/Formula/codecairn.rb`. The formula resolves real dependency prefixes, uses
 declared CMake/Ninja tools, and runs tests offscreen. Its `post_install` hook
 ad-hoc signs nested code and the managed app after Homebrew's linkage/cleanup
-fixups; the formula test verifies the installed signature without repairing it.
+fixups; installed signature and startup checks are manual.
 `PrepareLocalTap.cmake` reuses that generator, stores immutable release archives
 under `<LOCAL_ROOT>/artifacts/codecairn`, and updates only `tap/Formula/codecairn.rb`
 in the generic `local/releases` tap. It protects modified formulas and different
 same-name archives, preserves other packages, and never invokes Homebrew.
 `COMMIT_TAP=ON` explicitly permits initializing/committing the generated tap;
 it never commits the source checkout or unrelated tap files.
-The packaging test covers source-only formula checksums, absence of cask generation,
-stable local URLs, idempotency, multi-package
-preservation, and protection of local edits/artifacts.
 Homebrew compiles in its temporary build area, installs to the Cellar, and links
 `cairn` through its bin directory; it does not build inside the project checkout.
 Recipe generation does not install or validate upgrade behavior.
@@ -881,29 +877,27 @@ The main project disables generic CPack source generation. Instead,
 then invokes a source-only CPack project. Its archive has one `codecairn-<version>`
 root and can configure/build with `CODECAIRN_ALLOW_DOWNLOADS=OFF`.
 
-Release bundled installs require clean source provenance, record the revision,
+Release bundled installs record source revision and dirty status without enforcing
+clean provenance, record the
 compiler and dependency inventory, and include runtime license notices.
 macOS standalone installation keeps `cairn` inside the app only; managed installs
 also expose it through the prefix's bin directory.
-`cpack` tests verify generators, archive layout, checksums, and managed-mode
-exclusion; `source_package` verifies source provenance, pinned licenses, and an
-offline fixture build. `release_assets` verifies the complete artifact set and
-rejects missing/empty/duplicate/unexpected packages, incorrect checksums, source
-URLs, tags, and source provenance. Standalone drafts contain three native
+Packaging-script tests and runtime-verification scripts are not registered or
+maintained. Assembly copies expected assets and generates checksum files without
+checking incoming checksums, recipe consistency or source provenance.
+Standalone drafts contain three native
 standalone formats, sources and recipes, with no managed packages or `.SRCINFO`.
 
 The [build workflow](../.github/workflows/codecairn-build.yml) owns dependency
-installation, functional tests and standalone packaging. Extracted Windows ZIP
-checks match the lightweight version/plugin checks; macOS and Linux installed
-GUI/runtime verification is manual rather than a draft-release gate.
+installation, functional tests and standalone packaging. ZIP/DMG/TAR installation,
+runtime, signature, checksum and provenance verification is entirely manual.
 The [release workflow](../.github/workflows/codecairn-release.yml)
 validates the version tag, builds an immutable revision through the reusable
-workflow, verifies assembled assets, rechecks the tag, and creates a draft release.
+workflow, assembles assets, rechecks the tag, and creates a draft release.
 Only the publication job has repository write permission.
 
-The [managed workflow](../.github/workflows/codecairn-managed.yml) resolves its
-selected ref once and validates Homebrew/Arch/MSYS2 installations at that exact
-revision, independently of standalone releases. The
+There is no managed-package validation workflow. Build and install recipes
+manually before distributing them. The
 [performance workflow](../.github/workflows/codecairn-performance.yml) runs the
 benchmark label separately. `CODECAIRN_BUILD_BENCHMARKS` defaults ON for local
 testing; regular build CI and native package recipes set it OFF. Disabling it
@@ -926,8 +920,8 @@ With bundling OFF:
 - Compiler recovery uses the configured LLVM resource directory. clangd uses
   PATH, then its configure-time executable if still available; configuration
   also searches beside libclang for keg-only installations.
-- Tests use the package/developer environment. `managed_runtime` checks startup
-  and absence of private deployment in a fresh output tree.
+- Application tests use the package/developer environment; installed-package
+  startup and absence of private deployment must be checked manually.
 
 Bundled mode additionally prefers adjacent clangd/private resources; explicit
 executable overrides remain honored. Configured dependency paths refer to the
@@ -982,9 +976,6 @@ Build first. Registration/environment are in
 | `index_parity` | Saved fields, ordering/counts, pagination, overlays, rollback |
 | `analysis_parity` | Exact styles and canonical metadata for 23 baseline fixtures |
 | `benchmarks` | Repeatable lookup/query/rendering/buffer fixtures |
-| `windows_runtime` | Bundled dependency closure and native startup without developer paths |
-| `deployment_paths` | Platform resource paths and managed installs with a deployment stub |
-| `managed_runtime` | Unbundled startup and absence of private runtime files |
 
 ```sh
 ctest --test-dir build --output-on-failure -R '^(configuration|interactions)$'
@@ -1001,9 +992,9 @@ state paths, never the user's settings/source. Test executables select isolated
 Qt test-mode identities and remove their temporary state.
 
 Navigation-tree Enter/Return activation must ignore disabled or absent current
-items without falling through to platform-dependent Qt activation. Packaging
-tests also cover MSYS2 Git's POSIX path output: local-tap ownership checks convert
-it with `cygpath` on Windows before comparing canonical native paths.
+items without falling through to platform-dependent Qt activation. Local-tap
+ownership checks convert MSYS2 Git's POSIX paths with `cygpath` on Windows before
+comparing canonical native paths; their verification is manual.
 
 Check skipped counts: real semantic tests may skip without clangd. Broader
 changes need broader suites. Offscreen success does not certify native focus,
@@ -1288,7 +1279,7 @@ to run Qt, allocate memory, or perform complex logging from a fatal signal handl
 | Semantic failure | LanguageServerClient, CompilationDatabase, server output |
 | Results reset/replace/caret | MainWindowReferences, ReferenceResultsView, ReferenceHistory |
 | External edits/lost settings | FileIO, SettingsFile fingerprints, ApplicationStateStore |
-| Packaged-only startup failure | DeployWindows and VerifyWindowsRuntime |
+| Packaged-only startup failure | Platform deployment scripts and manual native startup/dependency checks |
 
 Useful breakpoint chains:
 

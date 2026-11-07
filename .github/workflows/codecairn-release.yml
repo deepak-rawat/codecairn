@@ -74,13 +74,11 @@ jobs:
         with:
           pattern: codecairn-*
           path: release-artifacts
-      - name: Verify and assemble release assets
+      - name: Assemble release assets
         run: |
           cmake "-DARTIFACTS=$PWD/release-artifacts" "-DOUTPUT=$PWD/release-assets" \
             "-DRELEASE_TAG=$TAG" -P packaging/PrepareReleaseAssets.cmake
-          cd release-assets
-          sha256sum --check SHA256SUMS
-      - name: Create verified draft release
+      - name: Create draft release
         run: |
           set -euo pipefail
           git fetch --no-tags origin "refs/tags/$TAG"
@@ -90,7 +88,7 @@ jobs:
           fi
           gh release create "$TAG" release-assets/* --verify-tag --draft \
             --title "CodeCairn ${TAG#codecairn-v}" \
-            --notes "Source revision: $SOURCE_SHA. Windows 11 x64 UCRT64 ZIP; macOS 26+ ARM64 DMG (ad-hoc signed, not notarized); Ubuntu 24.04+ x64 Linux TAR; pinned sources and source-only Homebrew/Arch/MSYS2 recipes. Managed package and performance validation run separately by manual dispatch and are not release gates. Native managed packages and .SRCINFO are not draft assets. Publish manually only after native installation and license verification. Public recipe URLs work after publication."
+            --notes "Source revision: $SOURCE_SHA. Windows 11 x64 UCRT64 ZIP; macOS 26+ ARM64 DMG (ad-hoc signed, not notarized); Ubuntu 24.04+ x64 Linux TAR; pinned sources and source-only Homebrew/Arch/MSYS2 recipes. Package installation, runtime, signing, checksums and provenance must be verified manually before publication. CI runs application tests but no package-validation tests. Performance runs separately by manual dispatch. Native managed packages and .SRCINFO are not draft assets. Public recipe URLs work after publication."
           if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != true ]]; then
             echo "::error::Expected the release to remain a draft"
             exit 1

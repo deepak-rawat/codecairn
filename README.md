@@ -86,5 +86,6 @@ See the [user guide](docs/USER_GUIDE.md) for usage and troubleshooting, and the
 See the [release guide](docs/RELEASING.md) for standalone Windows ZIP, macOS DMG,
 Ubuntu 24.04+ x64 Linux TAR packages, pinned sources, and Homebrew/MSYS2/Arch recipes.
 GitHub Actions builds and tests packages before creating a draft release;
-publication remains manual. Managed-package and performance validation run in
-separate manually dispatched workflows, not as standalone release gates.
+publication remains manual. Package installation, runtime, signatures, checksums
+and provenance are verified manually; CI has no package-validation tests.
+Performance fixtures run in a separate manually dispatched workflow.

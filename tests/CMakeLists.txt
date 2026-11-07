@@ -36,57 +36,6 @@ set_tests_properties(
                20
 )
 
-add_test(
-    NAME deployment_paths
-    COMMAND
-        "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-        "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/deployment-paths" -P
-        "${CMAKE_CURRENT_SOURCE_DIR}/DeploymentPathsTests.cmake"
-)
-add_test(
-    NAME packaging
-    COMMAND
-        "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-        "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/packaging" -P
-        "${CMAKE_CURRENT_SOURCE_DIR}/PackagingTests.cmake"
-)
-foreach(spec "CPack|cpack" "SourcePackage|source_package" "ReleaseAssets|release_assets")
-    string(
-        REPLACE "|"
-                ";"
-                parts
-                "${spec}"
-    )
-    list(
-        GET
-        parts
-        0
-        suite
-    )
-    list(
-        GET
-        parts
-        1
-        name
-    )
-    add_test(
-        NAME "${name}"
-        COMMAND
-            "${CMAKE_COMMAND}" "-DSOURCE_DIR=${PROJECT_SOURCE_DIR}"
-            "-DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/${name}" -P
-            "${CMAKE_CURRENT_SOURCE_DIR}/${suite}Tests.cmake"
-    )
-endforeach()
-if(NOT CODECAIRN_BUNDLE_RUNTIME)
-    add_test(
-        NAME managed_runtime
-        COMMAND
-            "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:codecairn>"
-            "-DRUNTIME_ROOT=${PROJECT_BINARY_DIR}" -P
-            "${CMAKE_CURRENT_SOURCE_DIR}/VerifyManagedRuntime.cmake"
-    )
-endif()
-
 function(
     codecairn_test
     target

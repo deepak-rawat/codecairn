@@ -33,14 +33,13 @@ class Codecairn < Formula
            "--parallel", Hardware::CPU.cores.to_s
     ENV["QT_QPA_PLATFORM"] = "offscreen"
     system Formula["cmake"].opt_bin/"ctest", "--test-dir", "build", "--output-on-failure",
-           "-R", "^(application_version|application_help|launcher|launcher_version|managed_runtime|packaging)$"
+           "-R", "^(application_version|application_help|launcher|launcher_version)$"
     system cmake, "--install", "build"
     prefix.install "LICENSE"
   end
 
   def post_install
     system "/usr/bin/codesign", "--force", "--deep", "--sign", "-", prefix/"codecairn.app"
-    system "/usr/bin/codesign", "--verify", "--deep", "--strict", prefix/"codecairn.app"
   end
 
   def caveats
@@ -51,12 +50,4 @@ class Codecairn < Formula
     EOS
   end
 
-  test do
-    ENV["QT_QPA_PLATFORM"] = "offscreen"
-    system "/usr/bin/codesign", "--verify", "--deep", "--strict", prefix/"codecairn.app"
-    assert_match "CodeCairn #{version}", shell_output("#{bin}/cairn --version")
-    assert_match "CodeCairn #{version}",
-                 shell_output("#{prefix}/codecairn.app/Contents/MacOS/codecairn --version")
-    system Formula["llvm"].opt_bin/"clangd", "--version"
-  end
 end

@@ -14,7 +14,7 @@ contributing, use the [developer guide](DEVELOPER_GUIDE.md).
 ## Installing and launching
 
 Standalone releases target Windows 11 x64, macOS 26+ ARM64, and Ubuntu 24.04+
-x64 Linux. Homebrew, MSYS2, and Arch managed packages are validated separately.
+x64 Linux. Standalone and Homebrew/MSYS2/Arch package validation is manual.
 Use the [release instructions](RELEASING.md) for artifacts, package-manager
 installation, and unsigned macOS limitations.
 

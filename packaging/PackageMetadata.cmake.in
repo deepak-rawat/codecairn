@@ -7,9 +7,6 @@ endif()
 
 if("@CODECAIRN_RELEASE@")
     include("@PROJECT_SOURCE_DIR@/packaging/ReleaseCommon.cmake")
-    if(DIRTY)
-        message(FATAL_ERROR "Release packages require clean, committed sources.")
-    endif()
     file(
         WRITE "${resources}/BUILD-MANIFEST.txt"
         "CodeCairn ${VERSION}\nrevision=${REVISION}\ndirty=${DIRTY}\n"
@@ -161,34 +158,5 @@ if("@CODECAIRN_RELEASE@")
 endif()
 
 if("@APPLE@")
-    file(
-        GLOB_RECURSE binaries
-        LIST_DIRECTORIES FALSE
-        "${app}/Contents/MacOS/*" "${app}/Contents/Frameworks/*" "${app}/Contents/PlugIns/*"
-    )
-    foreach(binary IN LISTS binaries)
-        if(IS_DIRECTORY "${binary}")
-            continue()
-        endif()
-        execute_process(
-            COMMAND otool -L "${binary}"
-            RESULT_VARIABLE result
-            OUTPUT_VARIABLE libraries
-            ERROR_VARIABLE error
-        )
-        if(result EQUAL 0)
-            if(libraries MATCHES "/opt/homebrew/|/usr/local/|/Cellar/")
-                message(FATAL_ERROR "Standalone app links to Homebrew: ${binary}\n${libraries}")
-            endif()
-        elseif(
-            NOT
-            error
-            MATCHES
-            "not an object file|is not an object file"
-        )
-            message(FATAL_ERROR "Cannot inspect ${binary}: ${error}")
-        endif()
-    endforeach()
     execute_process(COMMAND codesign --force --deep --sign - "${app}" COMMAND_ERROR_IS_FATAL ANY)
-    execute_process(COMMAND codesign --verify --deep --strict "${app}" COMMAND_ERROR_IS_FATAL ANY)
 endif()

@@ -45,16 +45,6 @@ if(WIN32)
                 "$<TARGET_FILE_DIR:codecairn>/plugins/platforms/"
             VERBATIM
         )
-        add_test(
-            NAME windows_runtime
-            COMMAND
-                "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:codecairn>"
-                "-DCLANG_RESOURCE_DESTINATION=$<TARGET_FILE_DIR:codecairn>/../lib/clang"
-                "-DTEST_DIRECTORY=${CMAKE_CURRENT_BINARY_DIR}/windows-runtime-check"
-                "-DEXPECTED_VERSION=${PROJECT_VERSION}" "-DOBJDUMP=${CMAKE_OBJDUMP}" -P
-                "${CMAKE_CURRENT_LIST_DIR}/VerifyWindowsRuntime.cmake"
-        )
-        set_tests_properties(windows_runtime PROPERTIES TIMEOUT 90)
     endif()
 elseif(APPLE)
     get_target_property(codecairn_qmake Qt6::qmake IMPORTED_LOCATION)

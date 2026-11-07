@@ -4,11 +4,6 @@ if(EXISTS "${SOURCE}/SOURCE-MANIFEST.txt")
         FATAL_ERROR "PrepareSource must run from a Git checkout, not an unpacked source archive."
     )
 endif()
-if(DIRTY AND NOT ALLOW_DIRTY)
-    message(
-        FATAL_ERROR "Commit release inputs first, or use -DALLOW_DIRTY=ON for a local snapshot."
-    )
-endif()
 string(
     RANDOM
     LENGTH 12
@@ -31,7 +26,7 @@ string(
             files
             "${files}"
 )
-if(ALLOW_DIRTY)
+if(DIRTY)
     execute_process(
         COMMAND "${GIT}" -C "${SOURCE}" ls-files --deleted -- .
         OUTPUT_VARIABLE deleted

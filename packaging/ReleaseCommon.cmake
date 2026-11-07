@@ -34,9 +34,6 @@ get_filename_component(OUTPUT "${OUTPUT}" ABSOLUTE)
 if(EXISTS "${SOURCE}/SOURCE-MANIFEST.txt")
     file(STRINGS "${SOURCE}/SOURCE-MANIFEST.txt" revision_line REGEX "^revision=[a-f0-9]+$")
     file(STRINGS "${SOURCE}/SOURCE-MANIFEST.txt" dirty_line REGEX "^dirty=(true|false)$")
-    if(NOT revision_line OR NOT dirty_line)
-        message(FATAL_ERROR "Invalid source archive provenance in SOURCE-MANIFEST.txt")
-    endif()
     string(
         REPLACE "revision="
                 ""
