@@ -178,9 +178,11 @@ void MainWindow::fallbackLink(quint64 token, const QString &channel) {
         }
     }
     SymbolQuery query;
+    query.projectFile = projectFile_;
     query.text = activate ? jumpName_ : hoverName_;
     query.exact = true;
     query.limit = RuntimeLimits::DefinitionCandidateLimit;
+    query.includeCategories = false;
     query.overlays = liveOverlays();
     auto *job = new QFutureWatcher<SymbolPage>(this);
     connect(job, &QFutureWatcher<SymbolPage>::finished, this, [this, job, token, activate] {

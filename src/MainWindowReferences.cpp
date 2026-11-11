@@ -3,6 +3,7 @@
 #include "ReferenceResultsView.h"
 #include "SymbolBrowser.h"
 #include "UiAppearance.h"
+#include "SymbolCatalogModel.h"
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
@@ -601,6 +602,17 @@ void MainWindow::jumpReferenceLink() {
 
 void MainWindow::lookupSymbolReferences() {
     const auto *focus = QApplication::focusWidget();
+    for (auto *view : {virtualSymbols_, virtualCategories_}) {
+        if (view->isVisible() && focus && (focus == view || view->isAncestorOf(focus))) {
+            auto *model = view == virtualSymbols_ ? symbolModel_ : categoryModel_;
+            const auto entry = model->entry(view->currentIndex());
+            if (entry)
+                lookupReferences(nullptr, false, entry->path, entry->symbol.nameStart);
+            else
+                reportError("Symbol row is loading; retry when its name appears.");
+            return;
+        }
+    }
     if (focus && (focus == symbolList_ || symbolList_->isAncestorOf(focus) ||
                   focus == categoryTree_ || categoryTree_->isAncestorOf(focus))) {
         const bool category = focus == categoryTree_ || categoryTree_->isAncestorOf(focus);
@@ -965,7 +977,8 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
         } else {
             referencesFiles_ = workspaceIndex_->files();
             for (const auto &overlay : referenceOverlays_)
-                if (!referencesFiles_.contains(overlay.path))
+                if ((projectPath_.isEmpty() || projectContains(overlay.path)) &&
+                    !referencesFiles_.contains(overlay.path))
                     referencesFiles_ << overlay.path;
         }
         const auto filters =
@@ -986,7 +999,8 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
                              projectPath_,
                              0,
                              RuntimeLimits::ReferenceResults,
-                             {}};
+                             {},
+                             projectFile_};
         referenceSemantic_ = semantic;
         referenceTargets_.clear();
         referenceOriginPath_ = path;
@@ -1059,7 +1073,10 @@ void MainWindow::continueReferenceSearch() {
         job->setFuture(QtConcurrent::run([request, targets, cancel] {
             return resolveSemanticReferences(
                 targets, request.paths, request.query, request.overlays, cancel, request.offset,
-                request.limit, request.options.skipInactive, request.expectedHashes);
+                request.limit, request.options.skipInactive, request.expectedHashes,
+                request.workspaceRoot.isEmpty()
+                    ? QString{}
+                    : workspaceClangdDirectory(request.workspaceRoot, request.projectFile));
         }));
     } else
         job->setFuture(QtConcurrent::run(searchReferences, request, referenceCancelled_));

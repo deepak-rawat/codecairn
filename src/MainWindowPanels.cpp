@@ -11,6 +11,7 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTreeWidget>
+#include <QTreeView>
 
 void MainWindow::applyPanelConfiguration() {
     const QMap<QString, QTreeWidget *> trees{
@@ -37,6 +38,10 @@ void MainWindow::applyPanelConfiguration() {
         if (it.value()->columnCount() > 2)
             it.value()->setColumnHidden(2, !settings.sizes);
     }
+    virtualSymbols_->setFont(symbolList_->font());
+    virtualSymbols_->setStyleSheet(symbolList_->styleSheet().replace("QTreeWidget", "QTreeView"));
+    virtualSymbols_->setHeaderHidden(symbolList_->isHeaderHidden());
+    virtualSymbols_->setColumnHidden(1, symbolList_->isColumnHidden(1));
     auto context = configuration_;
     context.editor.typography.pointSize *= configuration_.context.scale;
     contextPreviewEditor_->applyConfiguration(context);

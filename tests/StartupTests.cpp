@@ -1,12 +1,19 @@
 #include "MainWindow.h"
 #include "UiAppearance.h"
 #include "TestStorage.h"
+#include "ProjectDialog.h"
+#include "SymbolCatalogModel.h"
 #include <QAction>
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QScopeGuard>
 #include <QStandardPaths>
 #include <QSignalSpy>
@@ -16,6 +23,8 @@
 #include <QTreeWidget>
 #include <QTabWidget>
 #include <QThread>
+#include <QTimer>
+#include <QTreeView>
 #include <QtConcurrentRun>
 
 class StartupTests : public QObject {
@@ -30,6 +39,12 @@ private slots:
     void restoresLastWorkspaceWithoutOpeningDocuments();
     void unavailableWorkspaceStartsEmpty();
     void explicitPathsOverrideLastWorkspace();
+    void noProjectBypassesRestoreAndAutomaticWorkspace();
+    void managedProjectsRestoreIndependentSessions();
+    void managedBaseFolderChangeCanSaveAndReopenSession();
+    void newProjectStartsBlankAndSavesOutsideSourceTree();
+    void corruptIndexOffersRecreation();
+    void largeCatalogIsBrowsableDuringIndexing();
     void cachedWorkspacePopulatesSymbols();
     void externalWorkspaceStartup();
     void latestWorkspaceIsRemembered();
@@ -78,8 +93,8 @@ void StartupTests::firstLaunchIsEmptyAndHasNoSampleResource() {
 void StartupTests::applicationIconUsesMidnightPalette() {
     MainWindow window(false);
     const auto icon = UiAppearance::applicationIcon();
-    const QList<QSize> sizes{{16, 16}, {24, 24}, {32, 32}, {48, 48},
-                            {64, 64}, {128, 128}, {256, 256}, {512, 512}};
+    const QList<QSize> sizes{{16, 16}, {24, 24},   {32, 32},   {48, 48},
+                             {64, 64}, {128, 128}, {256, 256}, {512, 512}};
     QCOMPARE(icon.availableSizes(), sizes);
     for (const auto &size : sizes) {
         const QImage source(QString(":/icons/codecairn-%1.png").arg(size.width()));
@@ -163,6 +178,273 @@ void StartupTests::unavailableWorkspaceStartsEmpty() {
     QVERIFY(!QFileInfo::exists(missing));
 }
 
+void StartupTests::noProjectBypassesRestoreAndAutomaticWorkspace() {
+    QTemporaryDir project;
+    const auto source = project.filePath("main.c");
+    QVERIFY(writeSourceFile(source, "int main(void) { return 0; }\n", false).isEmpty());
+    ApplicationStateStore store(stateDirectory_);
+    QVERIFY(store.loadState().state.has_value());
+    ApplicationState state;
+    state.lastWorkspace = project.path();
+    QVERIFY(store.saveState(state).isEmpty());
+    MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
+    window.openStartupPaths({}, true);
+    auto *index = window.findChild<WorkspaceIndex *>();
+    QVERIFY(index->root().isEmpty());
+    QVERIFY(window.openFile(source));
+    QCOMPARE(window.documentCount(), 1);
+    QVERIFY(index->root().isEmpty());
+    QVERIFY(!QFileInfo::exists(workspaceDatabase(project.path())));
+    window.openProject(project.path());
+    QCOMPARE(index->root(), workspacePath(project.path()));
+}
+
+void StartupTests::managedProjectsRestoreIndependentSessions() {
+    QTemporaryDir project;
+    const auto firstFile = project.filePath("first.c");
+    const auto secondFile = project.filePath("second.c");
+    QVERIFY(writeSourceFile(firstFile, "int first(void) { return 1; }\n", false).isEmpty());
+    QVERIFY(writeSourceFile(secondFile, "int second(void) { return 2; }\n", false).isEmpty());
+    const auto first = project.filePath("first.cairn");
+    const auto second = project.filePath("second.cairn");
+    WorkspaceOptions options;
+    options.managed = true;
+    options.name = "First subset";
+    options.includedPaths = {"first.c"};
+    QVERIFY(WorkspaceOptionsStore::saveProject(first, project.path(), options).isEmpty());
+    options.name = "Second subset";
+    options.includedPaths = {"second.c"};
+    QVERIFY(WorkspaceOptionsStore::saveProject(second, project.path(), options).isEmpty());
+    {
+        MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"),
+                          stateDirectory_);
+        auto *index = window.findChild<WorkspaceIndex *>();
+        window.openManagedProject(first);
+        QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
+        QCOMPARE(index->files(), QStringList{workspacePath(firstFile)});
+        QCOMPARE(window.windowTitle(), QString("First subset - CodeCairn"));
+        QVERIFY(window.openFile(firstFile));
+        window.openManagedProject(second);
+        QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
+        QCOMPARE(index->files(), QStringList{workspacePath(secondFile)});
+        QCOMPARE(window.documentCount(), 0);
+        QVERIFY(window.openFile(secondFile));
+        auto *recent = window.findChild<QMenu *>("recentProjects");
+        QVERIFY(recent);
+        QCOMPARE(recent->actions().size(), 2);
+        QVERIFY(window.close());
+    }
+    MainWindow restored(true, nullptr, settingsDirectory_.filePath("settings.json"),
+                        stateDirectory_);
+    restored.openStartupPaths({});
+    QCOMPARE(restored.windowTitle(), QString("Second subset - CodeCairn"));
+    QCOMPARE(restored.documentCount(), 1);
+    QCOMPARE(restored.activeEditor()->bytes(), QByteArray("int second(void) { return 2; }\n"));
+    QVERIFY(restored.closeProject());
+    restored.openManagedProject(first);
+    QCOMPARE(restored.documentCount(), 1);
+    QCOMPARE(restored.activeEditor()->bytes(), QByteArray("int first(void) { return 1; }\n"));
+    QVERIFY(workspaceDatabase(project.path(), first) != workspaceDatabase(project.path(), second));
+}
+
+void StartupTests::managedBaseFolderChangeCanSaveAndReopenSession() {
+    QTemporaryDir first, second, metadata;
+    const auto descriptor = metadata.filePath("managed.cairn");
+    const auto firstFile = first.filePath("first.c");
+    const auto secondFile = second.filePath("second.c");
+    QVERIFY(writeSourceFile(firstFile, "int first;\n", false).isEmpty());
+    QVERIFY(writeSourceFile(secondFile, "int second;\n", false).isEmpty());
+    WorkspaceOptions options;
+    options.managed = true;
+    options.name = "Root change";
+    options.includedPaths = {"."};
+    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, first.path(), options).isEmpty());
+    MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
+    window.openManagedProject(descriptor);
+    auto *index = window.findChild<WorkspaceIndex *>();
+    QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
+    QVERIFY(window.openFile(firstFile));
+    bool changed = false;
+    bool timedOut = false;
+    bool closeCancelled = false;
+    QString requestedRoot = second.path();
+    int ticks = 0;
+    QTimer driver;
+    driver.setInterval(10);
+    connect(&driver, &QTimer::timeout, &window, [&] {
+        if (auto *message = window.findChild<QMessageBox *>(); message && message->isVisible()) {
+            closeCancelled = true;
+            message->done(QMessageBox::Cancel);
+            return;
+        }
+        auto *dialog = window.findChild<ProjectDialog *>("projectDialog");
+        if (!dialog)
+            return;
+        if (++ticks > 1000) {
+            timedOut = true;
+            dialog->reject();
+            return;
+        }
+        if (!changed && !dialog->findChild<QPushButton *>("projectStopScan")->isEnabled()) {
+            changed = true;
+            auto *root = dialog->findChild<QLineEdit *>("projectRoot");
+            root->setText(requestedRoot);
+            QMetaObject::invokeMethod(root, "editingFinished", Qt::DirectConnection);
+            dialog->findChild<QPushButton *>("projectAddBase")->click();
+        }
+        if (changed &&
+            dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled())
+            dialog->accept();
+    });
+    driver.start();
+    window.findChild<QAction *>("manageProjectFiles")->trigger();
+    driver.stop();
+    QVERIFY(changed && !timedOut);
+    QCOMPARE(index->root(), workspacePath(second.path()));
+    QCOMPARE(window.documentCount(), 0);
+    QVERIFY(window.openFile(secondFile));
+    QVERIFY(window.closeProject());
+    window.openManagedProject(descriptor);
+    QCOMPARE(window.documentCount(), 1);
+    QCOMPARE(window.activeEditor()->bytes(), QByteArray("int second;\n"));
+    window.activeEditor()->sends(SCI_APPENDTEXT, 8, "// edit\n");
+    QVERIFY(window.activeEditor()->isModified());
+    requestedRoot = first.path();
+    changed = false;
+    ticks = 0;
+    driver.start();
+    window.findChild<QAction *>("manageProjectFiles")->trigger();
+    driver.stop();
+    QVERIFY(closeCancelled && !timedOut);
+    QCOMPARE(index->root(), workspacePath(second.path()));
+    QCOMPARE(WorkspaceOptionsStore::loadProject(descriptor).root, workspacePath(second.path()));
+    QVERIFY(window.activeEditor()->isModified());
+    window.activeEditor()->markSaved();
+    QVERIFY(window.closeProject());
+}
+
+void StartupTests::newProjectStartsBlankAndSavesOutsideSourceTree() {
+    QTemporaryDir existing, project, metadata;
+    QVERIFY(writeSourceFile(existing.filePath("old.c"), "int old;\n", false).isEmpty());
+    QVERIFY(writeSourceFile(project.filePath("main.c"), "int main_symbol;\n", false).isEmpty());
+    const auto descriptor = metadata.filePath("managed.cairn");
+    MainWindow window(false);
+    window.openProject(existing.path());
+    bool initialized = false;
+    bool blank = false;
+    bool timedOut = false;
+    int ticks = 0;
+    QTimer driver;
+    driver.setInterval(10);
+    connect(&driver, &QTimer::timeout, &window, [&] {
+        auto *dialog = window.findChild<ProjectDialog *>("projectDialog");
+        if (!dialog)
+            return;
+        if (++ticks > 1000) {
+            timedOut = true;
+            dialog->reject();
+            return;
+        }
+        if (!initialized) {
+            blank = dialog->root().isEmpty() && dialog->projectFile().isEmpty() &&
+                    dialog->options().name.isEmpty() && dialog->options().includedPaths.isEmpty();
+            initialized = true;
+            auto *root = dialog->findChild<QLineEdit *>("projectRoot");
+            root->setText(project.path());
+            QMetaObject::invokeMethod(root, "editingFinished", Qt::DirectConnection);
+            dialog->findChild<QLineEdit *>("projectName")->setText("Selected project");
+            dialog->findChild<QLineEdit *>("projectFile")->setText(descriptor);
+            dialog->findChild<QPushButton *>("projectAddBase")->click();
+        }
+        if (dialog->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled())
+            dialog->accept();
+    });
+    driver.start();
+    window.findChild<QAction *>("newProject")->trigger();
+    driver.stop();
+    QVERIFY(!timedOut);
+    QVERIFY(initialized);
+    QVERIFY(blank);
+    QVERIFY(QFileInfo::exists(descriptor));
+    QCOMPARE(window.windowTitle(), QString("Selected project - CodeCairn"));
+    const auto saved = WorkspaceOptionsStore::loadProject(descriptor);
+    QVERIFY2(saved.error.isEmpty(), qPrintable(saved.error));
+    QCOMPARE(saved.root, workspacePath(project.path()));
+    QCOMPARE(saved.options.name, QString("Selected project"));
+    QCOMPARE(saved.options.includedPaths, QStringList{"."});
+    QCOMPARE(QDir(project.path()).entryList(QDir::Files), QStringList{"main.c"});
+    QVERIFY(window.findChildren<QFileDialog *>().isEmpty());
+}
+
+void StartupTests::corruptIndexOffersRecreation() {
+    QTemporaryDir project;
+    QVERIFY(writeSourceFile(project.filePath("main.c"), "int seed;\n", false).isEmpty());
+    QVERIFY(WorkspaceOptionsStore::initialize(project.path()).isEmpty());
+    QFile database(workspaceDatabase(project.path()));
+    QVERIFY(database.open(QIODevice::WriteOnly));
+    QCOMPARE(database.write("not sqlite"), qint64(10));
+    database.close();
+    MainWindow window(false);
+    window.openProject(project.path());
+    QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QMessageBox *>("recreateProjectIndex"), 10000);
+    auto *prompt = window.findChild<QMessageBox *>("recreateProjectIndex");
+    prompt->done(QMessageBox::No);
+    QVERIFY(database.open(QIODevice::ReadOnly));
+    QCOMPARE(database.readAll(), QByteArray("not sqlite"));
+    database.close();
+    window.openProject(project.path());
+    QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QMessageBox *>("recreateProjectIndex"), 10000);
+    prompt = window.findChild<QMessageBox *>("recreateProjectIndex");
+    prompt->done(QMessageBox::Yes);
+    auto *index = window.findChild<WorkspaceIndex *>();
+    QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
+    SymbolQuery query;
+    const auto page = queryWorkspaceSymbols(project.path(), query);
+    QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+    QCOMPARE(page.total, 1);
+    auto *filter = window.findChild<QLineEdit *>("symbolFilter");
+    filter->setText("?database[");
+    QTRY_COMPARE_WITH_TIMEOUT(window.findChild<QLabel *>("symbolScope")->text(),
+                              QString("Search error"), 10000);
+    QVERIFY(!window.findChild<QMessageBox *>("recreateProjectIndex"));
+}
+
+void StartupTests::largeCatalogIsBrowsableDuringIndexing() {
+    QTemporaryDir project;
+    for (int i = 0; i < 2101; ++i)
+        QVERIFY(writeSourceFile(project.filePath(QString("file_%1.c").arg(i)),
+                                "int visible_symbol;\n", false)
+                    .isEmpty());
+    MainWindow window(false);
+    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *files = window.findChild<QTreeWidget *>("fileList");
+    bool catalogWhileBusy = false;
+    bool symbolsWhileBusy = false;
+    connect(index, &WorkspaceIndex::catalogReady, &window,
+            [&] { catalogWhileBusy = index->busy() && files->topLevelItemCount() > 0; });
+    connect(index, &WorkspaceIndex::symbolsReady, &window, [&](const SymbolPage &page) {
+        symbolsWhileBusy = symbolsWhileBusy || (index->busy() && page.total > 0);
+    });
+    window.openProject(project.path());
+    QTRY_VERIFY_WITH_TIMEOUT(catalogWhileBusy, 15000);
+    QCOMPARE(index->files().size(), 2101);
+    QVERIFY(files->topLevelItemCount() <= 1000);
+    auto *filter = window.findChild<QLineEdit *>("fileFilter");
+    filter->setText("file_2100.c");
+    QCOMPARE(files->topLevelItemCount(), 1);
+    QCOMPARE(files->topLevelItem(0)->text(0), QString("file_2100.c"));
+    filter->clear();
+    auto *more = window.findChild<QAction *>("moreFiles");
+    QVERIFY(more->isEnabled());
+    more->trigger();
+    QCOMPARE(files->topLevelItemCount(), 2000);
+    QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 30000);
+    QVERIFY(symbolsWhileBusy);
+    auto *symbols = window.findChild<QTreeWidget *>("symbolList");
+    QTRY_COMPARE_WITH_TIMEOUT(symbols->topLevelItemCount(), 2101, 10000);
+    QVERIFY(!window.findChild<QAction *>("moreSymbols"));
+}
+
 void StartupTests::explicitPathsOverrideLastWorkspace() {
     QTemporaryDir project;
     const auto path = project.filePath("explicit.cpp");
@@ -236,16 +518,30 @@ void StartupTests::externalWorkspaceStartup() {
     auto *symbols = window.findChild<QTreeWidget *>("symbolList");
     QTRY_COMPARE_WITH_TIMEOUT(scope->text(), QString("%1 symbols").arg(expected.total), 30000);
     QCOMPARE(window.findChild<WorkspaceIndex *>()->root(), workspacePath(root));
-    QCOMPARE(symbols->topLevelItemCount(), expected.symbols.size());
+    if (expected.total > 4096)
+        QCOMPARE(window.findChild<QTreeView *>("virtualSymbolList")->model()->rowCount(),
+                 expected.total);
+    else
+        QCOMPARE(symbols->topLevelItemCount(), expected.symbols.size());
     auto *categories = window.findChild<QTreeWidget *>("categoryTree");
-    QCOMPARE(categories->topLevelItemCount(), expected.categories.size());
+    auto *virtualCategories = window.findChild<QTreeView *>("virtualCategoryTree");
+    QCOMPARE(expected.total > 4096 ? virtualCategories->model()->rowCount()
+                                   : categories->topLevelItemCount(),
+             expected.categories.size());
     int categorySymbols = 0;
-    for (int i = 0; i < categories->topLevelItemCount(); ++i) {
-        const auto *category = categories->topLevelItem(i);
-        const auto name = category->data(0, Qt::UserRole).toString();
-        QCOMPARE(category->childCount(), expected.categories.value(name));
-        QCOMPARE(category->text(0), QString("%1 (%2)").arg(name).arg(category->childCount()));
-        categorySymbols += category->childCount();
+    for (int i = 0; i < expected.categories.size(); ++i) {
+        if (expected.total > 4096) {
+            const auto group = virtualCategories->model()->index(i, 0);
+            const auto name = group.data(Qt::UserRole).toString();
+            QCOMPARE(virtualCategories->model()->rowCount(group), expected.categories.value(name));
+            categorySymbols += virtualCategories->model()->rowCount(group);
+        } else {
+            const auto *category = categories->topLevelItem(i);
+            const auto name = category->data(0, Qt::UserRole).toString();
+            QCOMPARE(category->childCount(), expected.categories.value(name));
+            QCOMPARE(category->text(0), QString("%1 (%2)").arg(name).arg(category->childCount()));
+            categorySymbols += category->childCount();
+        }
     }
     QCOMPARE(categorySymbols, expected.total);
     QCOMPARE(window.documentCount(), 0);

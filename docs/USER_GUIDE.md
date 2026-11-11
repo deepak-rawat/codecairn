@@ -36,20 +36,91 @@ a first file without a workspace uses its containing directory. An outside file
 can be opened without changing the workspace; the application asks before using
 its folder as a new workspace.
 
+Startup restores the last open project by default. `cairn .` still opens the
+whole folder, which is convenient for small projects. `cairn --no-project`
+starts with no project and does not erase the remembered project. Files opened
+in that mode do not automatically create a workspace; use an explicit Project
+command when ready. Folder/project arguments combined with `--no-project` are
+reported rather than silently opening a project.
+
+For a selected subset, use **Project > New Project**. It starts blank, even when
+another project is open. Choose a base folder; the project name initially becomes
+that folder's name and can be changed.
+
+The left pane shows available files and folders. **Add Selected** adds the
+highlighted files or recursively includes the highlighted folders.
+**Add Base Folder** explicitly includes the whole base folder. The right pane
+shows the actual included files, with relative paths, a count, and a filter.
+Use **Remove Selected** to omit files, or **Clear All** to start over. Directory-name
+exclusions still apply, and symlinks are not followed.
+
+Folder discovery runs in the background and displays files as they are found.
+**Stop** cancels discovery; add the folder again to retry, or clear the selection.
+Create/Save stays disabled until discovery completes successfully.
+
+The **Project file** field specifies the `.cairn` definition's full location.
+Its suggested location is your Documents folder rather than the base folder. Edit the
+path or use that field's **Browse** button to save it anywhere in an existing
+folder, including outside Git repositories. **Create** saves directly to that
+location without opening another save dialog. Existing project files are not
+silently overwritten.
+
+**Manage Project Files** uses the same two-pane view to edit an existing
+selection and name. Included folders also include new files added underneath
+them; removing an individual file records an exclusion. The definition stays
+at its existing location when editing.
+Changing its base folder saves/closes the old project's documents first and uses
+a separate session for the new base folder. Cancelling those close prompts leaves
+the project definition unchanged.
+
+**Open Project** opens a saved `.cairn` definition; **Open Folder** immediately
+opens all nonexcluded files under a folder, without creating a `.cairn` file.
+**Recent Projects** lists the twelve
+most recently opened managed projects and whole-folder workspaces. Different
+managed projects can share a base folder without sharing their indexes or saved
+sessions. Opening a file outside the managed selection does not add it.
+
 The index discovers source files and symbols in the background. Opening a folder
 does not open an arbitrary file or example automatically. Browsing/indexing does
-not require writing metadata into the source directory.
+not require writing generated metadata into the source directory. The managed
+project definition is saved wherever you choose.
+
+The file catalog becomes available before parsing finishes. Symbols appear as
+completed work is committed, so browsing and searching can begin during indexing.
+Bulk indexing extracts the same symbols as editor analysis, including automatic
+C/C++ compiler recovery for macro-generated definitions and incomplete syntax,
+without allocating editor styling. Semantic navigation remains separate.
+Reference acceleration is built after the symbol pass; searches remain correct
+when acceleration is incomplete.
+
+Large file lists initially display a bounded page. Filter the full catalog or
+use **Load More Files** to display more matching rows. Folders load file children
+when expanded. Refreshes preserve selected files and expanded folders, including
+in large catalogs. Project Symbols shows every matching symbol without a 300-row
+limit or a Load More command, and Symbol Categories includes every category
+entry. Large catalogs use virtual rows: names and targets are loaded as you scroll,
+including rows far beyond the first page. There is no manual Load More Symbols
+step or limit on the browsable catalog. A briefly unloaded row says Loading;
+selecting it completes navigation after its target arrives.
+Managed projects can limit indexed scope without reducing symbol coverage.
+Symbol filtering displays **Searching...** until the current query completes.
+Large-catalog searches use a covering index to avoid random reads of every full
+symbol record; the first open after an update may need to create that index.
 
 ### Project commands
 
 | Command | Meaning | When to use it |
 |---|---|---|
+| New Project | Save a named selection under a base folder | Browse a subset of a large tree |
+| Open Project | Open a `.cairn` definition | Resume a managed project |
+| Manage Project Files | Edit the name and included/excluded paths | Change an existing managed project |
+| Recent Projects | Reopen a recent project or whole folder | Switch projects |
 | Open Folder | Select the workspace root | Start browsing a project |
 | Close Project | Save its session, close its documents, and clear the startup workspace hint | Finish with a project without deleting its saved session |
 | Refresh File List | Refresh discovery/index state and resume automatic updates | New, deleted, or renamed files; after cancelling indexing |
 | Rebuild Symbol Index | Reparse the known file catalog | Suspected stale symbol extraction |
 | Rebuild Files and Symbols | Rediscover files and reparse | Broader catalog/exclusion changes |
-| Cancel Background Indexing | Stop current work and pause automatic refresh | Temporarily stop a large scan |
+| Cancel Background Indexing | Stop current work, retain committed progress, and pause automatic refresh | Temporarily stop a large scan |
 | Compilation Database Directory | Select a directory containing compile_commands.json | Configure reliable C/C++ semantic navigation |
 | Restart Language Service | Restart semantic services | Compilation settings or server installation changed |
 | Excluded Directory Names | Skip matching directory names at any depth | Omit dependencies, generated output, or large irrelevant trees |
@@ -62,6 +133,14 @@ Filesystem notifications trigger background checks; periodic checks recover
 missed events. The default interval is six hours. Unchanged files reuse cached
 symbols, and unchanged automatic checks stay quiet. Warnings are available in
 the status bar and Project Files tooltip.
+
+Cancelled indexing resumes through **Refresh File List** or reopening the
+project; previously committed unchanged files are reused. Symbols not yet
+processed may be missing or reflect their last completed version.
+If an index is corrupt or unsupported, CodeCairn asks before recreating it.
+Choosing No preserves it; choosing Yes archives the old database and rebuilds
+from the project definition. Source files and project selections are unchanged.
+There is no automatic conversion of incompatible index formats.
 
 ### Sessions and source-file safety
 
@@ -498,6 +577,13 @@ support only, and non-clangd integration is not certified.
 For reliable semantic results, install the project's SDK/compiler headers and
 provide its compilation database. An index rebuild cannot repair missing
 compiler flags or guarantee that a server has finished indexing.
+In a managed subset, indexed fallback can find definitions only in the included
+files. For example, selecting Linux `drivers/gpu` alone excludes helpers defined
+in `include/drm`. Add the needed header folders through **Manage Project Files**,
+or supply a valid kernel compilation database so clangd can resolve dependencies.
+Fallback flags can produce implicit call-site declarations when headers are missing;
+these are not real definitions. Context rejects such self-references and explicitly
+reports unresolved scope/configuration instead of presenting the call as its definition.
 
 Preferences, window state, workspace sessions, generated indexes, and workspace
 options are separate files in per-user storage. See the

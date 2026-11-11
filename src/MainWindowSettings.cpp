@@ -70,6 +70,8 @@ void MainWindow::applyConfiguration() {
     }
     for (auto *tree : {outline_, fileList_, symbolList_, folderTree_, categoryTree_})
         UiAppearance::applyTreeAppearance(tree, configuration_);
+    UiAppearance::applyTreeAppearance(virtualSymbols_, configuration_);
+    UiAppearance::applyTreeAppearance(virtualCategories_, configuration_);
     if (referencesList_)
         applyReferenceAppearance();
     mainSplitter_->setHandleWidth(configuration_.ui.splitterWidth);

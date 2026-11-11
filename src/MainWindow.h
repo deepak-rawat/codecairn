@@ -10,10 +10,12 @@
 #include "DefinitionResolver.h"
 #include "WorkspaceServices.h"
 #include "ApplicationStateStore.h"
+#include "WorkspaceOptionsStore.h"
 #include <QMainWindow>
 #include <QFutureWatcher>
 #include <QSet>
 #include <QPointer>
+#include <QPersistentModelIndex>
 #include <atomic>
 #include <memory>
 #include <optional>
@@ -31,11 +33,14 @@ class QPushButton;
 class QFontComboBox;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QSplitter;
 class QTabWidget;
 class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QTreeView;
+class SymbolCatalogModel;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -44,8 +49,9 @@ public:
                         QString configPath = {}, QString stateDirectory = {});
     ~MainWindow() override;
     bool openFile(const QString &path);
-    void openStartupPaths(const QStringList &paths);
+    void openStartupPaths(const QStringList &paths, bool noProject = false);
     void openProject(const QString &path);
+    void openManagedProject(const QString &projectFile);
     bool closeProject();
     bool saveCurrent(bool saveAs = false);
     CodeEditor *activeEditor() const;
@@ -75,6 +81,16 @@ private:
     void buildUi();
     void initializeWorkspace();
     void populateFiles(const QStringList &paths);
+    void populateLargeFiles(const QStringList &paths);
+    void populateLargeFilePage();
+    void expandProjectFolder(QTreeWidgetItem *item);
+    void newProject();
+    void manageProjectFiles();
+    void openWorkspace(const QString &root, const QString &projectFile);
+    void updateRecentProjects();
+    void rememberProject();
+    void offerIndexRecreation(const QString &error);
+    bool projectContains(const QString &path) const;
     void filterFiles();
     void filterSymbols();
     void selectCategory(const QString &kind);
@@ -92,10 +108,11 @@ private:
     void openContext();
     void initializeNavigation();
     void navigateTo(const NavigationLocation &location, bool pin = false, bool focus = false,
-                    bool record = true);
+                    bool record = true, const std::optional<IndexedSymbol> &indexedTarget = {});
     void commitNavigation(const NavigationLocation &location, const FileContents &file, bool pin,
                           bool focus, bool record, const NavigationLocation &origin,
-                          const QPointer<QWidget> &previousFocus);
+                          const QPointer<QWidget> &previousFocus,
+                          const std::optional<IndexedSymbol> &indexedTarget);
     NavigationLocation currentLocation() const;
     void navigateHistory(int direction);
     void pinDocument(Document *document);
@@ -183,6 +200,9 @@ private:
                           const QString &symbolPath = {}, int symbolPosition = -1);
     QVector<SymbolOverlay> liveOverlays() const;
     void displaySymbols(const SymbolPage &page);
+    QTreeView *projectSymbolView() const;
+    QTreeView *projectCategoryView() const;
+    void resetSymbolBrowser();
     void activateProjectSymbol(bool open);
     void activateCategorySymbol(bool open);
     void activateIndexedSymbol(const IndexedSymbol &entry, bool open);
@@ -195,7 +215,7 @@ private:
     void semanticPreview(const LspLocation &target);
     void restartLanguageService();
     void readWorkspaceOptions();
-    void writeWorkspaceOptions();
+    bool writeWorkspaceOptions(const QStringList &excludedDirectories);
     void refreshWorkspace(bool force, bool rescan);
     void reconcileOpenDocuments(const IndexResult &result);
     Document *currentDocument() const;
@@ -245,6 +265,16 @@ private:
     QTreeWidget *symbolList_;
     QTreeWidget *folderTree_;
     QTreeWidget *categoryTree_;
+    QTreeView *virtualSymbols_ = nullptr;
+    QTreeView *virtualCategories_ = nullptr;
+    SymbolCatalogModel *symbolModel_ = nullptr;
+    SymbolCatalogModel *categoryModel_ = nullptr;
+    bool virtualSymbolMode_ = false;
+    bool virtualCategoryMode_ = false;
+    std::optional<bool> virtualSymbolActivation_;
+    std::optional<bool> virtualCategoryActivation_;
+    QPersistentModelIndex virtualSymbolActivationIndex_;
+    QPersistentModelIndex virtualCategoryActivationIndex_;
     QLineEdit *outlineFilter_;
     QLineEdit *fileFilter_;
     QLineEdit *symbolFilter_;
@@ -276,6 +306,7 @@ private:
         bool focus = false;
         bool record = true;
         quint64 generation = 0;
+        std::optional<IndexedSymbol> indexedTarget;
     };
     std::optional<OpenRequest> pendingOpen_;
     void startNavigationRead();
@@ -293,6 +324,7 @@ private:
     WorkspaceIndex *workspaceIndex_;
     LanguageServerClient *cppLanguageService_;
     SymbolPage symbolPage_;
+    std::optional<IndexedSymbol> selectedProjectSymbol_;
     QStringList indexWarnings_;
     QTimer *symbolQueryTimer_;
     QString compilationDirectory_;
@@ -301,6 +333,9 @@ private:
     QVector<LspLocation> semanticTargets_;
     bool semanticChoice_ = false;
     QString lookupName_;
+    QString lookupPath_;
+    int lookupStart_ = -1;
+    int lookupEnd_ = -1;
     QString lookupProvider_;
     bool hasPreviewTarget_ = false;
     IndexedSymbol previewTarget_;
@@ -344,6 +379,17 @@ private:
     bool contextReferenceLine_ = false;
     QTimer *contextTimer_;
     QString projectPath_;
+    QString projectFile_;
+    QString projectName_;
+    WorkspaceOptions projectOptions_;
+    QMenu *recentProjectsMenu_ = nullptr;
+    bool suppressAutomaticProject_ = false;
+    QPointer<QDialog> recreateIndexDialog_;
+    bool indexRecoveryOffered_ = false;
+    QAction *moreFiles_ = nullptr;
+    QStringList largeFileCatalog_;
+    QHash<QString, QStringList> folderFiles_;
+    int fileLimit_ = 1000;
     QFutureWatcher<DiskPreview> *diskPreview_;
     bool diskPreviewBusy_ = false;
     QString pendingPreviewPath_;

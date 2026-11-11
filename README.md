@@ -80,6 +80,8 @@ Windows has local runtime-test coverage; Linux/macOS still need native certifica
 
 See the [user guide](docs/USER_GUIDE.md) for usage and troubleshooting, and the
 [developer guide](docs/DEVELOPER_GUIDE.md#build-system) for build options and offline builds.
+Use `cairn --no-project` to start without restoring a project, or **Project >
+New Project** to create a named selection of files and folders.
 
 ## Packages and releases
 

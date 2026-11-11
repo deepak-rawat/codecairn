@@ -149,6 +149,7 @@ codecairn_test(
     reference-results.txt,txt
 )
 codecairn_test(index_parity_tests IndexParityTests.cpp index_parity)
+codecairn_test(symbol_scaling_tests SymbolScalingTests.cpp symbol_scaling)
 codecairn_test(
     reference_candidate_index_tests ReferenceCandidateIndexTests.cpp reference_candidate_index
 )

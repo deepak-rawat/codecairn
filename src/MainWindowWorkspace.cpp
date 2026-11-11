@@ -3,6 +3,8 @@
 #include "RuntimeLimits.h"
 #include "WorkspaceOptionsStore.h"
 #include "SymbolBrowser.h"
+#include "SymbolCatalogModel.h"
+#include "Diagnostics.h"
 
 #include <QAction>
 #include <QComboBox>
@@ -34,6 +36,20 @@ void MainWindow::initializeWorkspace() {
         reportError(message);
         projectState_->setText(message);
         symbolScope_->setText("Index error - see status");
+        offerIndexRecreation(message);
+    });
+    connect(workspaceIndex_, &WorkspaceIndex::catalogReady, this, [this](const QStringList &files) {
+        populateFiles(files);
+        projectState_->setText(QString("%1 files; indexing symbols...").arg(files.size()));
+        updateOpenSymbols();
+    });
+    connect(workspaceIndex_, &WorkspaceIndex::batchReady, this, [this] {
+        if (!workspaceIndex_->busy()) {
+            symbolModel_->invalidatePages();
+            categoryModel_->invalidatePages();
+        }
+        if (!symbolQueryTimer_->isActive())
+            symbolQueryTimer_->start(qMax(1500, configuration_.behavior.searchDebounceMs));
     });
     connect(workspaceIndex_, &WorkspaceIndex::status, this,
             [this](const QString &message) { statusBar()->showMessage(message, 5000); });
@@ -54,7 +70,9 @@ void MainWindow::initializeWorkspace() {
                          ? ""
                          : QString("; %1 indexing warnings").arg(result.warnings.size()));
         projectState_->setText(text);
-        fileList_->setToolTip(result.warnings.isEmpty() ? text : result.warnings.join('\n'));
+        const auto details = result.warnings.isEmpty() ? text : result.warnings.join('\n');
+        fileList_->setToolTip(largeFileCatalog_.isEmpty() ? details
+                                                          : fileList_->toolTip() + '\n' + details);
         if (!result.automatic || result.parsed > 0 || result.warnings != indexWarnings_) {
             statusBar()->showMessage(text, 8000);
             for (const auto &warning : result.warnings)
@@ -62,8 +80,11 @@ void MainWindow::initializeWorkspace() {
         }
         indexWarnings_ = result.warnings;
         reconcileOpenDocuments(result);
-        if (result.changed)
+        if (result.changed) {
+            symbolModel_->invalidatePages();
+            categoryModel_->invalidatePages();
             updateOpenSymbols();
+        }
         emit indexReady();
     });
     connect(cppLanguageService_, &LanguageServerClient::status, this,
@@ -90,8 +111,14 @@ void MainWindow::initializeWorkspace() {
                             previewTarget(fallbackTargets_.first(),
                                           "Syntax-index candidate (not compiler verified)");
                         } else if (fallbackTargets_.isEmpty()) {
-                            contextTitle_->setText("Unresolved: " + lookupName_ +
-                                                   " - check language-service status");
+                            contextTitle_->setText(
+                                "Unresolved: " + lookupName_ +
+                                " - check project scope and compilation settings");
+                            contextTitle_->setToolTip(
+                                "The selected project files contain no indexed definition. "
+                                "Add the folders containing declarations/definitions, or configure "
+                                "the project's compilation database so the language service can "
+                                "resolve dependencies outside the indexed selection.");
                         } else {
                             const QSignalBlocker block(definitionChoices_);
                             definitionChoices_->clear();
@@ -121,7 +148,9 @@ void MainWindow::initializeWorkspace() {
 QVector<SymbolOverlay> MainWindow::liveOverlays() const {
     QVector<SymbolOverlay> overlays;
     for (const auto &doc : documents_) {
-        if (!projectPath_.isEmpty() && !pathInWorkspace(doc->path, projectPath_))
+        if (!projectPath_.isEmpty() && !projectContains(doc->path))
+            continue;
+        if (doc->analyzedRevision != doc->revision && !doc->editor->isModified())
             continue;
         overlays.append({doc->path, snapshot(doc.get()),
                          doc->analyzedRevision == doc->revision ? doc->analysis : SourceAnalysis{},
@@ -139,13 +168,79 @@ void MainWindow::displaySymbols(const SymbolPage &page) {
         symbolList_->clear();
         categoryTree_->clear();
         symbolPage_ = {};
+        resetSymbolBrowser();
         symbolScope_->setText("Search error");
         symbolScope_->setToolTip(page.error);
         reportError(page.error);
+        if (!workspaceIndex_->busy())
+            offerIndexRecreation(page.error);
         return;
     }
     symbolPage_ = page;
-    SymbolBrowser::display(symbolList_, categoryTree_, page, projectPath_, category_);
+    virtualSymbolActivation_.reset();
+    virtualCategoryActivation_.reset();
+    const bool symbolFocus = projectSymbolView()->hasFocus();
+    const bool categoryFocus = projectCategoryView()->hasFocus();
+    QSet<QString> expanded;
+    for (int i = 0; virtualCategoryMode_ && i < categoryModel_->rowCount(); ++i) {
+        const auto group = categoryModel_->index(i, 0);
+        if (virtualCategories_->isExpanded(group))
+            expanded.insert(categoryModel_->category(group));
+    }
+    virtualSymbolMode_ = page.total > 4096;
+    int categoryTotal = 0;
+    for (int count : page.categories)
+        categoryTotal += count;
+    virtualCategoryMode_ = categoryTotal > 4096;
+    projectSymbolView()->show();
+    projectCategoryView()->show();
+    if (symbolFocus)
+        projectSymbolView()->setFocus();
+    if (categoryFocus)
+        projectCategoryView()->setFocus();
+    symbolList_->setVisible(!virtualSymbolMode_);
+    virtualSymbols_->setVisible(virtualSymbolMode_);
+    categoryTree_->setVisible(!virtualCategoryMode_);
+    virtualCategories_->setVisible(virtualCategoryMode_);
+    SymbolQuery query;
+    query.projectFile = projectFile_;
+    query.text = symbolFilter_->text();
+    query.category = category_;
+    query.overlays = liveOverlays();
+    query.allowPendingSchema = workspaceIndex_->busy();
+    if (virtualSymbolMode_)
+        symbolModel_->setCatalog(projectPath_, query, page);
+    else
+        symbolModel_->clear();
+    if (virtualCategoryMode_) {
+        categoryModel_->setCatalog(projectPath_, query, page);
+        for (int i = 0; i < categoryModel_->rowCount(); ++i) {
+            const auto group = categoryModel_->index(i, 0);
+            virtualCategories_->setExpanded(group,
+                                            expanded.contains(categoryModel_->category(group)));
+        }
+    } else
+        categoryModel_->clear();
+    auto visible = page;
+    if (virtualSymbolMode_)
+        visible.symbols.clear();
+    if (virtualCategoryMode_)
+        visible.categorySymbols.clear();
+    SymbolBrowser::display(symbolList_, categoryTree_, visible, projectPath_, category_);
+    if (page.anchorRow >= 0 && page.anchor && selectedProjectSymbol_ &&
+        page.anchor->path == selectedProjectSymbol_->path &&
+        page.anchor->symbol.nameStart == selectedProjectSymbol_->symbol.nameStart &&
+        page.anchor->symbol.name == selectedProjectSymbol_->symbol.name) {
+        if (virtualSymbolMode_) {
+            const QSignalBlocker selection(virtualSymbols_->selectionModel());
+            const auto row = symbolModel_->index(page.anchorRow, 0);
+            virtualSymbols_->setCurrentIndex(row);
+            virtualSymbols_->scrollTo(row);
+        } else if (page.anchorRow < symbolList_->topLevelItemCount()) {
+            symbolList_->setCurrentItem(symbolList_->topLevelItem(page.anchorRow));
+            symbolList_->scrollToItem(symbolList_->currentItem());
+        }
+    }
     if (revealSelectedSymbol_) {
         if (auto *selected = symbolList_->currentItem())
             symbolList_->scrollToItem(selected);
@@ -155,9 +250,16 @@ void MainWindow::displaySymbols(const SymbolPage &page) {
     symbolScope_->setToolTip(
         projectPath_.isEmpty()
             ? "Open buffers; open a folder to index a workspace."
-            : workspaceDatabase(projectPath_) +
-                  "\nLive buffers override disk symbols. Syntax index, not semantic resolution.");
+            : workspaceDatabase(projectPath_, projectFile_) +
+                  "\nLive buffers override disk symbols. Syntax index with compiler recovery, "
+                  "not semantic resolution.");
     if (navigation) {
+        if (virtualSymbolMode_) {
+            if (!virtualSymbols_->currentIndex().isValid() && symbolModel_->rowCount() > 0)
+                virtualSymbols_->setCurrentIndex(symbolModel_->index(0, 0));
+            navigateProjectSymbol(*navigation);
+            return;
+        }
         if (!symbolList_->currentItem() && symbolList_->topLevelItemCount())
             symbolList_->setCurrentItem(symbolList_->topLevelItem(0));
         activateProjectSymbol(false);
@@ -171,16 +273,42 @@ void MainWindow::activateProjectSymbol(bool open) {
             navigateProjectSymbol(true);
         return;
     }
+    if (virtualSymbolMode_) {
+        if (!virtualSymbols_->currentIndex().isValid())
+            return;
+        const auto entry = symbolModel_->entry(virtualSymbols_->currentIndex());
+        if (entry) {
+            virtualSymbolActivation_.reset();
+            selectedProjectSymbol_ = *entry;
+            activateIndexedSymbol(*entry, open);
+        } else {
+            virtualSymbolActivation_ = open;
+            virtualSymbolActivationIndex_ = virtualSymbols_->currentIndex();
+        }
+        return;
+    }
     const auto *item = symbolList_->currentItem();
     if (!item || (pinContextAction_->isChecked() && !open))
         return;
     const int row = item->data(0, SymbolItemRole::Index).toInt();
     if (row < 0 || row >= symbolPage_.symbols.size())
         return;
+    selectedProjectSymbol_ = symbolPage_.symbols[row];
     activateIndexedSymbol(symbolPage_.symbols[row], open);
 }
 
 void MainWindow::activateCategorySymbol(bool open) {
+    if (virtualCategoryMode_) {
+        const auto entry = categoryModel_->entry(virtualCategories_->currentIndex());
+        if (entry) {
+            virtualCategoryActivation_.reset();
+            activateIndexedSymbol(*entry, open);
+        } else if (virtualCategories_->currentIndex().parent().isValid()) {
+            virtualCategoryActivation_ = open;
+            virtualCategoryActivationIndex_ = virtualCategories_->currentIndex();
+        }
+        return;
+    }
     const auto *item = categoryTree_->currentItem();
     if (!item || !item->parent())
         return;
@@ -190,20 +318,36 @@ void MainWindow::activateCategorySymbol(bool open) {
     activateIndexedSymbol(symbolPage_.categorySymbols[row], open);
 }
 
+QTreeView *MainWindow::projectSymbolView() const {
+    return virtualSymbolMode_ ? virtualSymbols_ : symbolList_;
+}
+
+QTreeView *MainWindow::projectCategoryView() const {
+    return virtualCategoryMode_ ? virtualCategories_ : categoryTree_;
+}
+
+void MainWindow::resetSymbolBrowser() {
+    selectedProjectSymbol_.reset();
+    virtualSymbolActivation_.reset();
+    virtualCategoryActivation_.reset();
+    symbolModel_->clear();
+    categoryModel_->clear();
+    virtualSymbols_->hide();
+    virtualCategories_->hide();
+    symbolList_->show();
+    categoryTree_->show();
+    virtualSymbolMode_ = false;
+    virtualCategoryMode_ = false;
+}
+
 void MainWindow::activateIndexedSymbol(const IndexedSymbol &entry, bool open) {
     if (pinContextAction_->isChecked() && !open)
         return;
-    if (open && pinContextAction_->isChecked()) {
-        const auto target = entry;
-        if (openFile(target.path)) {
-            auto *editor = activeEditor();
-            if (QCryptographicHash::hash(editor->bytes(), QCryptographicHash::Sha256).toHex() ==
-                target.hash)
-                editor->selectRange(target.symbol.nameStart, target.symbol.nameEnd);
-            else
-                reportError(
-                    "Source changed since indexing; refresh before navigating to a symbol.");
-        }
+    if (open) {
+        const auto start =
+            pinContextAction_->isChecked() ? entry.symbol.nameStart : entry.symbol.start;
+        const auto end = pinContextAction_->isChecked() ? entry.symbol.nameEnd : entry.symbol.end;
+        navigateTo({entry.path, start, end, -1, entry.hash}, true, true, true, entry);
         return;
     }
     openAfterPreview_ = open;
@@ -261,6 +405,9 @@ void MainWindow::resolveDefinition(const QString &path, const QByteArray &source
     while (end < source.size() && isWord(source[end]))
         ++end;
     lookupName_ = QString::fromUtf8(source.mid(start, end - start));
+    lookupPath_ = path;
+    lookupStart_ = start;
+    lookupEnd_ = end;
     ++contextGeneration_;
     const auto token = contextGeneration_;
     pendingPreviewPath_.clear();
@@ -295,24 +442,49 @@ void MainWindow::handleDefinitions(quint64 token, const QVector<LspLocation> &ta
     if (!error.isEmpty()) {
         statusBar()->showMessage(error + " Using syntax-index candidates.", 6000);
     }
-    if (targets.size() == 1) {
-        semanticPreview(targets.first());
-    } else if (!targets.isEmpty()) {
-        semanticTargets_ = targets;
+    auto definitions = targets;
+    definitions.removeIf([this](const auto &target) {
+        if (workspacePath(target.path) != workspacePath(lookupPath_))
+            return false;
+        auto *doc = findDocument(lookupPath_);
+        if (!doc)
+            return false;
+        const auto position = sourceByteOffset(doc->snapshotBytes(), target.line, target.character);
+        const bool self = position >= lookupStart_ && position < lookupEnd_;
+        const bool declaration =
+            doc->revision == doc->analyzedRevision &&
+            std::any_of(doc->analysis.symbols.cbegin(), doc->analysis.symbols.cend(),
+                        [this, position](const auto &symbol) {
+                            return !symbol.outlineOnly && symbol.nameStart == position &&
+                                   symbol.name == lookupName_ &&
+                                   (symbol.provider == "syntax" || symbol.definition);
+                        });
+        if (self && !declaration)
+            qCDebug(languageServiceLog) << "lsp.definition_self_reference" << "path=" << target.path
+                                        << "identifier=" << lookupName_;
+        return self && !declaration;
+    });
+    if (definitions.size() == 1) {
+        semanticPreview(definitions.first());
+    } else if (!definitions.isEmpty()) {
+        semanticTargets_ = definitions;
         semanticChoice_ = true;
         const QSignalBlocker block(definitionChoices_);
         definitionChoices_->clear();
-        for (const auto &target : targets)
+        for (const auto &target : definitions)
             definitionChoices_->addItem(target.path + ':' + QString::number(target.line + 1));
         definitionChoices_->setCurrentIndex(-1);
         definitionChoices_->setPlaceholderText("Select a definition");
         definitionChoices_->show();
-        contextTitle_->setText(QString("%1 definitions: %2").arg(targets.size()).arg(lookupName_));
+        contextTitle_->setText(
+            QString("%1 definitions: %2").arg(definitions.size()).arg(lookupName_));
     } else {
         SymbolQuery query;
+        query.projectFile = projectFile_;
         query.text = lookupName_;
         query.exact = true;
         query.limit = RuntimeLimits::DefinitionCandidateLimit;
+        query.includeCategories = false;
         query.overlays = liveOverlays();
         definitionResolver_->request(projectPath_, query, token);
     }
@@ -365,8 +537,10 @@ void MainWindow::semanticPreview(const LspLocation &target) {
 }
 
 void MainWindow::refreshWorkspace(bool force, bool rescan) {
-    if (!projectPath_.isEmpty())
+    if (!projectPath_.isEmpty()) {
+        indexRecoveryOffered_ = false;
         workspaceIndex_->refresh(force, rescan);
+    }
 }
 
 void MainWindow::reconcileOpenDocuments(const IndexResult &result) {
@@ -384,14 +558,19 @@ void MainWindow::restartLanguageService() {
     ++contextGeneration_;
     ++navigationGeneration_;
     ++linkGeneration_;
-    workspaceServices_->restartLanguageServices(projectPath_, compilationDirectory_);
+    workspaceServices_->restartLanguageServices(projectPath_, compilationDirectory_, projectFile_);
+    for (const auto &doc : documents_)
+        doc->setCompilationDirectory(projectContains(doc->path)
+                                         ? workspaceClangdDirectory(projectPath_, projectFile_)
+                                         : QString{});
     for (const auto &doc : documents_)
         if (auto *service = languageService(doc->path, snapshot(doc.get())))
             service->syncDocument(doc->path, snapshot(doc.get()), static_cast<int>(doc->revision));
 }
 
 void MainWindow::readWorkspaceOptions() {
-    const auto options = WorkspaceOptionsStore::loadOptions(projectPath_);
+    const auto options = WorkspaceOptionsStore::loadOptions(projectPath_, projectFile_);
+    projectOptions_ = options;
     compilationDirectory_ = options.compilationDirectory;
     if (!options.error.isEmpty())
         reportError(options.error);
@@ -399,11 +578,15 @@ void MainWindow::readWorkspaceOptions() {
         workspaceIndex_->setExcludes(*options.excludedDirectories);
 }
 
-void MainWindow::writeWorkspaceOptions() {
+bool MainWindow::writeWorkspaceOptions(const QStringList &excludedDirectories) {
     const auto error = WorkspaceOptionsStore::saveOptions(projectPath_, compilationDirectory_,
-                                                          workspaceIndex_->excludes());
-    if (!error.isEmpty())
+                                                          excludedDirectories, projectFile_);
+    if (!error.isEmpty()) {
         reportError(error);
+        return false;
+    }
+    readWorkspaceOptions();
+    return true;
 }
 
 bool MainWindow::saveProjectSession() {
@@ -412,9 +595,12 @@ bool MainWindow::saveProjectSession() {
     WorkspaceSession session;
     for (const auto &group : referenceGroups_) {
         auto saved = group;
-        saved.hits.erase(std::remove_if(saved.hits.begin(), saved.hits.end(), [this](const auto &hit) {
-            return !pathInWorkspace(hit.location.path, projectPath_);
-        }), saved.hits.end());
+        saved.hits.erase(std::remove_if(saved.hits.begin(), saved.hits.end(),
+                                        [this](const auto &hit) {
+                                            return !pathInWorkspace(hit.location.path,
+                                                                    projectPath_);
+                                        }),
+                         saved.hits.end());
         session.references.append(saved);
     }
     for (int i = 0; i < documentsTabs_->count(); ++i) {
@@ -432,7 +618,7 @@ bool MainWindow::saveProjectSession() {
     const auto *active = currentDocument();
     session.activeFile =
         active && pathInWorkspace(active->path, projectPath_) ? active->path : QString{};
-    const auto error = stateStore_.saveSession(projectPath_, session);
+    const auto error = stateStore_.saveSession(projectPath_, session, projectFile_);
     if (error.isEmpty())
         return true;
     reportError(error);
@@ -442,7 +628,7 @@ bool MainWindow::saveProjectSession() {
 void MainWindow::restoreProjectSession() {
     if (!persistSettings_ || projectPath_.isEmpty())
         return;
-    const auto loaded = stateStore_.loadSession(projectPath_);
+    const auto loaded = stateStore_.loadSession(projectPath_, projectFile_);
     if (!loaded.session) {
         reportError(loaded.error);
         return;
@@ -454,7 +640,8 @@ void MainWindow::restoreProjectSession() {
         ensureReferenceResults();
         if (existingPage)
             rebuildReferenceResults();
-        referencesStatus_->setText("Restored search history. Source links are validated before navigation.");
+        referencesStatus_->setText(
+            "Restored search history. Source links are validated before navigation.");
     }
     QStringList warnings;
     for (const auto &location : session.files) {
@@ -494,6 +681,7 @@ bool MainWindow::closeProject() {
     if (persistSettings_) {
         auto state = applicationState_;
         state.lastWorkspace.clear();
+        state.lastProjectFile.clear();
         const auto error = stateStore_.saveState(state);
         if (!error.isEmpty()) {
             reportError("Could not remember that the project was closed: " + error);
@@ -515,6 +703,12 @@ bool MainWindow::closeProject() {
     selectedReferenceIndex_ = -1;
     cancelReferenceSearch();
     projectPath_.clear();
+    projectFile_.clear();
+    projectName_.clear();
+    projectOptions_ = {};
+    largeFileCatalog_.clear();
+    folderFiles_.clear();
+    moreFiles_->setEnabled(false);
     compilationDirectory_.clear();
     indexWarnings_.clear();
     ++contextGeneration_;
@@ -529,6 +723,7 @@ bool MainWindow::closeProject() {
     symbolList_->clear();
     categoryTree_->clear();
     symbolPage_ = {};
+    resetSymbolBrowser();
     symbolScope_->setText("No workspace");
     contextPath_.clear();
     contextPreviewEditor_->loadBytes({});

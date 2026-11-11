@@ -36,9 +36,12 @@ int runApplication(int argc, char **argv, Diagnostics &diagnostics) {
     options.addVersionOption();
     options.addOption({{"c", "config"}, "Use a specific UI settings JSON file.", "file"});
     options.addOption(
+        {"no-project", "Start without restoring or automatically creating a project."});
+    options.addOption(
         {"log-dir", "Override the diagnostics directory (absolute path).", "directory"});
     options.addOption({"log-level", "File logging detail: info or debug.", "level", "info"});
-    options.addPositionalArgument("path", "Source file or project folder to open.");
+    options.addPositionalArgument("path",
+                                  "Source file, project folder, or .cairn project to open.");
     options.process(app);
 
     const auto level = options.value("log-level");
@@ -66,7 +69,7 @@ int runApplication(int argc, char **argv, Diagnostics &diagnostics) {
     });
     monitor->start();
     window.show();
-    window.openStartupPaths(options.positionalArguments());
+    window.openStartupPaths(options.positionalArguments(), options.isSet("no-project"));
     QStringList notices = diagnostics.startupWarnings();
     if (!loggingError.isEmpty()) {
         qCritical().noquote() << loggingError;

@@ -66,6 +66,7 @@ int main(int argc, char **argv) {
                "Launch CodeCairn and return immediately. Relative paths use the current "
                "directory.\n"
                "  -c, --config <file>     Use a UI settings JSON file.\n"
+               "  --no-project           Start without restoring or creating a project.\n"
                "  --log-dir <directory>  Override the diagnostics directory.\n"
                "  --log-level <level>    File logging detail: info or debug.\n"
                "  -v, --version          Print the application version.\n"

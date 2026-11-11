@@ -106,7 +106,8 @@ void LauncherTests::detachedArgumentsAndWorkingDirectory() {
                                 "trailing\\",
                                 "",
                                 "--config",
-                                "settings file.json"};
+                                "settings file.json",
+                                "--no-project"};
 #ifdef Q_OS_MACOS
     // Avoid QProcess's filename normalization when supplying test arguments to the launcher.
     const auto executable = QFile::encodeName(copy);

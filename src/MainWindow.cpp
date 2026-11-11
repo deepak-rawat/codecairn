@@ -227,9 +227,9 @@ bool MainWindow::openFile(const QString &path) {
         return false;
     }
     if (!path.startsWith(":/")) {
-        if (projectPath_.isEmpty()) {
+        if (projectPath_.isEmpty() && !suppressAutomaticProject_) {
             openProject(QFileInfo(path).absolutePath());
-        } else if (!pathInWorkspace(path, projectPath_)) {
+        } else if (!projectPath_.isEmpty() && !pathInWorkspace(path, projectPath_)) {
             const auto choice = QMessageBox::question(
                 this, "File outside workspace",
                 "Use this file's containing folder as the workspace?\nNo keeps the current "
@@ -250,17 +250,28 @@ bool MainWindow::openFile(const QString &path) {
     return true;
 }
 
-void MainWindow::openStartupPaths(const QStringList &paths) {
+void MainWindow::openStartupPaths(const QStringList &paths, bool noProject) {
+    suppressAutomaticProject_ = noProject;
     if (!paths.isEmpty()) {
         for (const auto &path : paths) {
-            if (QFileInfo(path).isDir())
-                openProject(path);
-            else
+            if (QFileInfo(path).isDir()) {
+                if (noProject)
+                    reportError(
+                        "--no-project does not open folder workspaces. Use Project > Open Folder.");
+                else
+                    openProject(path);
+            } else if (QFileInfo(path).suffix().compare("cairn", Qt::CaseInsensitive) == 0) {
+                if (noProject)
+                    reportError(
+                        "--no-project does not open managed projects. Use Project > Open Project.");
+                else
+                    openManagedProject(path);
+            } else
                 openFile(path);
         }
         return;
     }
-    if (!persistSettings_)
+    if (noProject || !persistSettings_)
         return;
     if (!stateError_.isEmpty()) {
         reportError(stateError_);
@@ -275,7 +286,10 @@ void MainWindow::openStartupPaths(const QStringList &paths) {
                     ". Open another folder to continue.");
         return;
     }
-    openProject(previous);
+    if (applicationState_.lastProjectFile.isEmpty())
+        openProject(previous);
+    else
+        openManagedProject(applicationState_.lastProjectFile);
 }
 
 void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool bom, bool focus,
@@ -286,7 +300,8 @@ void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool 
     doc->isPreview = preview;
     connect(doc->editor, &CodeEditor::rangeEdited, this,
             [this, doc](int position, int removed, int inserted, const QByteArray &beforeHash) {
-                trackReferenceEdit(doc->path, position, removed, inserted, beforeHash, doc->editor->bytes());
+                trackReferenceEdit(doc->path, position, removed, inserted, beforeHash,
+                                   doc->editor->bytes());
             });
     connect(doc->editor, &CodeEditor::contentEdited, this, [this, doc] {
         if (doc == currentDocument())
@@ -355,6 +370,10 @@ void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool 
             reportError(doc->analysis.error);
         else
             doc->editor->applyStyles(doc->analysis.styles);
+        if (!contextFollowsEditor_ && contextPath_ == doc->path && doc->analysis.error.isEmpty() &&
+            contextPreviewEditor_->bytes() == snapshot(doc) &&
+            doc->analysis.styles.size() == contextPreviewEditor_->bytes().size())
+            contextPreviewEditor_->applyStyles(doc->analysis.styles);
         if (auto *service = languageService(doc->path, snapshot(doc)))
             service->syncDocument(doc->path, snapshot(doc), static_cast<int>(doc->revision),
                                   languageById(doc->analysis.language).lspId);
@@ -380,11 +399,15 @@ void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool 
 }
 
 void MainWindow::startAnalysis(Document *doc) {
+    doc->setCompilationDirectory(projectContains(doc->path)
+                                     ? workspaceClangdDirectory(projectPath_, projectFile_)
+                                     : QString{});
     doc->startAnalysis();
 }
 
 void MainWindow::updateOutline() {
-    const bool results = referenceResultsPage_ && documentsTabs_->currentWidget() == referenceResultsPage_;
+    const bool results =
+        referenceResultsPage_ && documentsTabs_->currentWidget() == referenceResultsPage_;
     if (results) {
         if (!showingReferenceOutline_) {
             rememberOutline();
@@ -541,7 +564,14 @@ void MainWindow::clearPanelFilter(QLineEdit *filter) {
     if (filter == symbolFilter_)
         revealSelectedSymbol_ = true;
     filter->clear();
-    auto *tree = filter == outlineFilter_ ? outline_ : filter == fileFilter_ ? fileList_ : symbolList_;
+    if (filter == symbolFilter_ && virtualSymbolMode_) {
+        if (virtualSymbols_->currentIndex().isValid())
+            virtualSymbols_->scrollTo(virtualSymbols_->currentIndex());
+        return;
+    }
+    auto *tree = filter == outlineFilter_ ? outline_
+                 : filter == fileFilter_  ? fileList_
+                                          : symbolList_;
     if (auto *selected = tree->currentItem(); selected && !selected->isHidden())
         tree->scrollToItem(selected);
     if (filter == outlineFilter_ && activeEditor() && activeEditor()->hasFocus())
@@ -632,19 +662,25 @@ void MainWindow::filterOutline() {
 
 void MainWindow::updateOpenSymbols() {
     SymbolQuery query;
+    query.projectFile = projectFile_;
     query.text = symbolFilter_->text();
     query.category = category_;
     query.overlays = liveOverlays();
-    query.limit = std::numeric_limits<int>::max();
+    query.limit = 4097;
     query.includeCategorySymbols = true;
+    query.categoryLimit = 4097;
+    query.anchor = selectedProjectSymbol_;
     workspaceIndex_->search(query);
 }
 
 void MainWindow::filterSymbols() {
+    virtualSymbolActivation_.reset();
+    virtualCategoryActivation_.reset();
     symbolFilterPending_ = true;
+    symbolScope_->setText("Searching...");
     symbolNavigationAfterFilter_.reset();
     workspaceIndex_->invalidateSearch();
-    symbolQueryTimer_->start();
+    symbolQueryTimer_->start(configuration_.behavior.searchDebounceMs);
 }
 
 void MainWindow::selectCategory(const QString &kind) {
@@ -723,7 +759,8 @@ void MainWindow::updateContext() {
 }
 
 void MainWindow::showContext(const QString &title, const QByteArray &bytes,
-                             const SourceAnalysis &analysis, int start, int end, bool referenceLine) {
+                             const SourceAnalysis &analysis, int start, int end,
+                             bool referenceLine) {
     ++contextGeneration_;
     pendingPreviewPath_.clear();
     definitionChoices_->hide();
@@ -734,15 +771,17 @@ void MainWindow::showContext(const QString &title, const QByteArray &bytes,
     contextReferenceLine_ = referenceLine;
     contextOpen_->setEnabled(!contextPath_.isEmpty());
     if (!navigatingContext_ && !contextPath_.isEmpty()) {
-        const bool duplicate = contextHistoryIndex_ >= 0 &&
-                               contextHistory_[contextHistoryIndex_].path == contextPath_ &&
-                               contextHistory_[contextHistoryIndex_].start == start &&
-                               contextHistory_[contextHistoryIndex_].end == end &&
-                               contextHistory_[contextHistoryIndex_].referenceLine == referenceLine &&
-                               contextHistory_[contextHistoryIndex_].bytes == bytes;
+        const bool duplicate =
+            contextHistoryIndex_ >= 0 &&
+            contextHistory_[contextHistoryIndex_].path == contextPath_ &&
+            contextHistory_[contextHistoryIndex_].start == start &&
+            contextHistory_[contextHistoryIndex_].end == end &&
+            contextHistory_[contextHistoryIndex_].referenceLine == referenceLine &&
+            contextHistory_[contextHistoryIndex_].bytes == bytes;
         if (!duplicate) {
             contextHistory_.resize(contextHistoryIndex_ + 1);
-            contextHistory_.push_back({title, contextPath_, bytes, analysis, start, end, referenceLine});
+            contextHistory_.push_back(
+                {title, contextPath_, bytes, analysis, start, end, referenceLine});
             qsizetype historyBytes = 0;
             for (const auto &entry : contextHistory_)
                 historyBytes += entry.bytes.size() + entry.analysis.styles.size();
@@ -787,7 +826,8 @@ void MainWindow::navigateContext(int direction) {
     const auto entry = contextHistory_[index];
     contextPath_ = entry.path;
     navigatingContext_ = true;
-    showContext(entry.title, entry.bytes, entry.analysis, entry.start, entry.end, entry.referenceLine);
+    showContext(entry.title, entry.bytes, entry.analysis, entry.start, entry.end,
+                entry.referenceLine);
     navigatingContext_ = false;
 }
 
@@ -797,8 +837,8 @@ void MainWindow::openContext() {
     const auto path = contextPath_;
     const auto bytes = contextPreviewEditor_->bytes();
     const int start = contextStart_, end = contextEnd_;
-    NavigationLocation location{path, start, end, -1,
-        QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex()};
+    NavigationLocation location{
+        path, start, end, -1, QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex()};
     location.wholeLine = contextReferenceLine_;
     navigateTo(location, true, true);
 }
@@ -842,11 +882,14 @@ void MainWindow::startDiskPreview() {
     const auto provenance = pendingProvenance_;
     pendingProvenance_.clear();
     const bool open = std::exchange(openAfterPreview_, false);
-    diskPreview_->setFuture(QtConcurrent::run([path] {
+    const auto compilation =
+        projectContains(path) ? workspaceClangdDirectory(projectPath_, projectFile_) : QString{};
+    diskPreview_->setFuture(QtConcurrent::run([path, compilation] {
         const auto file = readSourceFile(path);
         DiskPreview result{file.bytes, {}, file.error};
         if (result.error.isEmpty()) {
-            result.analysis = analyzeSource(file.bytes, path);
+            result.analysis =
+                analyzeSource(file.bytes, path, SourceAnalysisMode::Editor, compilation);
             result.error = result.analysis.error;
         }
         return result;
@@ -888,7 +931,8 @@ void MainWindow::startDiskPreview() {
                     contextPath_ = diskPath_;
                     showContext(QFileInfo(diskPath_).fileName() +
                                     (provenance.isEmpty() ? "" : " - " + provenance),
-                                result.bytes, result.analysis, start, end, provenance == "Reference");
+                                result.bytes, result.analysis, start, end,
+                                provenance == "Reference");
                     if (open)
                         openContext();
                 } else {
@@ -906,65 +950,17 @@ void MainWindow::startDiskPreview() {
 }
 
 void MainWindow::openProject(const QString &path) {
-    const auto rootPath = workspacePath(path);
-    const QFileInfo folder(rootPath);
-    if (!folder.isDir() || !folder.isReadable()) {
-        reportError("Workspace folder is missing or unreadable: " + path);
-        return;
-    }
-    const auto storageError = WorkspaceOptionsStore::initialize(rootPath);
-    if (!storageError.isEmpty()) {
-        reportError(storageError);
-        return;
-    }
-    const auto options = WorkspaceOptionsStore::loadOptions(rootPath);
-    if (!options.error.isEmpty()) {
-        reportError(options.error);
-        return;
-    }
-    const auto database = prepareCompilationDatabase(rootPath, options.compilationDirectory);
-    if (!database.error.isEmpty()) {
-        reportError(database.error);
-        return;
-    }
-    const bool switchingRoot = projectPath_ != rootPath;
-    if (switchingRoot && !saveProjectSession())
-        return;
-    projectPath_ = rootPath;
-    if (persistSettings_) {
-        applicationState_.lastWorkspace = projectPath_;
-        const auto error = stateStore_.saveState(applicationState_);
-        if (!error.isEmpty())
-            reportError("Could not remember the workspace: " + error);
-    }
-    setWindowTitle(QFileInfo(projectPath_).fileName() + " - CodeCairn");
-    if (switchingRoot) {
-        cancelReferenceSearch();
-        if (referencesDialog_)
-            referencesDialog_->close();
-        referenceGroups_.clear();
-        if (referenceResultsPage_)
-            rebuildReferenceResults();
-        indexWarnings_.clear();
-        ++contextGeneration_;
-        pendingPreviewPath_.clear();
-        definitionChoices_->hide();
-        fileList_->clear();
-        folderTree_->clear();
-        symbolList_->clear();
-        categoryTree_->clear();
-        symbolPage_ = {};
-        workspaceIndex_->open(projectPath_);
-        readWorkspaceOptions();
-        restartLanguageService();
-        restoreProjectSession();
-    } else {
-        workspaceIndex_->refresh();
-    }
-    updateOpenSymbols();
+    openWorkspace(path, {});
 }
 
 void MainWindow::populateFiles(const QStringList &paths) {
+    if (paths.size() > 2000) {
+        populateLargeFiles(paths);
+        return;
+    }
+    largeFileCatalog_.clear();
+    folderFiles_.clear();
+    moreFiles_->setEnabled(false);
     const QSignalBlocker fileBlock(fileList_), folderBlock(folderTree_);
     QMap<QString, QTreeWidgetItem *> existing;
     for (int i = 0; i < fileList_->topLevelItemCount(); ++i) {
@@ -1046,6 +1042,11 @@ void MainWindow::populateFiles(const QStringList &paths) {
 }
 
 void MainWindow::filterFiles() {
+    if (!largeFileCatalog_.isEmpty()) {
+        fileLimit_ = 1000;
+        populateLargeFilePage();
+        return;
+    }
     for (int i = 0; i < fileList_->topLevelItemCount(); ++i) {
         auto *item = fileList_->topLevelItem(i);
         item->setHidden(!fragmentsMatch(item->text(0) + ' ' + item->text(1), fileFilter_->text()));
@@ -1269,6 +1270,7 @@ void MainWindow::restoreApplicationState() {
         return;
     }
     applicationState_ = *loaded.state;
+    updateRecentProjects();
     QStringList errors;
     if (!applicationState_.geometry.isEmpty() && !restoreGeometry(applicationState_.geometry))
         errors.append("Invalid saved window geometry.");

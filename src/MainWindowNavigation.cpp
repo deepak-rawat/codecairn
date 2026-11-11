@@ -2,6 +2,7 @@
 #include "LanguageRegistry.h"
 #include "NavigationTree.h"
 #include "Diagnostics.h"
+#include "SymbolCatalogModel.h"
 #include <QAction>
 #include <QApplication>
 #include <QCryptographicHash>
@@ -34,16 +35,24 @@ void MainWindow::initializeNavigation() {
         entry->installEventFilter(this);
     for (auto *tree : {outline_, fileList_, symbolList_})
         tree->installEventFilter(this);
+    virtualSymbols_->installEventFilter(this);
     for (auto *entry : {outlineFilter_, fileFilter_, symbolFilter_}) {
-        auto *tree = entry == outlineFilter_ ? outline_ : entry == fileFilter_ ? fileList_ : symbolList_;
-        connect(qApp, &QApplication::focusChanged, this, [this, entry, tree](QWidget *old, QWidget *now) {
-            const auto inPanel = [entry, tree](QWidget *widget) {
-                return widget && (widget == entry || entry->isAncestorOf(widget) ||
-                                  widget == tree || tree->isAncestorOf(widget));
-            };
-            if (inPanel(old) && !inPanel(now))
-                clearPanelFilter(entry);
-        });
+        auto *tree = entry == outlineFilter_ ? outline_
+                     : entry == fileFilter_  ? fileList_
+                                             : symbolList_;
+        connect(qApp, &QApplication::focusChanged, this,
+                [this, entry, tree](QWidget *old, QWidget *now) {
+                    const auto inPanel = [entry, tree](QWidget *widget) {
+                        return widget && (widget == entry || entry->isAncestorOf(widget) ||
+                                          widget == tree || tree->isAncestorOf(widget));
+                    };
+                    const auto inSymbols = [this, entry](QWidget *widget) {
+                        return entry == symbolFilter_ && widget &&
+                               (widget == virtualSymbols_ || virtualSymbols_->isAncestorOf(widget));
+                    };
+                    if ((inPanel(old) || inSymbols(old)) && !inPanel(now) && !inSymbols(now))
+                        clearPanelFilter(entry);
+                });
     }
     connect(outline_, &QTreeWidget::itemClicked, this, [this] { navigateOutline(false); });
     connect(fileList_, &QTreeWidget::itemClicked, this, [this] { navigateProjectFile(false); });
@@ -85,7 +94,8 @@ void MainWindow::pinDocument(Document *document) {
     updateTab(document);
 }
 
-void MainWindow::navigateTo(const NavigationLocation &location, bool pin, bool focus, bool record) {
+void MainWindow::navigateTo(const NavigationLocation &location, bool pin, bool focus, bool record,
+                            const std::optional<IndexedSymbol> &indexedTarget) {
     if (location.path.isEmpty())
         return;
     qCDebug(navigationLog) << "navigation.requested" << "path=" << location.path
@@ -96,11 +106,11 @@ void MainWindow::navigateTo(const NavigationLocation &location, bool pin, bool f
     pendingOpen_.reset();
     if (auto *document = findDocument(location.path)) {
         commitNavigation(location, {snapshot(document), {}, document->hasUtf8Bom}, pin, focus,
-                         record, origin, previousFocus);
+                         record, origin, previousFocus, indexedTarget);
         return;
     }
-    pendingOpen_ =
-        OpenRequest{location, origin, previousFocus, pin, focus, record, navigationGeneration_};
+    pendingOpen_ = OpenRequest{location, origin, previousFocus,         pin,
+                               focus,    record, navigationGeneration_, indexedTarget};
     startNavigationRead();
 }
 
@@ -119,7 +129,7 @@ void MainWindow::startNavigationRead() {
                 reportError("Cannot navigate to " + request.location.path + ": " + file.error);
             else
                 commitNavigation(request.location, file, request.pin, request.focus, request.record,
-                                 request.origin, request.focusWidget);
+                                 request.origin, request.focusWidget, request.indexedTarget);
         }
         startNavigationRead();
     });
@@ -130,7 +140,8 @@ void MainWindow::startNavigationRead() {
 void MainWindow::commitNavigation(const NavigationLocation &location, const FileContents &file,
                                   bool pin, bool focus, bool record,
                                   const NavigationLocation &origin,
-                                  const QPointer<QWidget> &previousFocus) {
+                                  const QPointer<QWidget> &previousFocus,
+                                  const std::optional<IndexedSymbol> &indexedTarget) {
     if (!location.expectedHash.isEmpty() &&
         QCryptographicHash::hash(file.bytes, QCryptographicHash::Sha256).toHex() !=
             location.expectedHash) {
@@ -146,6 +157,12 @@ void MainWindow::commitNavigation(const NavigationLocation &location, const File
         location.line >= 0 ? sourceByteOffset(file.bytes, location.endLine, location.endCharacter)
                            : location.end;
     if (requestedStart < 0 || requestedEnd < requestedStart || requestedEnd > file.bytes.size()) {
+        reportError("Definition range is no longer valid. Retry the lookup.");
+        return;
+    }
+    if (indexedTarget && (indexedTarget->symbol.start < 0 ||
+                          indexedTarget->symbol.end < indexedTarget->symbol.start ||
+                          indexedTarget->symbol.end > file.bytes.size())) {
         reportError("Definition range is no longer valid. Retry the lookup.");
         return;
     }
@@ -172,7 +189,11 @@ void MainWindow::commitNavigation(const NavigationLocation &location, const File
     if (location.wholeLine)
         document->editor->selectLineAt(start);
     else
-        document->editor->selectRange(start, end);
+        document->editor->selectRange(start, end, !indexedTarget.has_value());
+    if (indexedTarget) {
+        syncOutlineToEditor();
+        updateStatus();
+    }
     if (location.firstVisibleLine >= 0)
         document->editor->send(SCI_SETFIRSTVISIBLELINE, location.firstVisibleLine);
     if (record)
@@ -184,6 +205,15 @@ void MainWindow::commitNavigation(const NavigationLocation &location, const File
         document->editor->setFocus();
     else if (previousFocus)
         previousFocus->setFocus();
+    if (indexedTarget && !pinContextAction_->isChecked()) {
+        contextTimer_->stop();
+        contextFollowsEditor_ = false;
+        contextPath_ = document->path;
+        const auto &symbol = indexedTarget->symbol;
+        showContext(symbol.name + " - Project index", file.bytes, document->analysis, symbol.start,
+                    symbol.end);
+        contextPreviewEditor_->selectRange(symbol.nameStart, symbol.nameEnd);
+    }
     if (location.wholeLine && !pinContextAction_->isChecked()) {
         contextTimer_->stop();
         contextFollowsEditor_ = false;
@@ -245,6 +275,21 @@ void MainWindow::navigateProjectSymbol(bool pin) {
         }
         return;
     }
+    if (virtualSymbolMode_) {
+        const auto entry = symbolModel_->entry(virtualSymbols_->currentIndex());
+        if (!entry) {
+            virtualSymbolActivation_ = pin;
+            virtualSymbolActivationIndex_ = virtualSymbols_->currentIndex();
+            return;
+        }
+        virtualSymbolActivation_.reset();
+        selectedProjectSymbol_ = *entry;
+        navigateTo({entry->path, entry->symbol.nameStart, entry->symbol.nameEnd, -1, entry->hash},
+                   pin, pin, true, *entry);
+        if (pin)
+            clearPanelFilter(symbolFilter_);
+        return;
+    }
     const auto *item = symbolList_->currentItem();
     if (!item)
         return;
@@ -252,8 +297,9 @@ void MainWindow::navigateProjectSymbol(bool pin) {
     if (row < 0 || row >= symbolPage_.symbols.size())
         return;
     const auto &entry = symbolPage_.symbols[row];
-    navigateTo({entry.path, entry.symbol.nameStart, entry.symbol.nameEnd, -1, entry.hash}, pin,
-               pin);
+    selectedProjectSymbol_ = entry;
+    navigateTo({entry.path, entry.symbol.nameStart, entry.symbol.nameEnd, -1, entry.hash}, pin, pin,
+               true, entry);
     if (pin)
         clearPanelFilter(symbolFilter_);
 }
@@ -261,10 +307,12 @@ void MainWindow::navigateProjectSymbol(bool pin) {
 bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     if (event->type() == QEvent::KeyPress) {
         auto *key = static_cast<QKeyEvent *>(event);
-        QLineEdit *panelFilter = watched == outlineFilter_ || watched == outline_ ? outlineFilter_
-                                : watched == fileFilter_ || watched == fileList_ ? fileFilter_
-                                : watched == symbolFilter_ || watched == symbolList_ ? symbolFilter_
-                                                                                     : nullptr;
+        QLineEdit *panelFilter =
+            watched == outlineFilter_ || watched == outline_ ? outlineFilter_
+            : watched == fileFilter_ || watched == fileList_ ? fileFilter_
+            : watched == symbolFilter_ || watched == symbolList_ || watched == virtualSymbols_
+                ? symbolFilter_
+                : nullptr;
         if (panelFilter && key->key() == Qt::Key_Escape) {
             clearPanelFilter(panelFilter);
             return true;
@@ -286,6 +334,22 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
             key->modifiers() == Qt::NoModifier) {
             removeSearchQuery();
             return true;
+        }
+        if (watched == symbolFilter_ && virtualSymbolMode_) {
+            if (key->key() == Qt::Key_Down || key->key() == Qt::Key_Up) {
+                const int current = virtualSymbols_->currentIndex().row();
+                const int row = qBound(0, current + (key->key() == Qt::Key_Down ? 1 : -1),
+                                       qMax(0, symbolModel_->rowCount() - 1));
+                virtualSymbols_->setCurrentIndex(symbolModel_->index(row, 0));
+                navigateProjectSymbol(false);
+                return true;
+            }
+            if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
+                if (!virtualSymbols_->currentIndex().isValid())
+                    virtualSymbols_->setCurrentIndex(symbolModel_->index(0, 0));
+                navigateProjectSymbol(true);
+                return true;
+            }
         }
         QTreeWidget *tree = watched == outlineFilter_  ? outline_
                             : watched == fileFilter_   ? fileList_

@@ -4,6 +4,7 @@
 #include "UiAppearance.h"
 #include "RuntimeLimits.h"
 #include "NavigationTree.h"
+#include "SymbolCatalogModel.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -257,6 +258,31 @@ void MainWindow::buildUi() {
     auto *symbolLayout = compactLayout(symbols);
     symbolLayout->addWidget(symbolFilter_);
     symbolLayout->addWidget(symbolList_, 1);
+    virtualSymbols_ = new NavigationView;
+    virtualSymbols_->setObjectName("virtualSymbolList");
+    symbolModel_ = new SymbolCatalogModel(false, this);
+    virtualSymbols_->setModel(symbolModel_);
+    UiAppearance::configureTree(virtualSymbols_, configuration_);
+    virtualSymbols_->setColumnWidth(0, 215);
+    virtualSymbols_->setRootIsDecorated(false);
+    virtualSymbols_->hide();
+    symbolLayout->addWidget(virtualSymbols_, 1);
+    connect(virtualSymbols_->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            [this] { activateProjectSymbol(false); });
+    connect(virtualSymbols_, &QTreeView::activated, this, [this] { navigateProjectSymbol(true); });
+    connect(virtualSymbols_, &QTreeView::clicked, this, [this] { navigateProjectSymbol(false); });
+    connect(static_cast<NavigationView *>(virtualSymbols_),
+            &NavigationView::keyboardSelectionChanged, this,
+            [this] { navigateProjectSymbol(false); });
+    connect(symbolModel_, &SymbolCatalogModel::rowsReady, this, [this] {
+        if (virtualSymbolActivation_ && !symbolFilterPending_ &&
+            virtualSymbolActivationIndex_.isValid() &&
+            virtualSymbolActivationIndex_ == virtualSymbols_->currentIndex())
+            navigateProjectSymbol(*std::exchange(virtualSymbolActivation_, std::nullopt));
+        else
+            virtualSymbolActivation_.reset();
+    });
+    connect(symbolModel_, &SymbolCatalogModel::failed, this, &MainWindow::reportError);
     auto *symbolsBar = smallToolbar("symbolsToolbar", symbols, configuration_);
     symbolLayout->addWidget(symbolsBar);
     symbolScope_ = new QLabel("No workspace");
@@ -273,7 +299,38 @@ void MainWindow::buildUi() {
     UiAppearance::configureTree(categoryTree_, {"Symbol Type", "File Name"}, configuration_);
     categoryTree_->setColumnWidth(0, 300);
     categoryTree_->setExpandsOnDoubleClick(false);
-    browserTabs_->addTab(categoryTree_, "Symbol Categories");
+    auto *categoryPanel = new QWidget;
+    auto *categoryLayout = compactLayout(categoryPanel);
+    categoryLayout->addWidget(categoryTree_);
+    virtualCategories_ = new NavigationView;
+    virtualCategories_->setObjectName("virtualCategoryTree");
+    categoryModel_ = new SymbolCatalogModel(true, this);
+    virtualCategories_->setModel(categoryModel_);
+    UiAppearance::configureTree(virtualCategories_, configuration_);
+    virtualCategories_->setColumnWidth(0, 300);
+    virtualCategories_->setExpandsOnDoubleClick(false);
+    virtualCategories_->hide();
+    categoryLayout->addWidget(virtualCategories_);
+    browserTabs_->addTab(categoryPanel, "Symbol Categories");
+    connect(virtualCategories_, &QTreeView::activated, this, [this](const QModelIndex &index) {
+        if (!index.parent().isValid())
+            selectCategory(categoryModel_->category(index));
+        else
+            activateCategorySymbol(true);
+    });
+    connect(virtualCategories_, &QTreeView::clicked, this,
+            [this] { activateCategorySymbol(false); });
+    connect(static_cast<NavigationView *>(virtualCategories_),
+            &NavigationView::keyboardSelectionChanged, this,
+            [this] { activateCategorySymbol(false); });
+    connect(categoryModel_, &SymbolCatalogModel::rowsReady, this, [this] {
+        if (virtualCategoryActivation_ && virtualCategoryActivationIndex_.isValid() &&
+            virtualCategoryActivationIndex_ == virtualCategories_->currentIndex())
+            activateCategorySymbol(*std::exchange(virtualCategoryActivation_, std::nullopt));
+        else
+            virtualCategoryActivation_.reset();
+    });
+    connect(categoryModel_, &SymbolCatalogModel::failed, this, &MainWindow::reportError);
     connect(categoryTree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem *item) {
         if (item->parent())
             activateCategorySymbol(true);
@@ -290,12 +347,20 @@ void MainWindow::buildUi() {
             previewFile(item->data(0, Qt::UserRole + 1).toString());
     });
     connect(folderTree_, &QTreeWidget::itemActivated, this, [this](QTreeWidgetItem *item) {
+        if (item->data(0, Qt::UserRole + 53).toBool()) {
+            expandProjectFolder(item->parent());
+            return;
+        }
         const auto path = item->data(0, Qt::UserRole + 1).toString();
         if (!path.isEmpty())
             navigateTo({path}, true, true);
     });
     const auto browseFolderFile = [this] {
         const auto *item = folderTree_->currentItem();
+        if (item && item->data(0, Qt::UserRole + 53).toBool()) {
+            expandProjectFolder(item->parent());
+            return;
+        }
         if (item && !item->data(0, Qt::UserRole + 1).toString().isEmpty())
             navigateTo({item->data(0, Qt::UserRole + 1).toString()});
     };
@@ -369,6 +434,20 @@ void MainWindow::buildUi() {
             if (!path.isEmpty())
                 openFile(path);
         });
+    action(projectMenu, "newProject", "New Project...", "file", QKeySequence("Ctrl+Shift+N"),
+           [this] { newProject(); });
+    action(projectMenu, "openProject", "Open Project...", "open", {}, [this] {
+        const auto path =
+            QFileDialog::getOpenFileName(this, "Open project", {}, "CodeCairn projects (*.cairn)");
+        if (!path.isEmpty())
+            openManagedProject(path);
+    });
+    action(projectMenu, "manageProjectFiles", "Manage Project Files...", "openFolder", {},
+           [this] { manageProjectFiles(); });
+    recentProjectsMenu_ = projectMenu->addMenu("Recent Projects");
+    recentProjectsMenu_->setObjectName("recentProjects");
+    updateRecentProjects();
+    projectMenu->addSeparator();
     auto *openFolder =
         action(projectMenu, "openFolder", "Open Folder...", "openFolder",
                QKeySequence("Ctrl+Shift+O"), [this] {
@@ -377,6 +456,14 @@ void MainWindow::buildUi() {
                        openProject(path);
                });
     action(projectMenu, "closeProject", "Close Project", "file", {}, [this] { closeProject(); });
+    moreFiles_ = action(projectMenu, "moreFiles", "Load More Files", "refresh", {}, [this] {
+        if (fileLimit_ <= std::numeric_limits<int>::max() - 1000)
+            fileLimit_ += 1000;
+        populateLargeFilePage();
+    });
+    moreFiles_->setEnabled(false);
+    filesBar->addAction(moreFiles_);
+    connect(folderTree_, &QTreeWidget::itemExpanded, this, &MainWindow::expandProjectFolder);
     auto *save =
         action(fileMenu, "saveFile", "Save", "save", QKeySequence::Save, [this] { saveCurrent(); });
     action(fileMenu, "saveAs", "Save As...", "save", QKeySequence("Ctrl+Alt+S"),
@@ -442,16 +529,14 @@ void MainWindow::buildUi() {
     deleteSearch->setShortcut(QKeySequence::Delete);
     deleteSearch->setShortcutContext(Qt::WidgetShortcut);
     outline_->addAction(deleteSearch);
-    action(searchMenu, "jumpReference", "Jump to Reference Link", "referenceLink", QKeySequence("Ctrl+L"),
-           [this] {
-               jumpReferenceLink();
-           });
-    action(searchMenu, "firstReference", "First Reference", "referencePrevious", QKeySequence("Ctrl+Shift+L"),
-           [this] { stepReferenceResult(1, true); });
+    action(searchMenu, "jumpReference", "Jump to Reference Link", "referenceLink",
+           QKeySequence("Ctrl+L"), [this] { jumpReferenceLink(); });
+    action(searchMenu, "firstReference", "First Reference", "referencePrevious",
+           QKeySequence("Ctrl+Shift+L"), [this] { stepReferenceResult(1, true); });
     action(searchMenu, "nextReference", "Next Reference", "referenceNext", QKeySequence("Shift+F9"),
            [this] { stepReferenceResult(1); });
-    action(searchMenu, "previousReference", "Previous Reference", "referencePrevious", QKeySequence("Shift+F8"),
-           [this] { stepReferenceResult(-1); });
+    action(searchMenu, "previousReference", "Previous Reference", "referencePrevious",
+           QKeySequence("Shift+F8"), [this] { stepReferenceResult(-1); });
     action(searchMenu, "jumpDefinition", "Jump to Definition", "open", QKeySequence("Ctrl+="),
            [this] {
                auto *editor =
@@ -486,8 +571,12 @@ void MainWindow::buildUi() {
                const auto directory = QFileDialog::getExistingDirectory(
                    this, "Directory containing compile_commands.json", projectPath_);
                if (!directory.isEmpty()) {
+                   const auto previous = compilationDirectory_;
                    compilationDirectory_ = directory;
-                   writeWorkspaceOptions();
+                   if (!writeWorkspaceOptions(workspaceIndex_->excludes())) {
+                       compilationDirectory_ = previous;
+                       return;
+                   }
                    restartLanguageService();
                }
            });
@@ -506,8 +595,7 @@ void MainWindow::buildUi() {
             QStringList excludes;
             for (const auto &name : names.split(',', Qt::SkipEmptyParts))
                 excludes << name.trimmed();
-            workspaceIndex_->setExcludes(excludes);
-            writeWorkspaceOptions();
+            writeWorkspaceOptions(excludes);
         }
     });
     auto *filesFocus =
@@ -720,15 +808,18 @@ void MainWindow::updateActions() {
     auto *focused = QApplication::focusWidget();
     auto *entry = qobject_cast<QLineEdit *>(focused);
     auto *results = qobject_cast<ReferenceResultsView *>(referencesList_);
-    const bool resultsFocus = results && focused && (results == focused || results->isAncestorOf(focused));
+    const bool resultsFocus =
+        results && focused && (results == focused || results->isAncestorOf(focused));
     auto *editor = focused && (focused == contextPreviewEditor_ ||
                                contextPreviewEditor_->isAncestorOf(focused))
                        ? contextPreviewEditor_
                        : documentEditor;
-    const bool selected =
-        resultsFocus ? results->textCursor().hasSelection() : entry ? entry->hasSelectedText()
-              : editor && editor->send(SCI_GETSELECTIONSTART) != editor->send(SCI_GETSELECTIONEND);
-    const bool writable = !resultsFocus && (entry ? !entry->isReadOnly() : editor && !editor->send(SCI_GETREADONLY));
+    const bool selected = resultsFocus ? results->textCursor().hasSelection()
+                          : entry      ? entry->hasSelectedText()
+                                       : editor && editor->send(SCI_GETSELECTIONSTART) !=
+                                                       editor->send(SCI_GETSELECTIONEND);
+    const bool writable =
+        !resultsFocus && (entry ? !entry->isReadOnly() : editor && !editor->send(SCI_GETREADONLY));
     enable("copy", selected);
     enable("cut", selected && writable);
     const auto *mime = QApplication::clipboard()->mimeData();
@@ -739,17 +830,15 @@ void MainWindow::updateActions() {
     for (const auto &name : {"saveFile", "saveAs"})
         enable(name, documentEditor);
     enable("closeFile", documentsTabs_->currentWidget());
-    for (const auto &name :
-         {"firstReference", "nextReference", "previousReference"})
+    for (const auto &name : {"firstReference", "nextReference", "previousReference"})
         enable(name, !referenceHits_.isEmpty());
     enable("jumpReference", editor || !referenceHits_.isEmpty());
     enable("showSearchResults", !referenceGroups_.isEmpty());
     enable("deleteSearchSymbol", showingReferenceOutline_ && outline_->currentItem());
-    for (const auto &name :
-         {"findText", "zoomIn", "zoomOut", "resetZoom", "jumpDefinition"})
+    for (const auto &name : {"findText", "zoomIn", "zoomOut", "resetZoom", "jumpDefinition"})
         enable(name, editor);
-    enable("lookupReferences", editor || outline_->hasFocus() || symbolList_->hasFocus() ||
-                                  categoryTree_->hasFocus() || !projectPath_.isEmpty());
+    enable("lookupReferences", editor || outline_->hasFocus() || projectSymbolView()->hasFocus() ||
+                                   projectCategoryView()->hasFocus() || !projectPath_.isEmpty());
     enable("searchProject", !projectPath_.isEmpty() || editor);
     enable("findNext", editor && !searchText_.isEmpty());
     enable("findPrevious", editor && !searchText_.isEmpty());
@@ -757,6 +846,7 @@ void MainWindow::updateActions() {
          {"restartLanguageService", "compileCommandsDirectory", "workspaceExclusions",
           "closeProject", "refreshFiles", "rebuildSymbols", "rebuildAll"})
         enable(name, !projectPath_.isEmpty());
+    enable("manageProjectFiles", !projectFile_.isEmpty());
 }
 
 void MainWindow::showAppearance() {
