@@ -4,7 +4,6 @@
 #include "FileIO.h"
 #include "SourceAnalysis.h"
 #include "WorkspacePaths.h"
-#include <QCryptographicHash>
 #include <QRegularExpression>
 
 namespace {
@@ -75,7 +74,7 @@ ReferenceResults findTextOccurrences(const QStringList &paths, const QString &id
             analysis = analyzeSource(file.bytes, path);
         if (!analysis.error.isEmpty())
             results.warnings << path + ": " + analysis.error;
-        const auto hash = QCryptographicHash::hash(file.bytes, QCryptographicHash::Sha256).toHex();
+        const auto hash = sourceContentHash(file.bytes);
         qsizetype start = 0;
         qsizetype lineStart = 0, lineEnd = file.bytes.indexOf('\n');
         if (lineEnd < 0)
@@ -125,7 +124,8 @@ ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
                                            const QVector<SymbolOverlay> &overlays,
                                            const std::shared_ptr<std::atomic_bool> &cancel,
                                            int offset, int limit, bool skipInactive,
-                                           const QHash<QString, QByteArray> &expectedHashes) {
+                                           const QHash<QString, QByteArray> &expectedHashes,
+                                           const QString &compilationDirectory) {
     ReferenceResults results;
     const auto fail = [&](const QString &error) {
         results.error = error;
@@ -170,7 +170,7 @@ ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
             continue;
         }
         if (!results.sourceHashes.contains(path)) {
-            const auto hash = QCryptographicHash::hash(file.bytes, QCryptographicHash::Sha256).toHex();
+            const auto hash = sourceContentHash(file.bytes);
             if (expectedHashes.contains(path) && expectedHashes.value(path) != hash) {
                 results.hits.clear();
                 return fail("Source changed between result pages: " + path + ". Rerun the search.");
@@ -182,7 +182,8 @@ ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
         static const QRegularExpression alternate(
             "^(?:~?[\\p{L}_$][\\p{L}\\p{N}_$]*|operator[^\\s]+)$");
         const auto spelling = start >= 0 && end > start
-                                  ? QString::fromUtf8(file.bytes.mid(start, end - start)) : QString{};
+                                  ? QString::fromUtf8(file.bytes.mid(start, end - start))
+                                  : QString{};
         if (start < 0 || end <= start ||
             (spelling != identifier && !alternate.match(spelling).hasMatch())) {
             results.warnings << path + ": changed range or alternate spelling omitted.";
@@ -190,7 +191,8 @@ ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
         }
         if (skipInactive) {
             if (!inactive.contains(path)) {
-                inactive.insert(path, compilerInactiveRanges(path, file.bytes, overlays));
+                inactive.insert(
+                    path, compilerInactiveRanges(path, file.bytes, overlays, compilationDirectory));
                 if (!inactive[path].error.isEmpty())
                     results.warnings << path + ": " + inactive[path].error;
             }
@@ -211,8 +213,7 @@ ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
             break;
         }
         if (!hashes.contains(path)) {
-            hashes.insert(path,
-                          QCryptographicHash::hash(file.bytes, QCryptographicHash::Sha256).toHex());
+            hashes.insert(path, sourceContentHash(file.bytes));
             auto &analysis = analyses[path];
             if (analysis.styles.size() != file.bytes.size())
                 analysis = analyzeSource(file.bytes, path);

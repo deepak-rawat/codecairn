@@ -18,7 +18,7 @@ public:
     void applyStyles(const QByteArray &styles);
     void applyTypography(const Typography &typography);
     void applyConfiguration(const AppSettings &settings);
-    void selectRange(int start, int end);
+    void selectRange(int start, int end, bool notifySelection = true);
     void selectLineAt(int position);
     int caretPosition() const;
     int lineHeight() const;

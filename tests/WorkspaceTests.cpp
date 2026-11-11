@@ -6,6 +6,9 @@
 #include "WorkspaceOptionsStore.h"
 #include "CompilationDatabase.h"
 #include "CompilerSymbolRecovery.h"
+#include "SymbolIndexStore.h"
+#include "SymbolBrowser.h"
+#include "SymbolCatalogModel.h"
 
 #include <QAction>
 #include <QCryptographicHash>
@@ -17,6 +20,8 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QInputDialog>
+#include <QTimer>
 #include <QLockFile>
 #include <QProcess>
 #include <QSet>
@@ -25,9 +30,11 @@
 #include <QScrollBar>
 #include <QSemaphore>
 #include <QScopeGuard>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTreeWidget>
+#include <QTabWidget>
 #include <QtConcurrentRun>
 
 namespace {
@@ -88,6 +95,19 @@ private slots:
     void externalChangesReloadCleanBuffersOnly();
     void ambiguousNamesAreNotGuessed();
     void qualifiedMethodsRetainScope();
+    void syntaxOnlyAnalysisPreservesSymbolsWithoutStyles();
+    void unsupportedSchemaRequiresExplicitRecreation();
+    void databaseRecreationArchivesAndHonorsLock();
+    void managedProjectsIndexOnlySelectedMembership();
+    void failedReplacementRetainsPreviousSymbols();
+    void parallelParsersOverlapAndPublishWhileBusy();
+    void resourceLoggingReportsStartAndCompletion();
+    void initialPassUsesConfiguredExclusions();
+    void pendingInitialSchemaDoesNotMaskUnsupportedDatabases();
+    void missingSchemaIsNotSilentlyRecreated();
+    void managedCompilerRecoveryUsesOwnConfiguration();
+    void managedCompilerSettingsDoNotBorrowFolderCache();
+    void excludedNamesCanBeRemoved();
 };
 
 void WorkspaceTests::persistsUnopenedSymbolsAndSkipsMetadata() {
@@ -183,6 +203,15 @@ void WorkspaceTests::queryPaginationFragmentsAndRegex() {
     auto result = queryWorkspaceSymbols(dir.path(), query);
     QCOMPARE(result.total, 654);
     QCOMPARE(result.symbols.size(), 300);
+    query.limit = 17;
+    query.includeCategorySymbols = true;
+    const auto bounded = queryWorkspaceSymbols(dir.path(), query);
+    QCOMPARE(bounded.total, 654);
+    QCOMPARE(bounded.symbols.size(), 17);
+    QCOMPARE(bounded.categorySymbols.size(), bounded.total);
+    QCOMPARE(bounded.categories, result.categories);
+    query.limit = RuntimeLimits::SymbolPageSize;
+    query.includeCategorySymbols = false;
     query.offset = 600;
     QCOMPARE(queryWorkspaceSymbols(dir.path(), query).symbols.size(), 54);
     query.offset = 0;
@@ -262,23 +291,37 @@ void WorkspaceTests::cancellationPreservesCompletedIndex() {
     QTemporaryDir dir;
     write(dir.filePath("seed.cpp"), "int seed();\n");
     QVERIFY(index(dir.path()).error.isEmpty());
-    QByteArray large;
-    for (int i = 0; i < 2500; ++i)
-        large += "int function_" + QByteArray::number(i) + "(int x) { return x + 1; }\n";
-    for (int i = 0; i < 20; ++i)
-        write(dir.filePath(QString("large_%1.cpp").arg(i)), large);
+    for (int i = 0; i < 40; ++i)
+        write(dir.filePath(QString("new_%1.cpp").arg(i)),
+              "int function_" + QByteArray::number(i) + "();\n");
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto progress = std::make_shared<IndexProgress>();
-    auto future = QtConcurrent::run([&] {
-        return buildWorkspaceIndex(workspacePath(dir.path()), true, true, {}, cancel, progress);
-    });
-    QTRY_VERIFY_WITH_TIMEOUT(progress->parsed.load() > 0, 10000);
-    cancel->store(true);
-    future.waitForFinished();
-    QVERIFY(future.result().cancelled);
-    const auto result = queryWorkspaceSymbols(dir.path(), {});
-    QCOMPARE(result.total, 1);
-    QCOMPARE(result.symbols.first().symbol.name, "seed");
+    bool catalogPublished = false;
+    progress->catalogReady = [&](const QStringList &paths) {
+        catalogPublished = true;
+        QCOMPARE(paths.size(), 41);
+        QCOMPARE(progress->parsed.load(), 0);
+        QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).total, 1);
+    };
+    progress->batchReady = [&] {
+        QVERIFY(catalogPublished);
+        const auto page = queryWorkspaceSymbols(dir.path(), {});
+        QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+        QVERIFY(page.total > 1);
+        QVERIFY(page.total < 41);
+        cancel->store(true);
+    };
+    const auto stopped =
+        buildWorkspaceIndex(workspacePath(dir.path()), false, true, {}, cancel, progress);
+    QVERIFY(stopped.cancelled);
+    QVERIFY(stopped.parsed > 0);
+    const auto partial = queryWorkspaceSymbols(dir.path(), {});
+    QCOMPARE(partial.total, stopped.parsed + 1);
+    const auto resumed = index(dir.path());
+    QVERIFY2(resumed.error.isEmpty(), qPrintable(resumed.error));
+    QCOMPARE(resumed.reused, stopped.parsed + 1);
+    QCOMPARE(resumed.parsed + stopped.parsed, 40);
+    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).total, 41);
 }
 
 void WorkspaceTests::corruptDatabaseIsReported() {
@@ -921,6 +964,384 @@ void WorkspaceTests::qualifiedMethodsRetainScope() {
         }
     }
     QCOMPARE(count, 2);
+}
+
+void WorkspaceTests::syntaxOnlyAnalysisPreservesSymbolsWithoutStyles() {
+    const QByteArray source = "namespace Example { struct Item { int run(int value); }; }\n";
+    const auto editor = analyzeSource(source, "example.cpp");
+    const auto bulk = analyzeSource(source, "example.cpp", SourceAnalysisMode::SyntaxOnly);
+    QCOMPARE(editor.styles.size(), source.size());
+    QVERIFY(bulk.styles.isEmpty());
+    QVERIFY(!bulk.compilerEnriched);
+    QCOMPARE(bulk.symbols.size(), editor.symbols.size());
+    for (qsizetype i = 0; i < bulk.symbols.size(); ++i) {
+        QCOMPARE(bulk.symbols[i].name, editor.symbols[i].name);
+        QCOMPARE(bulk.symbols[i].qualifiedName, editor.symbols[i].qualifiedName);
+        QCOMPARE(bulk.symbols[i].nameStart, editor.symbols[i].nameStart);
+    }
+    const auto broken =
+        analyzeSource("int broken( {\n", "broken.cpp", SourceAnalysisMode::SyntaxOnly);
+    QVERIFY(broken.syntaxErrors);
+    QVERIFY(!broken.compilerEnriched);
+    QVERIFY(broken.styles.isEmpty());
+    QVERIFY(broken.diagnostics.size() <= 12);
+}
+
+void WorkspaceTests::unsupportedSchemaRequiresExplicitRecreation() {
+    QTemporaryDir dir;
+    write(dir.filePath("one.cpp"), "int one();\n");
+    QVERIFY(index(dir.path()).error.isEmpty());
+    {
+        WorkspaceIndexDetail::SymbolIndexStore database(workspaceDatabase(dir.path()), true);
+        database.exec("PRAGMA user_version=1;");
+    }
+    QVERIFY(index(dir.path()).error.contains("Unsupported workspace database version"));
+    QVERIFY(queryWorkspaceSymbols(dir.path(), {})
+                .error.contains("Unsupported workspace database version"));
+    WorkspaceIndexDetail::SymbolIndexStore database(workspaceDatabase(dir.path()), false);
+    WorkspaceIndexDetail::IndexStatement count(database, "SELECT count(*) FROM symbols");
+    QVERIFY(count.next());
+    QCOMPARE(count.integer(0), 1);
+}
+
+void WorkspaceTests::databaseRecreationArchivesAndHonorsLock() {
+    QTemporaryDir dir;
+    write(dir.filePath("one.cpp"), "int one();\n");
+    QVERIFY(WorkspaceOptionsStore::initialize(dir.path()).isEmpty());
+    const auto database = workspaceDatabase(dir.path());
+    write(database, "broken database");
+    WorkspaceIndex workspace;
+    QSignalSpy failed(&workspace, &WorkspaceIndex::failed);
+    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
+    QSignalSpy catalog(&workspace, &WorkspaceIndex::catalogReady);
+    QSignalSpy batches(&workspace, &WorkspaceIndex::batchReady);
+    workspace.open(dir.path());
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 10000);
+    QLockFile lock(QDir(workspaceStorageDirectory(dir.path())).filePath("index.lock"));
+    QVERIFY(lock.tryLock(0));
+    QVERIFY(!workspace.recreateDatabase().isEmpty());
+    QCOMPARE(readSourceFile(database).bytes, QByteArray("broken database"));
+    lock.unlock();
+    QVERIFY(workspace.recreateDatabase().isEmpty());
+    QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
+    QVERIFY(!catalog.isEmpty());
+    QVERIFY(!batches.isEmpty());
+    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).total, 1);
+    const auto backups =
+        QDir(QFileInfo(database).absolutePath()).entryList({"index.sqlite3.backup-*"}, QDir::Files);
+    QCOMPARE(backups.size(), 1);
+    QCOMPARE(readSourceFile(QDir(QFileInfo(database).absolutePath()).filePath(backups[0])).bytes,
+             QByteArray("broken database"));
+}
+
+void WorkspaceTests::managedProjectsIndexOnlySelectedMembership() {
+    QTemporaryDir dir;
+    const auto root = workspacePath(dir.path());
+    QVERIFY(QDir(dir.path()).mkpath("selected/excluded"));
+    QVERIFY(QDir(dir.path()).mkpath("other"));
+    write(dir.filePath("selected/one.cpp"), "int selected_symbol();\n");
+    write(dir.filePath("selected/excluded/no.cpp"), "int excluded_symbol();\n");
+    write(dir.filePath("other/two.cpp"), "int other_symbol();\n");
+    WorkspaceOptions options;
+    options.managed = true;
+    options.name = "Selected";
+    options.includedPaths = {"selected"};
+    options.excludedPaths = {"selected/excluded"};
+    const auto first = QDir(root).filePath("first.cairn");
+    const auto projectError = WorkspaceOptionsStore::saveProject(first, root, options);
+    QVERIFY2(projectError.isEmpty(), qPrintable(projectError));
+    options.name = "Other";
+    options.includedPaths = {"other"};
+    options.excludedPaths.clear();
+    const auto second = QDir(root).filePath("second.cairn");
+    QVERIFY(WorkspaceOptionsStore::saveProject(second, root, options).isEmpty());
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    const auto selected = buildWorkspaceIndex(root, false, true, {}, cancel, {}, first);
+    QVERIFY2(selected.error.isEmpty(), qPrintable(selected.error));
+    QCOMPARE(selected.files, QStringList{workspacePath(dir.filePath("selected/one.cpp"))});
+    QVERIFY(!selected.directories.contains(workspacePath(dir.filePath("other"))));
+    QVERIFY(!selected.directories.contains(workspacePath(dir.filePath("selected/excluded"))));
+    const auto other = buildWorkspaceIndex(root, false, true, {}, cancel, {}, second);
+    QVERIFY2(other.error.isEmpty(), qPrintable(other.error));
+    SymbolQuery query;
+    query.projectFile = first;
+    const auto firstPage = queryWorkspaceSymbols(dir.path(), query);
+    QVERIFY2(firstPage.error.isEmpty(), qPrintable(firstPage.error));
+    QCOMPARE(firstPage.total, 1);
+    QCOMPARE(firstPage.symbols.first().symbol.name, "selected_symbol");
+    query.projectFile = second;
+    const auto secondPage = queryWorkspaceSymbols(dir.path(), query);
+    QCOMPARE(secondPage.total, 1);
+    QCOMPARE(secondPage.symbols.first().symbol.name, "other_symbol");
+    QVERIFY(workspaceDatabase(dir.path(), first) != workspaceDatabase(dir.path(), second));
+}
+
+void WorkspaceTests::failedReplacementRetainsPreviousSymbols() {
+    QTemporaryDir dir;
+    const auto path = dir.filePath("one.cpp");
+    write(path, "int previous_symbol();\n");
+    QVERIFY(index(dir.path()).error.isEmpty());
+    write(path, QByteArray("\xff", 1));
+    const auto failed = index(dir.path());
+    QVERIFY(failed.error.isEmpty());
+    QVERIFY(!failed.warnings.isEmpty());
+    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).symbols.first().symbol.name, "previous_symbol");
+    write(path, "int replacement_symbol();\n");
+    const auto replaced = index(dir.path());
+    QVERIFY2(replaced.error.isEmpty(), qPrintable(replaced.error));
+    QCOMPARE(replaced.parsed, 1);
+    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).symbols.first().symbol.name,
+             "replacement_symbol");
+}
+
+void WorkspaceTests::parallelParsersOverlapAndPublishWhileBusy() {
+    if (QThread::idealThreadCount() < 2)
+        QSKIP("Parallel parsing requires at least two available worker threads.");
+    QTemporaryDir dir;
+    QByteArray source;
+    for (int i = 0; i < 4000; ++i)
+        source += "int parallel_symbol_" + QByteArray::number(i) + "(int value);\n";
+    for (int i = 0; i < 12; ++i)
+        write(dir.filePath(QString("parallel_%1.cpp").arg(i)), source);
+    const auto progress = std::make_shared<IndexProgress>();
+    const auto built = buildWorkspaceIndex(dir.path(), false, true, {},
+                                           std::make_shared<std::atomic_bool>(false), progress);
+    QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
+    QCOMPARE(built.parsed, 12);
+    QVERIFY(progress->peakParsers.load() >= 2);
+    QVERIFY(progress->peakParsers.load() <= 8);
+    QCOMPARE(progress->activeParsers.load(), 0);
+
+    WorkspaceIndex workspace;
+    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
+    bool catalogWhileBusy = false;
+    bool queriedWhileBusy = false;
+    connect(&workspace, &WorkspaceIndex::catalogReady, this, [&](const QStringList &paths) {
+        catalogWhileBusy = workspace.busy();
+        QCOMPARE(paths.size(), 12);
+    });
+    connect(&workspace, &WorkspaceIndex::batchReady, this, [&] {
+        if (queriedWhileBusy)
+            return;
+        const auto page = queryWorkspaceSymbols(dir.path(), {});
+        QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+        QCOMPARE(page.total, 48000);
+        queriedWhileBusy = workspace.busy();
+    });
+    workspace.open(dir.path());
+    QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 20000);
+    QVERIFY(catalogWhileBusy);
+    QVERIFY(queriedWhileBusy);
+}
+
+void WorkspaceTests::resourceLoggingReportsStartAndCompletion() {
+    QTemporaryDir dir;
+    write(dir.filePath("one.cpp"), "int one();\n");
+    const auto record = [](const QString &stage) {
+        return QRegularExpression(
+            "^index\\.resources stage= " + stage +
+            " root= .* generation= [0-9]+ discovered= [0-9]+ parsed= [0-9]+"
+            " committed= [0-9]+ rssBytes= (-1|[0-9]+) rssError= .* elapsedMs= [0-9]+$");
+    };
+    QTest::ignoreMessage(QtInfoMsg, record("start"));
+    QTest::ignoreMessage(QtInfoMsg, record("complete"));
+    WorkspaceIndex workspace;
+    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
+    workspace.open(dir.path());
+    QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
+}
+
+void WorkspaceTests::initialPassUsesConfiguredExclusions() {
+    QTemporaryDir dir;
+    QVERIFY(QDir(dir.path()).mkpath("build"));
+    write(dir.filePath("build/one.cpp"), "int included_on_first_pass();\n");
+    QVERIFY(WorkspaceOptionsStore::saveOptions(workspacePath(dir.path()), {}, {".git"}).isEmpty());
+    WorkspaceIndex workspace;
+    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
+    QSignalSpy catalog(&workspace, &WorkspaceIndex::catalogReady);
+    workspace.open(dir.path());
+    QCOMPARE(workspace.excludes(), QStringList{".git"});
+    QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
+    QCOMPARE(catalog.size(), 1);
+    QCOMPARE(catalog.first().first().toStringList(),
+             QStringList{workspacePath(dir.filePath("build/one.cpp"))});
+    const auto page = queryWorkspaceSymbols(dir.path(), {});
+    QCOMPARE(page.total, 1);
+    QCOMPARE(page.symbols.first().symbol.name, "included_on_first_pass");
+}
+
+void WorkspaceTests::pendingInitialSchemaDoesNotMaskUnsupportedDatabases() {
+    QTemporaryDir dir;
+    const auto root = workspacePath(dir.path());
+    QVERIFY(WorkspaceOptionsStore::initialize(root).isEmpty());
+    WorkspaceIndexDetail::SymbolIndexStore writer(workspaceDatabase(root), true);
+    writer.exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;"
+                "CREATE TABLE files(path TEXT PRIMARY KEY);");
+    SymbolQuery query;
+    query.allowPendingSchema = true;
+    const auto pending = queryWorkspaceSymbols(root, query);
+    QVERIFY2(pending.error.isEmpty(), qPrintable(pending.error));
+    QCOMPARE(pending.total, 0);
+    const auto path = QDir(root).filePath("live.cpp");
+    const QByteArray source = "int live_during_initialization();\n";
+    query.overlays.append({path, source, analyzeSource(source, path)});
+    const auto live = queryWorkspaceSymbols(root, query);
+    QVERIFY2(live.error.isEmpty(), qPrintable(live.error));
+    QCOMPARE(live.total, 1);
+    QCOMPARE(live.symbols.first().symbol.name, "live_during_initialization");
+    query.overlays.clear();
+    query.allowPendingSchema = false;
+    QVERIFY(queryWorkspaceSymbols(root, query)
+                .error.contains("Unsupported workspace database version"));
+    writer.exec("ROLLBACK; PRAGMA user_version=1;");
+    query.allowPendingSchema = true;
+    QVERIFY(queryWorkspaceSymbols(root, query)
+                .error.contains("Unsupported workspace database version"));
+    writer.exec("PRAGMA user_version=0; CREATE TABLE legacy_marker(value INTEGER);");
+    QVERIFY(queryWorkspaceSymbols(root, query)
+                .error.contains("Unsupported workspace database version"));
+    writer.exec("DROP TABLE legacy_marker;");
+    writer.ensureSchema();
+    const auto ready = queryWorkspaceSymbols(root, query);
+    QVERIFY2(ready.error.isEmpty(), qPrintable(ready.error));
+    QCOMPARE(ready.total, 0);
+}
+
+void WorkspaceTests::missingSchemaIsNotSilentlyRecreated() {
+    QTemporaryDir directory;
+    write(directory.filePath("one.c"), "int preserved;\n");
+    QVERIFY(index(directory.path()).error.isEmpty());
+    {
+        WorkspaceIndexDetail::SymbolIndexStore db(workspaceDatabase(directory.path()), true);
+        db.exec("DROP TABLE symbols;");
+    }
+    const auto result = index(directory.path());
+    QVERIFY(result.error.contains("no such table"));
+    const auto page = queryWorkspaceSymbols(directory.path(), {});
+    QVERIFY(page.error.contains("no such table"));
+    WorkspaceIndexDetail::SymbolIndexStore db(workspaceDatabase(directory.path()), false);
+    WorkspaceIndexDetail::IndexStatement table(db,
+                                               "SELECT 1 FROM sqlite_master WHERE name='symbols'");
+    QVERIFY(!table.next());
+}
+
+void WorkspaceTests::managedCompilerRecoveryUsesOwnConfiguration() {
+    QTemporaryDir directory, commands;
+    const auto path = directory.filePath("macro.c");
+    const QByteArray source = "#ifdef PROJECT_FLAG\n"
+                              "#define TEST(name) int configured_##name(void)\n"
+                              "#else\n#define TEST(name) int wrong_##name(void)\n#endif\n"
+                              "TEST(function) { return 1; }\n";
+    write(path, source);
+    write(commands.filePath("compile_commands.json"),
+          QJsonDocument(QJsonArray{QJsonObject{
+                            {"directory", directory.path()},
+                            {"file", path},
+                            {"arguments", QJsonArray{"clang", "-DPROJECT_FLAG", "-c", path}}}})
+              .toJson());
+    WorkspaceOptions options;
+    options.managed = true;
+    options.name = "Configured";
+    options.includedPaths = {"macro.c"};
+    options.compilationDirectory = commands.path();
+    const auto projectFile = directory.filePath("configured.cairn");
+    QVERIFY(WorkspaceOptionsStore::saveProject(projectFile, directory.path(), options).isEmpty());
+    const auto prepared =
+        prepareCompilationDatabase(directory.path(), commands.path(), projectFile);
+    QVERIFY2(prepared.error.isEmpty(), qPrintable(prepared.error));
+    const auto built =
+        buildWorkspaceIndex(directory.path(), true, true, {},
+                            std::make_shared<std::atomic_bool>(false), {}, projectFile);
+    QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
+    SymbolQuery query;
+    query.projectFile = projectFile;
+    query.text = "configured_function";
+    query.exact = true;
+    const auto page = queryWorkspaceSymbols(directory.path(), query);
+    QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+    QCOMPARE(page.total, 1);
+    QCOMPARE(page.symbols.first().symbol.provider, QString("compiler"));
+    const auto editor = analyzeSource(source, path, SourceAnalysisMode::Editor, prepared.directory);
+    QVERIFY(std::any_of(editor.symbols.cbegin(), editor.symbols.cend(), [](const auto &symbol) {
+        return symbol.name == "configured_function" && symbol.generated;
+    }));
+    QVERIFY(!QFileInfo::exists(workspaceDatabase(directory.path())));
+}
+
+void WorkspaceTests::managedCompilerSettingsDoNotBorrowFolderCache() {
+    QTemporaryDir directory, folderCommands, managedCommands;
+    const auto path = directory.filePath("configured.c");
+    const QByteArray source = "#ifdef FOLDER_FLAG\n"
+                              "#define TEST(name) int folder_##name(void)\n"
+                              "int needle = 1;\n"
+                              "#else\n#define TEST(name) int managed_##name(void)\n"
+                              "int needle = 2;\n#endif\nTEST(function) { return needle; }\n";
+    write(path, source);
+    const auto commands = [&](const QString &target, bool flag) {
+        QJsonArray arguments{"clang", "-c", path};
+        if (flag)
+            arguments.append("-DFOLDER_FLAG");
+        write(QDir(target).filePath("compile_commands.json"),
+              QJsonDocument(QJsonArray{QJsonObject{{"directory", directory.path()},
+                                                   {"file", path},
+                                                   {"arguments", arguments}}})
+                  .toJson());
+    };
+    commands(folderCommands.path(), true);
+    commands(managedCommands.path(), false);
+    QVERIFY(prepareCompilationDatabase(directory.path(), folderCommands.path()).error.isEmpty());
+    WorkspaceOptions options;
+    options.managed = true;
+    options.name = "Managed";
+    options.includedPaths = {"configured.c"};
+    const auto descriptor = directory.filePath("managed.cairn");
+    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, directory.path(), options).isEmpty());
+    const auto empty = prepareCompilationDatabase(directory.path(), {}, descriptor);
+    QVERIFY2(empty.error.isEmpty(), qPrintable(empty.error));
+    QVERIFY(!empty.configured);
+    const auto analysis = analyzeSource(source, path, SourceAnalysisMode::Index, empty.directory);
+    QVERIFY(std::any_of(analysis.symbols.cbegin(), analysis.symbols.cend(),
+                        [](const auto &symbol) { return symbol.name == "managed_function"; }));
+    QVERIFY(std::none_of(analysis.symbols.cbegin(), analysis.symbols.cend(),
+                         [](const auto &symbol) { return symbol.name == "folder_function"; }));
+    const auto prepared =
+        prepareCompilationDatabase(directory.path(), managedCommands.path(), descriptor);
+    QVERIFY2(prepared.error.isEmpty(), qPrintable(prepared.error));
+    ReferenceSearchRequest request;
+    request.workspaceRoot = directory.path();
+    request.projectFile = descriptor;
+    request.paths = {path};
+    request.query = "needle";
+    request.options.method = SearchMethod::Literal;
+    request.options.skipInactive = true;
+    const auto result = searchReferences(request, {});
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    QVERIFY2(result.warnings.isEmpty(), qPrintable(result.warnings.join('\n')));
+    QCOMPARE(result.hits.size(), 2);
+    QVERIFY(std::any_of(result.hits.cbegin(), result.hits.cend(),
+                        [](const auto &hit) { return hit.text.contains("needle = 2"); }));
+    QVERIFY(std::none_of(result.hits.cbegin(), result.hits.cend(),
+                         [](const auto &hit) { return hit.text.contains("needle = 1"); }));
+    const QVector<LspLocation> targets{{path, 2, 4, 2, 10}, {path, 5, 4, 5, 10}};
+    const auto semantic = resolveSemanticReferences(targets, {path}, "needle", {}, {}, 0, 100, true,
+                                                    {}, prepared.directory);
+    QVERIFY2(semantic.error.isEmpty(), qPrintable(semantic.error));
+    QCOMPARE(semantic.hits.size(), 1);
+    QVERIFY(semantic.hits.first().text.contains("needle = 2"));
+}
+
+void WorkspaceTests::excludedNamesCanBeRemoved() {
+    QTemporaryDir directory;
+    QVERIFY(QDir(directory.path()).mkdir("build"));
+    write(directory.filePath("build/included.c"), "int included;\n");
+    const auto skipped = index(directory.path());
+    QVERIFY2(skipped.error.isEmpty(), qPrintable(skipped.error));
+    QVERIFY(skipped.files.isEmpty());
+    const auto rebuilt = buildWorkspaceIndex(directory.path(), false, true, {},
+                                             std::make_shared<std::atomic_bool>(false));
+    QVERIFY2(rebuilt.error.isEmpty(), qPrintable(rebuilt.error));
+    QCOMPARE(rebuilt.files.size(), 1);
+    QCOMPARE(queryWorkspaceSymbols(directory.path(), {}).total, 1);
 }
 
 QTEST_MAIN(WorkspaceTests)

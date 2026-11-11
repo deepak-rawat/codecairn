@@ -449,8 +449,11 @@ void LanguageTests::includedMacrosGenerateFunctionDefinitions() {
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     SymbolQuery query;
     query.text = "test_";
-    const auto page = queryWorkspaceSymbols(directory.path(), query);
+    auto page = queryWorkspaceSymbols(directory.path(), query);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+    QCOMPARE(page.total, 2);
+    query.overlays = {{path, source, result, sourceContentHash(source)}};
+    page = queryWorkspaceSymbols(directory.path(), query);
     QCOMPARE(page.total, 2);
     for (const auto &entry : page.symbols) {
         QVERIFY(entry.symbol.generated);

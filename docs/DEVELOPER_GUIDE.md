@@ -379,6 +379,13 @@ same-length text replacement can invalidate analysis without changing byte count
   definition information, and provider provenance.
 - Support, syntax-error, and recovery diagnostics.
 
+The default `SourceAnalysisMode::Editor` preserves all of these results.
+Bulk indexing selects `Index`: it preserves editor symbol extraction, including
+compiler recovery, without allocating style bytes or resolving styling bindings.
+`SyntaxOnly` remains available for explicit syntax-only analysis, not project
+indexing. Editor analysis and semantic services retain their recovery behavior.
+Missing parser identifiers must not become blank, zero-width symbol entries.
+
 LanguageRegistry selects grammars; ambiguous headers are scored with both
 C-family grammars. Each request has a private `AnalysisContext`. The analysis
 stages include `extractSyntax()`, `qualifyAndStyleSymbols()`, `styleBindings()`,
@@ -411,41 +418,123 @@ Styling must preserve bytes, BOM, selections, undo, and dirty state.
 ```mermaid
 flowchart LR
     OPEN["Workspace"] --> DISC["Discover files"]
-    DISC --> HASH["Hashes and parser version"]
+    DISC --> CAT["Commit membership and publish catalogReady"]
+    CAT --> HASH["Hashes and parser version"]
     HASH -->|unchanged| REUSE["Reuse saved symbols"]
     HASH -->|changed| PARSE["Analyze source"]
-    REUSE --> TX["SQLite transaction"]
+    REUSE --> TX["Atomic per-file replacement"]
     PARSE --> TX
     TX --> FILES["File and folder views"]
-    TX --> QUERY["Saved symbols plus live overlays"]
+    TX --> QUERY["batchReady: saved symbols plus live overlays"]
     QUERY --> UI["Symbols and categories"]
+    TX --> REF["Later: optional reference postings"]
 ```
 
 WorkspaceIndex owns scheduling, cancellation, and notifications. Discovery,
 transactional construction, storage, and queries have separate implementation
-files listed in the code map. Each worker owns its SQLite connection; WAL allows
-concurrent readers, and failed/cancelled writes roll back.
+files listed in the code map. Discovery completes before missing paths are
+deleted. Managed-project membership is applied during discovery, including
+pruning unselected directories; existing directory-name exclusions still apply.
+`catalogReady(QStringList)` publishes the completed catalog before parsing.
 
-Indexing has a dedicated single low-priority worker; global work is capped at
-two. Overlapping refreshes queue one follow-up pass rather than cancelling the
-active transaction. Notifications debounce for 700 ms; the six-hour poll checks
-missed changes. `behavior.workspaceRefreshMinutes` accepts 1-35791 minutes and
+Indexing uses a dedicated low-priority coordinator and a private syntax parser
+pool bounded by available threads and eight workers. At most twice that worker
+count of file results is outstanding. Workers exchange snapshots/results, never
+widgets or SQLite connections. The coordinator is the single writer; each file's
+metadata and symbols commit atomically. Previous symbols remain queryable until
+their replacement commits, and a failed read/analysis retains the previous usable
+snapshot. `batchReady()` publishes incremental completed work with throttled
+notifications. WAL readers can query while indexing is busy.
+
+Cancellation preserves completed file transactions; refreshing reuses their
+hash/parser matches and resumes remaining work. An in-progress file replacement
+finishes atomically; cancellation never rolls back earlier commits. Reference
+acceleration runs after symbols become usable, with per-file transactions and a
+full-search fallback for absent, incomplete, or stale postings. Discovery, symbol,
+and reference phase timings and peak active parser counts are logged. Warning
+collections are capped at 100, with an explicit suppressed count; per-analysis
+syntax diagnostics are also bounded.
+`FileIO.h` exposes `sourceContentHash(bytes)`, a reusable per-thread SHA-256
+hasher returning lowercase hexadecimal without transforming its input. Bulk
+parser threads and the coordinator's reference pass use it, resetting for every
+file. This avoids repeated crypto-provider
+setup without skipping content reads or weakening unchanged-metadata freshness
+checks; stored hashes still describe the exact decoded source bytes.
+
+Global editor work remains capped at two. Overlapping refreshes queue one
+follow-up pass rather than cancelling the active pass. Notifications debounce
+for 700 ms; the six-hour poll checks missed changes.
+`behavior.workspaceRefreshMinutes` accepts 1-35791 minutes and
 applies at startup/reload. Native watches are capped at 2,048 paths.
 
 Directory notifications compare worker-side snapshots, exclude metadata/build
 folders, and ignore directory timestamps. File notifications and polls still
 verify content when size/mtime are unchanged. Unchanged automatic checks stay
 quiet; manual refreshes and new warnings remain visible. Cancel pauses automatic
-refresh until resumed. Cancellation is checked between files, not inside a parse.
+refresh until resumed. Cancellation is checked between files/stages, not inside
+an active syntax parse; outstanding parser workers are drained before completion.
 
 Live overlays replace disk symbols for open files but are not persisted as
 saved contents. Clean external changes can reload; dirty buffers are preserved.
-Internal lookup callers use bounded pages; Project Symbols requests all matches
-and has no hidden row cap. SymbolBrowser preserves keys, expansion, and scroll.
+Internal lookup callers use bounded pages. Project Symbols requests a bounded
+overview (4,097 rows plus global counts). Catalogs above 4,096 matching rows use
+SymbolCatalogModel and the identically themed virtual view, with the full match
+count as its row count. Category children virtualize independently when their
+global count exceeds that threshold. Small catalogs retain SymbolBrowser and its
+selection/expansion/scroll behavior. Optional category collections still cover the
+full catalog for API callers unless categoryLimit explicitly bounds that collection.
+There is no manual Load More Symbols step or loss of symbol coverage.
+
+Virtual rows query 128 targets at a time on model-owned workers, retain at most 16
+pages per model, and reject obsolete generations. They expose errors explicitly
+and complete pending selection/activation when a row arrives. Closing a project or
+recreating a database cancels and joins model readers before releasing the index.
+Count-only updates discard cached offsets and cancel obsolete page reads;
+subsequent requests load the current ordering rather than retaining stale offsets.
+Completed and cancelled index passes invalidate cached pages. The cache bound concerns materialized targets,
+not Qt's internal view geometry or total process RSS.
+Global refreshes coalesce without repeatedly cancelling an identical active query;
+user query/scope/revision changes still invalidate stale results. Progressive
+refresh notifications are throttled separately from the user's search debounce.
+
+SQL performs counts and bounded selection before materializing symbol records.
+Exact-name context lookups use indexed name/qualified-name predicates and omit
+unneeded global category aggregation. Dedicated index-query and page-reader pools
+keep those scans from exhausting the shared editor/preview workers. ASCII fragment
+matching uses escaped native SQLite LIKE predicates, with a Qt Unicode-matching
+fallback for non-ASCII names. `%`, `_`, and backslashes in panel queries remain
+literal fragments, not SQL wildcard syntax. The covering `symbol_catalog` index
+contains the filtering/validity/order fields so broad scans avoid millions of
+random full-record reads. Its leading columns follow the actual name/path/start
+ordering, and paging selects row IDs before joining complete records. Category
+counts use a separate covering index in grouping order; existing generated index
+layouts are replaced transactionally when needed, without deleting symbol data.
+Readers retain compatibility with an index that has
+not yet acquired that additive index; schema initialization creates it.
+Unicode and regex behavior retain
+the original matching rules. Live overlays still override disk paths and sort
+before same-named disk rows. Queries exclude empty names and zero-width name/source
+ranges, including in older caches while reparsing.
+Project-symbol navigation carries the indexed target through asynchronous file
+opening and keeps that exact range in Context. Deferred caret notifications from
+programmatic navigation must not reinterpret a macro invocation as a request to
+preview its macro header. Newly opened clean buffers retain disk-index symbols
+until editor analysis completes; dirty pending buffers still suppress stale disk
+symbols. Applying later styles must not replace the explicit preview or its range.
+Deferred activation records a persistent index and its open/preview intent, not
+just a boolean. Selection changes invalidate that intent. Symbol-query summaries
+can return the selected symbol's rank, allowing both virtual and small views to
+restore the same path/name-range key after filtering without scanning every row.
+Context also rejects a semantic result pointing back into the queried identifier
+unless current source analysis identifies an actual declaration there. This avoids
+clangd's implicit call-site declarations masquerading as definitions when headers
+are unavailable. Genuine self-navigation at a declaration is retained. The indexed
+fallback remains limited to managed membership; the UI explains unresolved scope
+or compilation setup instead of silently indexing excluded dependencies.
 
 C/C++ extraction includes both forward tags and typedef aliases, without
-inventing declarations for ordinary tag uses. Macro-shaped definitions can
-trigger compiler recovery even when syntax parsing succeeds. Recovered
+inventing declarations for ordinary tag uses. In editor analysis, macro-shaped
+definitions can trigger compiler recovery even when syntax parsing succeeds. Recovered
 definitions replace misidentified invocation arguments instead of adding false
 function names. Bump ParserVersion when saved extraction meaning changes.
 
@@ -570,11 +659,17 @@ clear dirty state, or replace dirty buffers in background.
 
 ### Persistent syntax index
 
-SQLite schema version is **2**. Version 1 migrates transactionally; unsupported
-newer versions are rejected. The reference tables are created when absent and
-carry a separate per-file posting version.
+SQLite schema version is **2**. New empty databases initialize transactionally;
+legacy, nonempty unversioned, and newer schemas are explicitly rejected rather
+than migrated or deleted. `WorkspaceIndex::recreateDatabase()` is only called
+after explicit UI confirmation. It cancels/drains its workers, obtains the
+workspace index lock, rejects symlinked databases/journals, archives the database
+and matching WAL/SHM journals with a unique backup suffix, and restarts the
+current root/project scope. Lock/archive failures remain explicit errors.
+The reference tables are created when absent and carry a separate per-file
+posting version.
 Candidate readers check the schema version inside their read transaction. Before
-the initial schema or a legacy migration commits, they retain all source files
+the initial schema commits, they retain all source files
 for a full search; a version-2 database with missing tables remains an error.
 
 | Table | Purpose / fields |
@@ -589,6 +684,23 @@ with the BOM removed. Paths use canonical/absolute identity; metadata/database
 symlinks are rejected, and failures never redirect to another store.
 ParserVersion is separate from schema/posting versions. Changes require tested
 invalidation or migration, not silent database deletion.
+The compiler-assisted index uses a bumped ParserVersion so syntax-only caches
+are reparsed and macro-generated definitions are restored without deleting databases.
+Managed descriptors select separate database identities through the optional
+`projectFile` on `buildWorkspaceIndex()`, `WorkspaceIndex::open()`, and
+`SymbolQuery`; folder and managed-project catalogs never share a store.
+Existing databases must contain the complete required schema before indexing;
+missing versioned tables/columns produce an error and require confirmed recreation,
+rather than being silently re-created while old cached file states are reused.
+Compiler recovery receives the project-specific normalized compilation directory
+in index, editor, and disk-preview analysis; it must not discover another project's
+whole-folder cache in preference to that explicit directory. New documents mark
+analysis pending until the first result actually completes, including revision zero.
+An explicitly supplied compilation directory is authoritative even when it has no
+database: compiler recovery must not borrow a whole-folder cache. Managed
+inactive-code filtering receives that same directory for both text and semantic
+reference searches. Folder-mode callers without an explicit directory retain
+automatic database discovery.
 
 ### Separate JSON configuration and state
 
@@ -675,6 +787,42 @@ remain in reference points, not native points.
 `applyConfiguration()` updates widgets/source/context without editing documents.
 Block signals to avoid recursive control changes. No settings-file I/O belongs
 in paint or keystroke paths.
+
+### Managed project descriptors and selection
+
+`WorkspaceOptionsStore::saveProject()` writes a user-chosen `.cairn` JSON object
+with integer `schemaVersion: 1`, absolute canonical `root`, nonempty editable
+`name`, `includedPaths`, `excludedPaths`, and `compilationDirectory`. The optional
+`excludedDirectories` array retains the distinction between absent (default
+directory-name exclusions) and empty (no directory-name exclusions). A new
+dialog defaults the name to the base folder's basename and includes `"."`.
+
+Membership rules are root-relative slash-separated paths. `"."` selects the
+whole base folder; a selected folder includes descendants and a selected file
+includes that file. Child exclusions override inclusions. Absolute paths, empty
+components, `.` components within a path, `..`, backslashes, drive prefixes, and
+NUL characters are rejected. Directory-name exclusions apply at every depth.
+`projectIncludesPath()` scopes files/overlays/search; `projectTraversesDirectory()`
+also admits ancestors needed to reach selected descendants. Neither follows
+symlinks below the selected base. Canonicalizing the explicitly selected base
+and descriptor parent permits platform aliases such as macOS `/var`; a symlinked
+base-folder or descriptor leaf is refused.
+
+`loadProject()` returns the root, options, and an explicit error. Unknown fields,
+unsupported schemas, malformed JSON/types/rules, and descriptors over 256 KiB are
+errors, not requests to reset configuration. Loaded options retain descriptor
+identity and a content digest through ProjectDialog edits. Saves take the sibling
+`.cairn.lock`, revalidate the existing descriptor and digest, then atomically
+commit with QSaveFile. Corrupt, externally changed, or externally removed
+descriptors are never silently overwritten; reload after a successful save
+before another edit. `saveOptions(root, ..., projectFile)` preserves membership
+and name. Managed initialization validates the descriptor and creates only its
+separate cache directory, rejecting symlinked cache components.
+
+ProjectDialog uses QFileSystemModel's background, lazy directory loading rather
+than enumerating the complete tree on opening or selection. Check states update
+root-relative rules without recursive scans; the Review tab lists inclusions,
+path exclusions, and effective directory-name exclusions.
 
 ### State schema, write lifecycle and concurrent instances
 
@@ -1009,23 +1157,60 @@ Build first. Registration/environment are in
 | `languages` | Grammars, partial syntax, compiler recovery, reference helpers |
 | `interactions` | Mouse/key input, panels, focus, preview/navigation, temporary filters |
 | `startup` | Empty/recent/explicit startup, icons, no embedded examples |
+| `projects` | Managed descriptors, membership, isolation, external changes, lazy selection |
 | `application_state` | State/session schemas, Base64, bounds, locks, stale writers, isolation |
 | `diagnostics` | Structured logging, rotation, concurrency, handler forwarding, active locks, abrupt exit/recovery, retention, and failure reporting |
 | `references` | Search methods/dialog, paging, links/caret, replacement, closure and persistence |
 | `reference_candidate_index` | Versioned postings, freshness, Unicode conservatism, invalidation |
 | `refactoring` | Snapshots/reloads, fallback completeness/coalescing, full browser rows |
-| `index_parity` | Saved fields, ordering/counts, pagination, overlays, rollback |
+| `index_parity` | Saved fields, ordering/counts, pagination, overlays, durable cancellation |
+| `symbol_scaling` | Bounded virtual rows, full-range scrolling, exact lookup, refresh coalescing and context preview |
 | `analysis_parity` | Exact styles and canonical metadata for 23 baseline fixtures |
 | `benchmarks` | Repeatable lookup/query/rendering/buffer fixtures |
+| `large_indexing` | Isolated 1k/25k/100k catalogs, progressive availability, cold/warm timing |
+
+`symbol_scaling` normally creates 100,000 synthetic symbols and exercises full
+row counts, far-end scrolling, exact lookup, refresh coalescing, filtering, and
+context activation. Set `CODECAIRN_SYMBOL_SCALE=3000000` for the larger audit
+fixture. It is not a full kernel parse benchmark. A real index can be tested only
+through an isolated database snapshot (including its matching WAL/SHM when present):
+set `CODECAIRN_AUDIT_INDEX_SNAPSHOT` and `CODECAIRN_AUDIT_WORKSPACE_ROOT`, then run
+`symbol_scaling_tests isolatedLinuxIndexSnapshot` offscreen. The test backs up the
+snapshot into test-owned application storage and cancels automatic indexing; it
+does not rebuild the user's database or alter source files.
 
 ```sh
 ctest --test-dir build --output-on-failure -R '^(configuration|interactions)$'
 ctest --test-dir build --output-on-failure -R workspace --repeat until-fail:5
+ctest --test-dir build --output-on-failure -R '^large_indexing$'
 QT_QPA_PLATFORM=offscreen ./build/interaction_tests -functions
 QT_QPA_PLATFORM=offscreen ./build/interaction_tests referenceShortcutAndResults -o focused-results.txt,txt
 ```
 
 On Windows use `./build/bin/interaction_tests.exe` in MSYS2 UCRT64.
+
+The `large_indexing` suite is labeled `benchmark` and creates disposable generated
+sources and application state. It verifies exact file/symbol counts, catalog and
+symbol availability while busy, and warm-cache reuse. It reports catalog/first
+symbol latency, cold/warm completion, and Unix process peak RSS. Fixture creation
+is outside indexing timers; peak RSS includes fixture creation and earlier cases.
+These small generated files do not establish Linux-kernel performance, native
+Windows behavior, GUI rendering latency, or absence of leaks. Use the normal
+`index.resources` records and native heap profiling for real workloads.
+
+Bulk source hashing uses `sourceContentHash` in FileIO, retaining one SHA-256
+context per worker thread. This preserves exact decoded-byte hashes while
+avoiding per-file crypto-provider initialization/teardown. Hash reuse must not
+be replaced by size/mtime-only freshness checks.
+
+The browser retains the complete path catalog but materializes only 1,000 file
+rows initially for catalogs larger than 2,000 files. Filtering searches all paths;
+explicit Load More requests grow the displayed page. Folder files are loaded on
+expansion in 1,000-row pages. Project Symbols and category children expose the full
+matching catalog through virtual views above 4,096 rows; internal lookup queries
+default to 300 rows.
+Preserve selection/focus behavior and
+keep the full catalog, not just displayed rows, as the project search scope.
 
 QtTest uses QVERIFY, QCOMPARE, and QTRY assertions for asynchronous outcomes.
 Use temporary workspaces/profiles and `MainWindow(false)` or explicit temporary
@@ -1167,11 +1352,20 @@ available. Session metadata includes app/Qt versions, OS/architecture, executabl
 build configuration, and compiler identity/version. It does not identify an exact
 Git revision: collect that separately, including dirty changes.
 
-Normal analysis-start events identify the input path/size before parser work;
-anomalies add language and syntax/recovery diagnostics. Debug success/revision
+Normal editor analysis-start events identify the input path/size before parser
+work; anomalies add language and syntax/recovery diagnostics. Bulk index
+analysis keeps routine per-file records debug-only and aggregates bounded syntax
+warnings at the index boundary; compiler recovery retains its diagnostic logging.
+Debug success/revision
 events help distinguish stale results from parser failure. Index records add
 workspace/generation/count/error context. Language-service records add process
 state, compilation-database context, stderr, timeouts, and unexpected exits.
+Normal-info `index.resources` records sample process resident bytes at index
+start/completion and approximately every five seconds while indexing, not per
+file. They include stage, root, generation, discovered/parsed/committed counts,
+elapsed milliseconds, and an explicit RSS sampling error when unavailable.
+RSS describes the whole process, including open editors and allocator caches;
+growth alone does not establish a leak or identify an allocation owner.
 Logs are evidence of preceding events, not proof that the last logged operation
 caused a crash, especially with concurrent workers.
 

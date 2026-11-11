@@ -1,6 +1,17 @@
 #pragma once
 #include <QTreeWidget>
 
+class NavigationView : public QTreeView {
+    Q_OBJECT
+public:
+    using QTreeView::QTreeView;
+signals:
+    void keyboardSelectionChanged();
+
+protected:
+    void keyPressEvent(QKeyEvent *event) override;
+};
+
 class NavigationTree : public QTreeWidget {
     Q_OBJECT
 public:

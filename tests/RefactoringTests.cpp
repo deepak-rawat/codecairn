@@ -26,6 +26,8 @@ IndexedSymbol candidate(const QString &name, bool definition) {
     entry.symbol.qualifiedName = name;
     entry.symbol.kind = "Function";
     entry.symbol.definition = definition;
+    entry.symbol.end = static_cast<int>(name.toUtf8().size()) + 5;
+    entry.symbol.nameEnd = static_cast<int>(name.toUtf8().size());
     return entry;
 }
 }
@@ -41,6 +43,7 @@ private slots:
     void workspaceSessionPreservesFieldsInJson();
     void definitionPreferencePreservesCompleteness();
     void definitionRequestsCoalesceWithoutMixingTokens();
+    void newDocumentDoesNotClaimCompletedAnalysis();
     void symbolBrowserPreservesAllRowsAndSelection();
     void textReferenceOverlayLookupPreservesFirstMatch();
     void cleanReloadUpdatesSavedSnapshotAndAnalysis();
@@ -101,10 +104,10 @@ void RefactoringTests::workspaceOptionsPreserveMissingAndEmptyExclusions() {
     QVERIFY(options.excludedDirectories);
     QVERIFY(options.excludedDirectories->isEmpty());
     const auto configuration = workspaceOptionsPath(directory.path());
-    QJsonObject object{{"schemaVersion", 1}, {"workspaceRoot", workspacePath(directory.path())},
+    QJsonObject object{{"schemaVersion", 1},
+                       {"workspaceRoot", workspacePath(directory.path())},
                        {"compilationDirectory", "custom"}};
-    QVERIFY(writeSourceFile(configuration, QJsonDocument(object).toJson(), false)
-                .isEmpty());
+    QVERIFY(writeSourceFile(configuration, QJsonDocument(object).toJson(), false).isEmpty());
     options = WorkspaceOptionsStore::loadOptions(directory.path());
     QVERIFY(!options.excludedDirectories);
     QCOMPARE(options.compilationDirectory, QString("custom"));
@@ -155,12 +158,27 @@ void RefactoringTests::definitionPreferencePreservesCompleteness() {
     QCOMPARE(definitionCandidates(page).error, page.error);
 }
 
+void RefactoringTests::newDocumentDoesNotClaimCompletedAnalysis() {
+    SourceDocument document("pending.c", "int pending;\n", false, 10);
+    std::unique_ptr<CodeEditor> editor(document.editor);
+    QVERIFY(document.analyzedRevision != document.revision);
+    QSignalSpy completed(&document, &SourceDocument::analysisCompleted);
+    document.startAnalysis();
+    QTRY_COMPARE_WITH_TIMEOUT(completed.size(), 1, 10000);
+    QCOMPARE(document.analyzedRevision, document.revision);
+    document.setCompilationDirectory(QDir::tempPath());
+    QVERIFY(document.analyzedRevision != document.revision);
+    QTRY_COMPARE_WITH_TIMEOUT(completed.size(), 2, 10000);
+    QCOMPARE(document.analyzedRevision, document.revision);
+}
+
 void RefactoringTests::definitionRequestsCoalesceWithoutMixingTokens() {
     DefinitionResolver resolver;
     QVector<quint64> tokens;
     QStringList names;
     connect(&resolver, &DefinitionResolver::candidatesReady, this,
             [&](quint64 token, const DefinitionCandidates &candidates) {
+                QVERIFY2(!candidates.targets.isEmpty(), qPrintable(candidates.error));
                 tokens.append(token);
                 names.append(candidates.targets.first().symbol.name);
             });

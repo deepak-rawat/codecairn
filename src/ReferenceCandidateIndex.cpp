@@ -5,7 +5,6 @@
 #include "SymbolIndexStore.h"
 #include "WorkspacePaths.h"
 
-#include <QCryptographicHash>
 #include <QDateTime>
 #include <QFileInfo>
 #include <QSet>
@@ -90,7 +89,8 @@ bool WorkspaceIndexDetail::updateReferenceOccurrences(
 
 ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStringList &paths,
                                                  const QString &identifier, bool caseSensitive,
-                                                 const std::shared_ptr<std::atomic_bool> &cancel) {
+                                                 const std::shared_ptr<std::atomic_bool> &cancel,
+                                                 const QString &projectFile) {
     ReferenceCandidateResult result;
     result.files = paths;
     if (cancelled(cancel)) {
@@ -99,10 +99,10 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
     }
     if (paths.isEmpty() || !acceleratedIdentifier(identifier))
         return result;
-    if (!QFileInfo::exists(workspaceDatabase(root)))
+    if (!QFileInfo::exists(workspaceDatabase(root, projectFile)))
         return result;
     try {
-        SymbolIndexStore database(workspaceDatabase(root), false);
+        SymbolIndexStore database(workspaceDatabase(root, projectFile), false);
         database.exec("BEGIN;");
         {
             IndexStatement version(database, "PRAGMA user_version");
@@ -157,8 +157,7 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
             const QFileInfo after(path);
             QByteArray sourceHash;
             if (content.error.isEmpty()) {
-                sourceHash =
-                    QCryptographicHash::hash(content.bytes, QCryptographicHash::Sha256).toHex();
+                sourceHash = sourceContentHash(content.bytes);
                 result.sourceHashes.insert(workspacePath(path), sourceHash);
             }
             if (!content.error.isEmpty() || before.size() != after.size() ||

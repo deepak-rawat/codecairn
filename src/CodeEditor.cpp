@@ -31,13 +31,15 @@ CodeEditor::CodeEditor(QWidget *parent)
     send(SCI_SETMARGINWIDTHN, 0, 0);
     send(SCI_SETMARGINWIDTHN, 1, 0);
     send(SCI_SETMARGINTYPEN, ReferenceMargin, SC_MARGIN_SYMBOL);
-    send(SCI_SETMARGINMASKN, ReferenceMargin, (1 << ReferenceMarker) | (1 << HoveredReferenceMarker));
+    send(SCI_SETMARGINMASKN, ReferenceMargin,
+         (1 << ReferenceMarker) | (1 << HoveredReferenceMarker));
     send(SCI_SETMARGINSENSITIVEN, ReferenceMargin, true);
     send(SCI_SETMARGINCURSORN, ReferenceMargin, SC_CURSORARROW);
     connect(this, &ScintillaEditBase::marginClicked, this,
             [this](Scintilla::Position position, Scintilla::KeyMod, int margin) {
                 const int line = static_cast<int>(send(SCI_LINEFROMPOSITION, position));
-                if (margin == ReferenceMargin && (send(SCI_MARKERGET, line) & (1 << ReferenceMarker)))
+                if (margin == ReferenceMargin &&
+                    (send(SCI_MARKERGET, line) & (1 << ReferenceMarker)))
                     emit referenceLineClicked(line);
             });
     send(SCI_SETSCROLLWIDTHTRACKING, true);
@@ -56,7 +58,8 @@ CodeEditor::CodeEditor(QWidget *parent)
                 if (loading_)
                     return;
                 if (bits & (SC_MOD_BEFOREINSERT | SC_MOD_BEFOREDELETE))
-                    beforeEditHash_ = QCryptographicHash::hash(bytes(), QCryptographicHash::Sha256).toHex();
+                    beforeEditHash_ =
+                        QCryptographicHash::hash(bytes(), QCryptographicHash::Sha256).toHex();
                 if (bits & (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT)) {
                     emit rangeEdited(static_cast<int>(position),
                                      bits & SC_MOD_DELETETEXT ? static_cast<int>(length) : 0,
@@ -206,17 +209,21 @@ void CodeEditor::selectLineAt(int position) {
     setReferenceSelection(true);
 }
 
-void CodeEditor::selectRange(int start, int end) {
+void CodeEditor::selectRange(int start, int end, bool notifySelection) {
     setReferenceSelection(false);
     send(SCI_SETSEL, static_cast<uptr_t>(start), end);
+    if (!notifySelection) {
+        lastCaret_ = send(SCI_GETCURRENTPOS);
+        lastAnchor_ = send(SCI_GETANCHOR);
+    }
     send(SCI_SCROLLCARET);
 }
 
 void CodeEditor::setReferenceSelection(bool enabled) {
     referenceLineSelected_ = enabled;
     const auto foreground = rgb(settings_.color("source.foreground"));
-    const auto background = rgb(settings_.color(enabled ? "source.referenceSelection"
-                                                       : "source.selectionBackground"));
+    const auto background =
+        rgb(settings_.color(enabled ? "source.referenceSelection" : "source.selectionBackground"));
     send(SCI_SETSELBACK, true, background);
     send(SCI_SETSELFORE, enabled, foreground);
     if (enabled) {
@@ -298,7 +305,8 @@ QRect CodeEditor::referenceIconRect(const QPoint &point, int *line) const {
     const int width = static_cast<int>(send(SCI_GETMARGINWIDTHN, ReferenceMargin));
     if (!width || point.x() < left || point.x() >= left + width)
         return {};
-    const int position = static_cast<int>(send(SCI_POSITIONFROMPOINTCLOSE, left + width + 6, point.y()));
+    const int position =
+        static_cast<int>(send(SCI_POSITIONFROMPOINTCLOSE, left + width + 6, point.y()));
     if (position < 0)
         return {};
     const int sourceLine = static_cast<int>(send(SCI_LINEFROMPOSITION, position));
@@ -306,7 +314,8 @@ QRect CodeEditor::referenceIconRect(const QPoint &point, int *line) const {
         return {};
     if (line)
         *line = sourceLine;
-    const int y = static_cast<int>(send(SCI_POINTYFROMPOSITION, 0, send(SCI_POSITIONFROMLINE, sourceLine)));
+    const int y =
+        static_cast<int>(send(SCI_POINTYFROMPOSITION, 0, send(SCI_POSITIONFROMLINE, sourceLine)));
     const int size = settings_.ui.iconSize;
     return {left + (width - size) / 2, y + (lineHeight() - size) / 2, size, size};
 }

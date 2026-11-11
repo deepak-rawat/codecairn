@@ -16,3 +16,4 @@ enum class SourceReadContext { Document, Catalog };
 FileContents readSourceFile(const QString &path,
                             SourceReadContext context = SourceReadContext::Document);
 QString writeSourceFile(const QString &path, const QByteArray &bytes, bool utf8Bom);
+QByteArray sourceContentHash(const QByteArray &bytes);

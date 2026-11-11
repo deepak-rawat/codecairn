@@ -5,7 +5,6 @@
 #include "FileIO.h"
 #include "SourceAnalysis.h"
 #include "WorkspacePaths.h"
-#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -47,7 +46,7 @@ bool whole(const QByteArray &source, int start, int end) {
 }
 
 std::unique_ptr<RE2> expression(const QString &text, bool regex, bool sensitive,
-                              bool variations = false) {
+                                bool variations = false) {
     std::string pattern;
     if (regex)
         pattern = "(?m:" + text.toStdString() + ')';
@@ -58,9 +57,8 @@ std::unique_ptr<RE2> expression(const QString &text, bool regex, bool sensitive,
             if (text.endsWith('e') && text.size() > 1)
                 forms << text + 'd' << text.left(text.size() - 1) + "ing";
         }
-        std::stable_sort(forms.begin(), forms.end(), [](const auto &a, const auto &b) {
-            return a.size() > b.size();
-        });
+        std::stable_sort(forms.begin(), forms.end(),
+                         [](const auto &a, const auto &b) { return a.size() > b.size(); });
         for (const auto &form : forms) {
             if (!pattern.empty())
                 pattern += '|';
@@ -116,18 +114,39 @@ private:
             return;
         }
         const auto c = query_[position_++];
-        if (c == '(') { token_ = Left; return; }
-        if (c == ')') { token_ = Right; return; }
-        if (c == '+') { token_ = And; return; }
-        if (c == '-' || c == '!') { token_ = Not; return; }
-        if (c == '=') { token_ = Sensitive; return; }
-        if (c == '?') { token_ = Regex; return; }
+        if (c == '(') {
+            token_ = Left;
+            return;
+        }
+        if (c == ')') {
+            token_ = Right;
+            return;
+        }
+        if (c == '+') {
+            token_ = And;
+            return;
+        }
+        if (c == '-' || c == '!') {
+            token_ = Not;
+            return;
+        }
+        if (c == '=') {
+            token_ = Sensitive;
+            return;
+        }
+        if (c == '?') {
+            token_ = Regex;
+            return;
+        }
         text_.clear();
         if (c == '"') {
             bool closed = false;
             while (position_ < query_.size()) {
                 const auto ch = query_[position_++];
-                if (ch == '"') { closed = true; break; }
+                if (ch == '"') {
+                    closed = true;
+                    break;
+                }
                 if (ch == '\\' && position_ < query_.size() && query_[position_] == '"')
                     text_ += query_[position_++];
                 else
@@ -219,14 +238,15 @@ bool evaluate(const Node &node, const std::vector<QVector<Match>> &matches, int 
                evaluate(*node.right, matches, first, last);
     const auto &hits = matches[node.term];
     const auto found = std::lower_bound(hits.cbegin(), hits.cend(), first,
-                                       [](const Match &m, int line) { return m.line < line; });
+                                        [](const Match &m, int line) { return m.line < line; });
     return found != hits.cend() && found->line <= last;
 }
 
 QString container(const SourceAnalysis &analysis, int start, int end) {
     const SourceSymbol *best = nullptr;
     for (const auto &symbol : analysis.symbols)
-        if (!symbol.outlineOnly && symbol.definition && symbol.start <= start && symbol.end >= end &&
+        if (!symbol.outlineOnly && symbol.definition && symbol.start <= start &&
+            symbol.end >= end &&
             (symbol.kind == "Function" || symbol.kind == "Type" || symbol.kind == "Enum" ||
              symbol.kind == "Namespace") &&
             (!best || symbol.end - symbol.start < best->end - best->start))
@@ -238,8 +258,8 @@ bool allowed(const SourceAnalysis &analysis, const SearchOptions &options,
              const QVector<QPair<int, int>> &inactive, int start, int end) {
     // A multi-byte or multi-line match must satisfy filters over its entire range.
     for (int p = start; p < qMax(start + 1, end); ++p) {
-        const auto style = p < analysis.styles.size()
-                               ? static_cast<TextStyle>(analysis.styles[p]) : TextStyle::Plain;
+        const auto style = p < analysis.styles.size() ? static_cast<TextStyle>(analysis.styles[p])
+                                                      : TextStyle::Plain;
         if ((options.comments == CommentSearch::Exclude && style == TextStyle::Comment) ||
             (options.comments == CommentSearch::Only && style != TextStyle::Comment) ||
             (!options.strings && style == TextStyle::String))
@@ -254,8 +274,8 @@ bool allowed(const SourceAnalysis &analysis, const SearchOptions &options,
 QVector<Match> matches(const RE2 &regex, const QByteArray &source, const SourceAnalysis &analysis,
                        const SearchOptions &options, bool words,
                        const QVector<QPair<int, int>> &inactive,
-                       const std::shared_ptr<std::atomic_bool> &cancel,
-                       int maximum, bool onePerLine = false) {
+                       const std::shared_ptr<std::atomic_bool> &cancel, int maximum,
+                       bool onePerLine = false) {
     QVector<Match> result;
     const re2::StringPiece input(source.constData(), source.size());
     re2::StringPiece found;
@@ -287,7 +307,8 @@ QVector<Match> matches(const RE2 &regex, const QByteArray &source, const SourceA
                 break;
             ++offset;
             while (offset < input.size() &&
-                   (static_cast<unsigned char>(source[static_cast<qsizetype>(offset)]) & 0xc0) == 0x80)
+                   (static_cast<unsigned char>(source[static_cast<qsizetype>(offset)]) & 0xc0) ==
+                       0x80)
                 ++offset;
         }
     }
@@ -315,7 +336,7 @@ QString validateReferenceSearch(const QString &query, const SearchOptions &optio
 }
 
 ReferenceResults searchReferences(const ReferenceSearchRequest &request,
-                                 const std::shared_ptr<std::atomic_bool> &cancel) {
+                                  const std::shared_ptr<std::atomic_bool> &cancel) {
     ReferenceResults results;
     const auto fail = [&](const QString &error) {
         results.error = error;
@@ -331,7 +352,8 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
     if (options.method == SearchMethod::References && options.smartMatching) {
         return fail("Smart reference matching requires a semantic provider and a selected symbol.");
     }
-    if (request.offset < 0 || request.limit <= 0 || request.limit > RuntimeLimits::ReferenceResults) {
+    if (request.offset < 0 || request.limit <= 0 ||
+        request.limit > RuntimeLimits::ReferenceResults) {
         return fail("Invalid search result page.");
     }
     const bool keywords = options.method == SearchMethod::KeywordExpression;
@@ -346,15 +368,18 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
     for (const auto &overlay : request.overlays)
         if (!overlays.contains(workspacePath(overlay.path)))
             overlays.insert(workspacePath(overlay.path), &overlay);
-    const auto patterns = options.filePatterns.split(QRegularExpression("[;\\s]+"), Qt::SkipEmptyParts);
+    const auto patterns =
+        options.filePatterns.split(QRegularExpression("[;\\s]+"), Qt::SkipEmptyParts);
     int consumed = 0;
     QSet<QString> visited;
     auto paths = request.paths;
     if (!keywords && options.method != SearchMethod::RegularExpression &&
         (options.wholeWords || options.method == SearchMethod::Occurrences ||
-         options.method == SearchMethod::References) && !request.workspaceRoot.isEmpty()) {
-        const auto candidates = referenceCandidateFiles(request.workspaceRoot, paths, request.query,
-                                                        options.caseSensitive, cancel);
+         options.method == SearchMethod::References) &&
+        !request.workspaceRoot.isEmpty()) {
+        const auto candidates =
+            referenceCandidateFiles(request.workspaceRoot, paths, request.query,
+                                    options.caseSensitive, cancel, request.projectFile);
         if (!candidates.error.isEmpty()) {
             return fail(candidates.error);
         }
@@ -375,10 +400,14 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
         for (const auto &overlay : request.overlays)
             allowedPaths.insert(workspacePath(overlay.path));
         // Preserve original ordering so pagination stays deterministic.
-        paths.removeIf([&](const auto &path) { return !allowedPaths.contains(workspacePath(path)); });
+        paths.removeIf(
+            [&](const auto &path) { return !allowedPaths.contains(workspacePath(path)); });
     }
     for (const auto &path : paths) {
-        if (cancel && cancel->load()) { results.cancelled = true; break; }
+        if (cancel && cancel->load()) {
+            results.cancelled = true;
+            break;
+        }
         const auto identity = workspacePath(path);
         if (visited.contains(identity))
             continue;
@@ -402,40 +431,45 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
             results.sourceHashes.insert(identity, {});
             continue;
         }
-        const auto hash = QCryptographicHash::hash(file.bytes, QCryptographicHash::Sha256).toHex();
-        if (request.expectedHashes.contains(identity) && request.expectedHashes.value(identity) != hash) {
+        const auto hash = sourceContentHash(file.bytes);
+        if (request.expectedHashes.contains(identity) &&
+            request.expectedHashes.value(identity) != hash) {
             results.hits.clear();
             return fail("Source changed between result pages: " + path + ". Rerun the search.");
         }
         results.sourceHashes.insert(identity, hash);
         ++results.filesSearched;
-        if (!keywords && !RE2::PartialMatch(
-                re2::StringPiece(file.bytes.constData(), file.bytes.size()), *regex))
+        if (!keywords &&
+            !RE2::PartialMatch(re2::StringPiece(file.bytes.constData(), file.bytes.size()), *regex))
             continue;
         if (analysis.styles.size() != file.bytes.size())
             analysis = analyzeSource(file.bytes, path);
         if (!analysis.error.isEmpty())
             results.warnings << path + ": " + analysis.error;
-        if (!analysis.supported &&
-            (options.comments != CommentSearch::Include || !options.strings))
-            results.warnings << path + ": no syntax classifier; comment/string filters may be incomplete.";
+        if (!analysis.supported && (options.comments != CommentSearch::Include || !options.strings))
+            results.warnings
+                << path + ": no syntax classifier; comment/string filters may be incomplete.";
         QVector<QPair<int, int>> inactive;
         if (options.skipInactive) {
-            const auto regions = compilerInactiveRanges(path, file.bytes, request.overlays);
+            const auto regions = compilerInactiveRanges(
+                path, file.bytes, request.overlays,
+                request.workspaceRoot.isEmpty()
+                    ? QString{}
+                    : workspaceClangdDirectory(request.workspaceRoot, request.projectFile));
             inactive = regions.ranges;
             if (!regions.error.isEmpty())
                 results.warnings << path + ": " + regions.error;
         }
         QVector<Match> found;
-        const auto needed = static_cast<int>(std::clamp<qint64>(
-            static_cast<qint64>(request.offset) + request.limit - consumed + 1,
-            1, std::numeric_limits<int>::max()));
+        const auto needed = static_cast<int>(
+            std::clamp<qint64>(static_cast<qint64>(request.offset) + request.limit - consumed + 1,
+                               1, std::numeric_limits<int>::max()));
         if (keywords) {
             std::vector<QVector<Match>> termMatches;
             int remaining = 1000000;
             for (const auto &term : parsed->terms) {
-                auto hits = matches(*term.regex, file.bytes, analysis, options,
-                                    term.wholeWord, inactive, cancel, remaining + 1, true);
+                auto hits = matches(*term.regex, file.bytes, analysis, options, term.wholeWord,
+                                    inactive, cancel, remaining + 1, true);
                 remaining -= hits.size();
                 if (remaining < 0) {
                     results.hits.clear();
@@ -449,13 +483,17 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
                 if (file.bytes[i] == '\n' && i + 1 < file.bytes.size())
                     lines.append(i + 1);
             for (int line = 0; line < lines.size(); ++line) {
-                if (cancel && cancel->load()) { results.cancelled = true; return results; }
-                const int last = qMin(line + options.contextLines, static_cast<int>(lines.size()) - 1);
+                if (cancel && cancel->load()) {
+                    results.cancelled = true;
+                    return results;
+                }
+                const int last =
+                    qMin(line + options.contextLines, static_cast<int>(lines.size()) - 1);
                 if (!evaluate(*parsed->root, termMatches, line, last))
                     continue;
                 int start = lines[line];
                 int end = last + 1 < lines.size() ? lines[last + 1] - 1
-                                                 : static_cast<int>(file.bytes.size());
+                                                  : static_cast<int>(file.bytes.size());
                 // Coalesce overlapping context blocks, rather than duplicating the same lines.
                 if (!found.isEmpty() && start <= found.last().end)
                     found.last().end = end;
@@ -467,22 +505,33 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
         } else
             found = matches(*regex, file.bytes, analysis, options,
                             options.wholeWords || options.method == SearchMethod::Occurrences ||
-                                options.method == SearchMethod::References, inactive, cancel, needed);
+                                options.method == SearchMethod::References,
+                            inactive, cancel, needed);
         for (const auto &match : found) {
-            if (cancel && cancel->load()) { results.cancelled = true; return results; }
+            if (cancel && cancel->load()) {
+                results.cancelled = true;
+                return results;
+            }
             if (consumed++ < request.offset)
                 continue;
             if (results.hits.size() == request.limit) {
                 results.truncated = true;
                 return results;
             }
-            const int lineStart = match.start == 0 ? 0 : file.bytes.lastIndexOf('\n', match.start - 1) + 1;
+            const int lineStart =
+                match.start == 0 ? 0 : file.bytes.lastIndexOf('\n', match.start - 1) + 1;
             auto lineEnd = file.bytes.indexOf('\n', match.end);
             if (lineEnd < 0)
                 lineEnd = file.bytes.size();
-            results.hits.append({{path, match.start, match.end, -1, hash},
-                QString::fromUtf8(file.bytes.mid(lineStart, qMin<qsizetype>(4096, lineEnd - lineStart))).trimmed(),
-                match.line, container(analysis, match.start, match.end), false, options.output.links});
+            results.hits.append(
+                {{path, match.start, match.end, -1, hash},
+                 QString::fromUtf8(
+                     file.bytes.mid(lineStart, qMin<qsizetype>(4096, lineEnd - lineStart)))
+                     .trimmed(),
+                 match.line,
+                 container(analysis, match.start, match.end),
+                 false,
+                 options.output.links});
         }
     }
     results.cancelled = results.cancelled || (cancel && cancel->load());
@@ -507,10 +556,10 @@ bool adjustReferenceHit(ReferenceHit &hit, int position, int removed, int insert
         hit.location.start += inserted - removed;
         hit.location.end += inserted - removed;
     }
-    hit.location.expectedHash = afterHash.isEmpty()
-        ? QCryptographicHash::hash(source, QCryptographicHash::Sha256).toHex() : afterHash;
+    hit.location.expectedHash = afterHash.isEmpty() ? sourceContentHash(source) : afterHash;
     hit.line = source.first(hit.location.start).count('\n');
-    const int start = hit.location.start == 0 ? 0 : source.lastIndexOf('\n', hit.location.start - 1) + 1;
+    const int start =
+        hit.location.start == 0 ? 0 : source.lastIndexOf('\n', hit.location.start - 1) + 1;
     auto end = source.indexOf('\n', hit.location.end);
     if (end < 0)
         end = source.size();
@@ -533,9 +582,10 @@ QStringList touchReferenceFiles(const QVector<ReferenceHit> &hits) {
             errors << path + ": " + source.error;
             continue;
         }
-        if (QCryptographicHash::hash(source.bytes, QCryptographicHash::Sha256).toHex() !=
-            hit.location.expectedHash) {
-            errors << path + ": source changed or has unsaved matches; save and rerun before touching.";
+        if (sourceContentHash(source.bytes) != hit.location.expectedHash) {
+            errors
+                << path +
+                       ": source changed or has unsaved matches; save and rerun before touching.";
             continue;
         }
         if (!file.open(QIODevice::ReadWrite | QIODevice::ExistingOnly) ||

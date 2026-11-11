@@ -4,6 +4,20 @@
 #include <QStyle>
 #include <QStyleOptionViewItem>
 
+void NavigationView::keyPressEvent(QKeyEvent *event) {
+    if ((event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        (event->modifiers() == Qt::NoModifier || event->modifiers() == Qt::KeypadModifier)) {
+        if (currentIndex().isValid())
+            emit activated(currentIndex());
+        event->accept();
+        return;
+    }
+    const auto previous = currentIndex();
+    QTreeView::keyPressEvent(event);
+    if (previous != currentIndex())
+        emit keyboardSelectionChanged();
+}
+
 QRect NavigationTree::itemIconRect(const QTreeWidgetItem *item, int column) const {
     if (!item || item->icon(column).isNull())
         return {};

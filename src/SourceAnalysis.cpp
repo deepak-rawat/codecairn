@@ -115,11 +115,15 @@ bool constantName(const QByteArray &name) {
 }
 
 struct AnalysisContext {
-    AnalysisContext(const QByteArray &source, const QString &fileName)
-        : source(source), fileName(fileName) {}
+    AnalysisContext(const QByteArray &source, const QString &fileName, SourceAnalysisMode mode,
+                    const QString &compilationDirectory)
+        : source(source), fileName(fileName), mode(mode),
+          compilationDirectory(compilationDirectory) {}
 
     const QByteArray &source;
     const QString &fileName;
+    SourceAnalysisMode mode;
+    const QString &compilationDirectory;
     SourceAnalysis result;
     LanguageId language = LanguageId::Plain;
     std::unique_ptr<TSParser, decltype(&ts_parser_delete)> parser{nullptr, ts_parser_delete};
@@ -184,7 +188,8 @@ bool AnalysisContext::parseInput() {
         result.error = "Analysis requires a document no larger than 4 MiB in this prototype.";
         return false;
     }
-    result.styles = QByteArray(source.size(), static_cast<char>(TextStyle::Plain));
+    if (mode == SourceAnalysisMode::Editor)
+        result.styles = QByteArray(source.size(), static_cast<char>(TextStyle::Plain));
     language = languageForFile(fileName, source).id;
     const auto *grammar = languageById(language).grammar;
     if (!grammar)
@@ -225,7 +230,8 @@ bool AnalysisContext::parseInput() {
     result.language = language;
     const auto root = ts_tree_root_node(tree.get());
     result.syntaxErrors = ts_node_has_error(root);
-    if (result.syntaxErrors && analysisLog().isWarningEnabled()) {
+    if (mode == SourceAnalysisMode::Editor && result.syntaxErrors &&
+        analysisLog().isWarningEnabled()) {
         QVector<TSNode> pending{root};
         int reported = 0;
         while (!pending.isEmpty() && reported < 8) {
@@ -260,13 +266,16 @@ QString AnalysisContext::text(TSNode node) const {
 }
 
 void AnalysisContext::paint(TSNode node, TextStyle style) {
+    if (mode != SourceAnalysisMode::Editor)
+        return;
     const int start = static_cast<int>(ts_node_start_byte(node));
     const int end = static_cast<int>(ts_node_end_byte(node));
     std::fill(result.styles.begin() + start, result.styles.begin() + end, static_cast<char>(style));
 }
 
 int AnalysisContext::addSymbol(TSNode node, TSNode name, const QString &kind, int parent) {
-    if (ts_node_is_null(name))
+    if (ts_node_is_null(name) || ts_node_is_missing(name) ||
+        ts_node_end_byte(name) <= ts_node_start_byte(name))
         return -1;
     const int index = static_cast<int>(result.symbols.size());
     result.symbols.push_back({text(name),
@@ -336,7 +345,7 @@ int AnalysisContext::addOutline(TSNode node, int parent, const QString &kind) {
 }
 
 void AnalysisContext::bind(TSNode name, bool parameter) {
-    if (ts_node_is_null(name))
+    if (mode != SourceAnalysisMode::Editor || ts_node_is_null(name))
         return;
     const auto scope = variableScope(name, parameter);
     if (ts_node_is_null(scope))
@@ -377,7 +386,7 @@ void AnalysisContext::extractSyntax() {
         auto [node, parent, inFunction] = pending.takeLast();
         const QByteArray type(ts_node_type(node));
         const bool cFamily = isCFamily(language);
-        if (cFamily && type == "identifier")
+        if (mode == SourceAnalysisMode::Editor && cFamily && type == "identifier")
             identifiers.append(node);
         if (type == "comment" || type == "line_comment" || type == "block_comment" ||
             type == "bracket_comment") {
@@ -574,7 +583,7 @@ void AnalysisContext::extractSyntax() {
                 result.symbols[index].category = type == "enumerator"    ? "Enum Constant"
                                                  : type == "preproc_def" ? "Constant"
                                                                          : "Macro";
-            if (type == "enumerator")
+            if (type == "enumerator" && mode == SourceAnalysisMode::Editor)
                 constants.insert(text(field(node, "name")).toUtf8());
         } else if (type == "alias_declaration") {
             newParent = addSymbol(node, field(node, "name"), "Type", parent);
@@ -638,6 +647,8 @@ void AnalysisContext::qualifyAndStyleSymbols() {
                     language == LanguageId::TypeScript || language == LanguageId::Tsx
                 ? "."
                 : "::");
+        if (mode != SourceAnalysisMode::Editor)
+            continue;
         const auto style = symbol.kind == "Function"                        ? TextStyle::Function
                            : symbol.kind == "Type" || symbol.kind == "Enum" ? TextStyle::Type
                            : symbol.kind == "Macro" ? TextStyle::Preprocessor
@@ -689,22 +700,30 @@ void AnalysisContext::styleBindings() {
 
 void AnalysisContext::recoverCompilerSymbolsIfNeeded() {
     if (isCFamily(language) && compilerRecoveryNeeded && !fileName.startsWith(":/"))
-        recoverCompilerSymbols(result, source, fileName);
+        recoverCompilerSymbols(result, source, fileName, compilationDirectory);
 }
 }
 
-SourceAnalysis analyzeSource(const QByteArray &source, const QString &fileName) {
-    qCInfo(analysisLog) << "analysis.started" << "path=" << fileName << "bytes=" << source.size();
-    AnalysisContext context{source, fileName};
+SourceAnalysis analyzeSource(const QByteArray &source, const QString &fileName,
+                             SourceAnalysisMode mode, const QString &compilationDirectory) {
+    if (mode == SourceAnalysisMode::Editor)
+        qCInfo(analysisLog) << "analysis.started" << "path=" << fileName
+                            << "bytes=" << source.size();
+    AnalysisContext context{source, fileName, mode, compilationDirectory};
     if (context.parseInput()) {
         context.extractSyntax();
         context.qualifyAndStyleSymbols();
-        context.styleBindings();
-        // Recovery merges symbols without repainting the syntax-derived styles.
-        context.recoverCompilerSymbolsIfNeeded();
+        if (mode == SourceAnalysisMode::Editor) {
+            context.styleBindings();
+        }
+        if (mode != SourceAnalysisMode::SyntaxOnly) {
+            // Recovery merges symbols without repainting the syntax-derived styles.
+            context.recoverCompilerSymbolsIfNeeded();
+        }
     }
     const auto &result = context.result;
-    if (!result.error.isEmpty() || result.syntaxErrors || !result.diagnostics.isEmpty())
+    if (mode == SourceAnalysisMode::Editor &&
+        (!result.error.isEmpty() || result.syntaxErrors || !result.diagnostics.isEmpty()))
         qCWarning(analysisLog) << "analysis.anomaly" << "path=" << fileName
                                << "language=" << languageById(context.language).name
                                << "syntaxErrors=" << result.syntaxErrors

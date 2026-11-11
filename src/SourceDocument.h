@@ -23,6 +23,7 @@ public:
     void scheduleAnalysis() { analysisTimer_.start(); }
     void setAnalysisDebounceMs(int milliseconds) { analysisTimer_.setInterval(milliseconds); }
     void startAnalysis();
+    void setCompilationDirectory(const QString &directory);
     void stopBackgroundWork();
     void reconcileDiskHash(const QByteArray &hash);
     bool isAnalysisRunning() const { return analysisBusy_; }
@@ -32,7 +33,7 @@ public:
     QByteArray savedBytes;
     bool hasUtf8Bom = false;
     quint64 revision = 0;
-    quint64 analyzedRevision = 0;
+    quint64 analyzedRevision = std::numeric_limits<quint64>::max();
     SourceAnalysis analysis;
     QSet<QString> collapsedOutlineKeys;
     QString selectedOutlineKey;
@@ -56,6 +57,8 @@ private:
     bool reloading_ = false;
     bool analysisBusy_ = false;
     quint64 runningRevision_ = 0;
+    QString compilationDirectory_;
+    QString runningCompilationDirectory_;
     QByteArray snapshot_;
     QByteArray savedContentHash_;
     quint64 snapshotRevision_ = std::numeric_limits<quint64>::max();

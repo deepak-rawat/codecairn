@@ -7,10 +7,10 @@ struct sqlite3_stmt;
 
 namespace WorkspaceIndexDetail {
 
-inline constexpr const char *ParserVersion = "codecairn-multilanguage-compiler-v13";
+inline constexpr const char *ParserVersion = "codecairn-multilanguage-compiler-v17";
 inline constexpr qint64 ReferenceOccurrenceVersion = 1;
 
-// Closing the connection rolls back an uncommitted build after its statements are destroyed.
+// Closing the connection rolls back only the active file/batch transaction.
 class SymbolIndexStore {
 public:
     explicit SymbolIndexStore(const QString &path, bool write);
@@ -20,6 +20,7 @@ public:
 
     void exec(const char *sql);
     void ensureSchema();
+    void validateSchema();
     sqlite3 *handle() const { return database_; }
 
 private:

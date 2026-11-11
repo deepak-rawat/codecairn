@@ -50,6 +50,7 @@ private slots:
     void unsupportedAndUnreadableContent();
     void unchangedInvalidUtf8RefreshIsQuiet();
     void cancellationAndAtomicRefresh();
+    void symbolsCommitBeforeReferenceAcceleration();
 };
 
 void ReferenceCandidateIndexTests::allTextAndExactCase() {
@@ -223,20 +224,22 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, QStringList{});
     {
         SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        database.exec("PRAGMA foreign_keys=ON; DELETE FROM reference_occurrence_files;");
+    }
+    QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
+    built = fixture.build();
+    QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
+    QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, QStringList{});
+    {
+        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
         database.exec("DROP TABLE reference_occurrences; DROP TABLE reference_occurrence_files;");
     }
     auto result = referenceCandidateFiles(fixture.root, paths, "Needle", true);
     QVERIFY(!result.error.isEmpty());
     QCOMPARE(result.files, paths);
     built = fixture.build();
-    QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
-    QVERIFY(built.reused > 0);
-    QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, QStringList{});
-    {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
-        database.exec("PRAGMA foreign_keys=ON; DELETE FROM reference_occurrence_files;");
-    }
-    QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
+    QVERIFY(built.error.contains("no such table"));
+    QVERIFY(queryWorkspaceSymbols(fixture.root, {}).error.contains("no such table"));
 }
 
 void ReferenceCandidateIndexTests::unsupportedAndUnreadableContent() {
@@ -318,6 +321,37 @@ void ReferenceCandidateIndexTests::cancellationAndAtomicRefresh() {
         QVERIFY(posting.next());
         QCOMPARE(posting.integer(0), 0);
     }
+}
+
+void ReferenceCandidateIndexTests::symbolsCommitBeforeReferenceAcceleration() {
+    Fixture fixture;
+    fixture.write("a.cpp", "int Needle();\n");
+    const QStringList paths{fixture.path("a.cpp")};
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    const auto progress = std::make_shared<IndexProgress>();
+    progress->batchReady = [&] {
+        const auto symbols = queryWorkspaceSymbols(fixture.root, {});
+        QVERIFY2(symbols.error.isEmpty(), qPrintable(symbols.error));
+        QCOMPARE(symbols.total, 1);
+        QCOMPARE(symbols.symbols.first().symbol.name, "Needle");
+        SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+        IndexStatement count(database, "SELECT count(*) FROM reference_occurrence_files");
+        QVERIFY(count.next());
+        QCOMPARE(count.integer(0), 0);
+        // Missing optional acceleration must never exclude a correct candidate.
+        QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
+        cancel->store(true);
+    };
+    const auto stopped = buildWorkspaceIndex(fixture.root, false, true, defaultWorkspaceExcludes(),
+                                             cancel, progress);
+    QVERIFY2(stopped.error.isEmpty(), qPrintable(stopped.error));
+    QVERIFY(stopped.cancelled);
+    QCOMPARE(stopped.parsed, 1);
+    const auto resumed = fixture.build();
+    QVERIFY2(resumed.error.isEmpty(), qPrintable(resumed.error));
+    QCOMPARE(resumed.parsed, 0);
+    QCOMPARE(resumed.reused, 1);
+    QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Missing", true).files, QStringList{});
 }
 
 QTEST_GUILESS_MAIN(ReferenceCandidateIndexTests)

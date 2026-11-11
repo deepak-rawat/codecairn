@@ -1,5 +1,6 @@
 #include "SymbolIndexStore.h"
 
+#include <QStringList>
 #include <sqlite3.h>
 #include <stdexcept>
 
@@ -40,23 +41,57 @@ void SymbolIndexStore::ensureSchema() {
         version.next();
         value = version.integer(0);
     }
-    if (value < 0 || value > 2)
+    if (value != 0 && value != 2)
         throw std::runtime_error(
-            "Unsupported workspace database version; use a compatible CodeCairn version.");
+            "Unsupported workspace database version; recreate the generated index.");
+    if (value == 0) {
+        IndexStatement tables(*this, "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
+        if (tables.next())
+            throw std::runtime_error(
+                "Unsupported workspace database version; recreate the generated index.");
+    } else
+        validateSchema();
     exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;");
-    exec("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS files("
+    exec("BEGIN IMMEDIATE;");
+    bool replaceCatalogIndex = false;
+    {
+        IndexStatement columns(*this, "PRAGMA index_info(symbol_catalog)");
+        const QStringList prefix{"name", "path", "start"};
+        int position = 0;
+        while (position < prefix.size() && columns.next()) {
+            replaceCatalogIndex = replaceCatalogIndex || columns.text(2) != prefix[position];
+            ++position;
+        }
+    }
+    if (replaceCatalogIndex)
+        exec("DROP INDEX symbol_catalog;");
+    bool replaceCategoryIndex = false;
+    {
+        IndexStatement columns(*this, "PRAGMA index_info(symbol_categories)");
+        int count = 0;
+        while (columns.next())
+            ++count;
+        replaceCategoryIndex = count > 0 && count < 8;
+    }
+    if (replaceCategoryIndex)
+        exec("DROP INDEX symbol_categories;");
+    exec("CREATE TABLE IF NOT EXISTS files("
          "path TEXT PRIMARY KEY, hash TEXT NOT NULL, size INTEGER, mtime INTEGER, state TEXT, "
          "error TEXT, parser TEXT);"
          "CREATE TABLE IF NOT EXISTS symbols("
          "path TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE, name TEXT, kind TEXT,"
          "qualified TEXT, signature TEXT, definition INTEGER, start INTEGER, end INTEGER,"
-         "name_start INTEGER, name_end INTEGER, line INTEGER);"
+         "name_start INTEGER, name_end INTEGER, line INTEGER, category TEXT DEFAULT '',"
+         "generated INTEGER DEFAULT 0, provider TEXT DEFAULT 'syntax');"
          "CREATE INDEX IF NOT EXISTS symbol_name ON symbols(name COLLATE NOCASE);"
+         "CREATE INDEX IF NOT EXISTS symbol_order ON symbols(name,path,start);"
+         "CREATE INDEX IF NOT EXISTS symbol_catalog ON symbols("
+         "name,path,start,qualified,kind,category,definition,name_start,name_end,end);"
+         "CREATE INDEX IF NOT EXISTS symbol_qualified ON symbols(qualified);"
+         "CREATE INDEX IF NOT EXISTS symbol_categories ON symbols("
+         "kind,category,definition,path,name,name_start,name_end,end) "
+         "WHERE name IS NOT NULL AND name<>'' AND name_end>name_start AND end>start;"
          "CREATE INDEX IF NOT EXISTS symbol_file ON symbols(path);");
-    if (value < 2)
-        exec("ALTER TABLE symbols ADD COLUMN category TEXT DEFAULT '';"
-             "ALTER TABLE symbols ADD COLUMN generated INTEGER DEFAULT 0;"
-             "ALTER TABLE symbols ADD COLUMN provider TEXT DEFAULT 'syntax';");
     exec(
         "CREATE TABLE IF NOT EXISTS reference_occurrence_files("
         "path TEXT PRIMARY KEY REFERENCES files(path) ON DELETE CASCADE,"
@@ -67,6 +102,23 @@ void SymbolIndexStore::ensureSchema() {
         "CREATE INDEX IF NOT EXISTS reference_identifier ON reference_occurrences(identifier,path);"
         "CREATE INDEX IF NOT EXISTS reference_folded ON reference_occurrences(folded,path);"
         "PRAGMA user_version=2; COMMIT;");
+}
+
+void SymbolIndexStore::validateSchema() {
+    IndexStatement version(*this, "PRAGMA user_version");
+    version.next();
+    if (version.integer(0) != 2)
+        throw std::runtime_error(
+            "Unsupported workspace database version; recreate the generated index.");
+    IndexStatement files(*this,
+                         "SELECT path,hash,size,mtime,state,error,parser FROM files LIMIT 0");
+    IndexStatement symbols(
+        *this, "SELECT path,name,kind,qualified,signature,definition,start,end,name_start,name_end,"
+               "line,category,generated,provider FROM symbols LIMIT 0");
+    IndexStatement referenceFiles(
+        *this, "SELECT path,hash,version,ascii_only FROM reference_occurrence_files LIMIT 0");
+    IndexStatement occurrences(*this,
+                               "SELECT path,identifier,folded FROM reference_occurrences LIMIT 0");
 }
 
 IndexStatement::IndexStatement(SymbolIndexStore &database, const char *sql)

@@ -3,6 +3,7 @@
 #include "IndexTypes.h"
 #include "WorkspacePaths.h"
 #include <QFileSystemWatcher>
+#include <QElapsedTimer>
 #include <QFutureWatcher>
 #include <QMap>
 #include <QObject>
@@ -14,7 +15,8 @@
 IndexResult buildWorkspaceIndex(const QString &root, bool force, bool rescan,
                                 const QStringList &excludes,
                                 const std::shared_ptr<std::atomic_bool> &cancel,
-                                const std::shared_ptr<IndexProgress> &progress = {});
+                                const std::shared_ptr<IndexProgress> &progress = {},
+                                const QString &projectFile = {});
 SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query);
 
 class WorkspaceIndex final : public QObject {
@@ -22,10 +24,11 @@ class WorkspaceIndex final : public QObject {
 public:
     explicit WorkspaceIndex(QObject *parent = nullptr);
     ~WorkspaceIndex() override;
-    void open(const QString &root);
+    void open(const QString &root, const QString &projectFile = {});
     void close();
     void refresh(bool force = false, bool rescan = true);
     void cancel();
+    QString recreateDatabase();
     bool busy() const { return busy_; }
     QString root() const { return root_; }
     QStringList files() const { return files_; }
@@ -46,21 +49,29 @@ signals:
     void failed(const QString &message);
     void busyChanged(bool busy);
     void symbolsReady(const SymbolPage &page);
+    void catalogReady(const QStringList &files);
+    void batchReady();
 
 private:
     void startPending();
+    void logResources(const char *stage);
     void requestRefresh(bool force, bool rescan, bool automatic, bool verifyContents);
     QString root_;
+    QString projectFile_;
+    QString runningRoot_;
     QStringList files_;
     QHash<QString, QByteArray> directorySnapshots_;
     QStringList excludes_ = defaultWorkspaceExcludes();
     QFutureWatcher<IndexResult> indexJob_;
     QThreadPool indexPool_;
+    QThreadPool queryPool_;
     QFutureWatcher<SymbolPage> queryJob_;
     QFileSystemWatcher watcher_;
     QTimer refreshTimer_;
     QTimer pollTimer_;
     QTimer progressTimer_;
+    QTimer resourceTimer_;
+    QElapsedTimer resourceElapsed_;
     std::shared_ptr<std::atomic_bool> cancelled_;
     std::shared_ptr<std::atomic_bool> queryCancelled_;
     std::shared_ptr<IndexProgress> progress_;

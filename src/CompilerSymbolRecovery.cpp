@@ -18,7 +18,8 @@ QString string(CXString value) {
     return result;
 }
 
-QStringList arguments(const QString &path, LanguageId language, bool *configured = nullptr) {
+QStringList arguments(const QString &path, LanguageId language, bool *configured = nullptr,
+                      const QString &compilationDirectory = {}) {
     if (configured)
         *configured = false;
     QStringList result{"-x", language == LanguageId::Cpp ? "c++" : "c"};
@@ -41,9 +42,14 @@ QStringList arguments(const QString &path, LanguageId language, bool *configured
     QDir directory = QFileInfo(path).absoluteDir();
     while (true) {
         QString database;
-        QStringList candidates{workspaceClangdDirectory(directory.absolutePath())};
-        for (const auto &relative : {".", "build", "build/ucrt64", "build/desktop"})
-            candidates.append(directory.filePath(relative));
+        QStringList candidates;
+        if (!compilationDirectory.isEmpty())
+            candidates.append(compilationDirectory);
+        else {
+            candidates.append(workspaceClangdDirectory(directory.absolutePath()));
+            for (const auto &relative : {".", "build", "build/ucrt64", "build/desktop"})
+                candidates.append(directory.filePath(relative));
+        }
         for (const auto &candidate : candidates) {
             if (QFileInfo::exists(QDir(candidate).filePath("compile_commands.json"))) {
                 database = candidate;
@@ -92,7 +98,7 @@ QStringList arguments(const QString &path, LanguageId language, bool *configured
             clang_CompilationDatabase_dispose(db);
             break;
         }
-        if (!directory.cdUp())
+        if (!compilationDirectory.isEmpty() || !directory.cdUp())
             break;
     }
     return result;
@@ -244,14 +250,14 @@ CXChildVisitResult collect(CXCursor cursor, CXCursor, CXClientData user) {
 }
 }
 
-void recoverCompilerSymbols(SourceAnalysis &analysis, const QByteArray &source,
-                            const QString &path) {
+void recoverCompilerSymbols(SourceAnalysis &analysis, const QByteArray &source, const QString &path,
+                            const QString &compilationDirectory) {
     const auto language = analysis.language;
     if (!isCFamily(language))
         return;
     const auto absolute = QFileInfo(path).absoluteFilePath();
     const auto filename = absolute.toUtf8();
-    const auto flags = arguments(path, language);
+    const auto flags = arguments(path, language, nullptr, compilationDirectory);
     QVector<QByteArray> encoded;
     for (const auto &arg : flags)
         encoded.append(arg.toUtf8());
@@ -360,7 +366,8 @@ void recoverCompilerSymbols(SourceAnalysis &analysis, const QByteArray &source,
 }
 
 InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray &source,
-                                          const QVector<SymbolOverlay> &overlays) {
+                                          const QVector<SymbolOverlay> &overlays,
+                                          const QString &compilationDirectory) {
     InactiveCodeRanges result;
     const auto fail = [&](const QString &error) {
         result.error = error;
@@ -375,7 +382,7 @@ InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray 
     }
     const auto filename = QFileInfo(path).absoluteFilePath().toUtf8();
     bool configured = false;
-    const auto flags = arguments(path, language, &configured);
+    const auto flags = arguments(path, language, &configured, compilationDirectory);
     if (!configured) {
         static const QRegularExpression conditions(
             "(?m)^\\s*#\\s*(if|ifdef|ifndef|elif)\\b([^\\r\\n]*)");

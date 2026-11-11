@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IndexTypes.h"
+#include "WorkspaceOptionsStore.h"
 #include <QFileInfo>
 
 namespace WorkspaceIndexDetail {
@@ -13,6 +14,7 @@ QByteArray directorySnapshot(const QFileInfoList &entries, const QStringList &ex
 QStringList scanWorkspaceFiles(SymbolIndexStore &database, const QString &root, bool rescan,
                                const QStringList &excludes,
                                const std::shared_ptr<std::atomic_bool> &cancel,
-                               const std::shared_ptr<IndexProgress> &progress, IndexResult &result);
+                               const std::shared_ptr<IndexProgress> &progress, IndexResult &result,
+                               const WorkspaceOptions &options);
 
 }

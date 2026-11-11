@@ -16,7 +16,16 @@
 #include <QThread>
 #include <QUuid>
 #include <cstdio>
+#include <limits>
 #include <utility>
+#if defined(Q_OS_MACOS)
+#include <mach/mach.h>
+#elif defined(Q_OS_LINUX)
+#include <unistd.h>
+#elif defined(Q_OS_WIN)
+#include <qt_windows.h>
+#include <psapi.h>
+#endif
 
 Q_LOGGING_CATEGORY(analysisLog, "codecairn.analysis", QtInfoMsg)
 Q_LOGGING_CATEGORY(indexLog, "codecairn.index", QtInfoMsg)
@@ -24,6 +33,37 @@ Q_LOGGING_CATEGORY(languageServiceLog, "codecairn.lsp", QtInfoMsg)
 Q_LOGGING_CATEGORY(navigationLog, "codecairn.navigation", QtInfoMsg)
 Q_LOGGING_CATEGORY(fileLog, "codecairn.files", QtInfoMsg)
 Q_LOGGING_CATEGORY(storageLog, "codecairn.storage", QtInfoMsg)
+
+ProcessMemory Diagnostics::processMemory() {
+#if defined(Q_OS_MACOS)
+    mach_task_basic_info_data_t info{};
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    const auto code = task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                                reinterpret_cast<task_info_t>(&info), &count);
+    if (code != KERN_SUCCESS)
+        return {-1, QString("task_info failed: %1").arg(code)};
+    return {static_cast<qint64>(info.resident_size), {}};
+#elif defined(Q_OS_LINUX)
+    QFile file("/proc/self/statm");
+    if (!file.open(QIODevice::ReadOnly))
+        return {-1, file.errorString()};
+    const auto fields = file.readAll().simplified().split(' ');
+    bool valid = false;
+    const auto pages = fields.size() > 1 ? fields[1].toLongLong(&valid) : -1;
+    const auto pageSize = sysconf(_SC_PAGESIZE);
+    if (!valid || pages < 0 || pageSize <= 0 ||
+        pages > std::numeric_limits<qint64>::max() / pageSize)
+        return {-1, "Invalid process resident-memory statistics."};
+    return {pages * pageSize, {}};
+#elif defined(Q_OS_WIN)
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+        return {-1, QString("GetProcessMemoryInfo failed: %1").arg(GetLastError())};
+    return {static_cast<qint64>(counters.WorkingSetSize), {}};
+#else
+    return {-1, "Resident-memory statistics are unsupported on this platform."};
+#endif
+}
 
 namespace {
 QRecursiveMutex handlerMutex;

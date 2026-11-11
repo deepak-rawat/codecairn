@@ -6,6 +6,8 @@
 #include <QMap>
 #include <atomic>
 #include <memory>
+#include <functional>
+#include <optional>
 
 struct IndexedSymbol {
     QString path;
@@ -17,6 +19,13 @@ struct IndexedSymbol {
 struct IndexProgress {
     std::atomic_int discovered{0};
     std::atomic_int parsed{0};
+    std::atomic_int committed{0};
+    std::atomic_int activeParsers{0};
+    std::atomic_int peakParsers{0};
+    // Called on the coordinator thread, never a parser worker.
+    std::function<void(const QStringList &)> catalogReady;
+    std::function<void()> batchReady;
+    std::atomic_int phase{0}; // discovery, symbols, reference acceleration
 };
 
 struct IndexResult {
@@ -33,6 +42,10 @@ struct IndexResult {
     bool changed = false;
     bool automatic = false;
     bool skipped = false;
+    qint64 discoveryMilliseconds = 0;
+    qint64 symbolMilliseconds = 0;
+    qint64 referenceMilliseconds = 0;
+    int suppressedWarnings = 0;
 };
 
 struct SymbolOverlay {
@@ -51,6 +64,12 @@ struct SymbolQuery {
     bool exact = false;
     std::shared_ptr<std::atomic_bool> cancel;
     bool includeCategorySymbols = false;
+    QString projectFile;
+    bool allowPendingSchema = false;
+    bool includeCounts = true;
+    bool includeCategories = true;
+    int categoryLimit = -1;
+    std::optional<IndexedSymbol> anchor;
 };
 
 struct SymbolPage {
@@ -60,4 +79,6 @@ struct SymbolPage {
     int total = 0;
     bool cancelled = false;
     QVector<IndexedSymbol> categorySymbols;
+    int anchorRow = -1;
+    std::optional<IndexedSymbol> anchor;
 };

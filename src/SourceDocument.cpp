@@ -18,7 +18,7 @@ SourceDocument::SourceDocument(const QString &path, const QByteArray &bytes, boo
     connect(&analysisTimer_, &QTimer::timeout, this, &SourceDocument::startAnalysis);
     connect(&analysisWatcher_, &QFutureWatcher<SourceAnalysis>::finished, this, [this] {
         analysisBusy_ = false;
-        if (runningRevision_ != revision) {
+        if (runningRevision_ != revision || runningCompilationDirectory_ != compilationDirectory_) {
             qCDebug(analysisLog) << "analysis.stale" << "path=" << this->path
                                  << "completedRevision=" << runningRevision_
                                  << "currentRevision=" << revision;
@@ -67,9 +67,20 @@ void SourceDocument::startAnalysis() {
         return;
     }
     runningRevision_ = revision;
+    runningCompilationDirectory_ = compilationDirectory_;
     analysisBusy_ = true;
     analysisWatcher_.setFuture(
-        QtConcurrent::run([bytes, filePath = path] { return analyzeSource(bytes, filePath); }));
+        QtConcurrent::run([bytes, filePath = path, directory = compilationDirectory_] {
+            return analyzeSource(bytes, filePath, SourceAnalysisMode::Editor, directory);
+        }));
+}
+
+void SourceDocument::setCompilationDirectory(const QString &directory) {
+    if (compilationDirectory_ == directory)
+        return;
+    compilationDirectory_ = directory;
+    analyzedRevision = std::numeric_limits<quint64>::max();
+    analysisTimer_.start();
 }
 
 void SourceDocument::stopBackgroundWork() {

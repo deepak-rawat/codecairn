@@ -2,8 +2,16 @@
 #include "Diagnostics.h"
 
 #include <QFile>
+#include <QCryptographicHash>
 #include <QSaveFile>
 #include <QStringConverter>
+
+QByteArray sourceContentHash(const QByteArray &bytes) {
+    thread_local QCryptographicHash sha256(QCryptographicHash::Sha256);
+    sha256.reset();
+    sha256.addData(bytes);
+    return sha256.result().toHex();
+}
 
 FileContents readSourceFile(const QString &path, SourceReadContext context) {
     const auto fail = [&](const QString &error, bool unsupported = false) -> FileContents {

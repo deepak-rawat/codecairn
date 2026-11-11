@@ -23,6 +23,11 @@ struct DiagnosticOptions {
     bool debug = false;
 };
 
+struct ProcessMemory {
+    qint64 residentBytes = -1;
+    QString error;
+};
+
 class Diagnostics {
 public:
     Diagnostics();
@@ -41,6 +46,7 @@ public:
     static QString directory();
     static QString currentLogPath();
     static QString takePendingError();
+    static ProcessMemory processMemory();
 
 private:
     static void messageHandler(QtMsgType type, const QMessageLogContext &context,

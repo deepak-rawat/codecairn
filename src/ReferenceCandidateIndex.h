@@ -23,7 +23,8 @@ struct ReferenceCandidateResult {
 // queries retain non-ASCII files to avoid differing Unicode case-fold/boundary semantics.
 ReferenceCandidateResult
 referenceCandidateFiles(const QString &root, const QStringList &paths, const QString &identifier,
-                        bool caseSensitive, const std::shared_ptr<std::atomic_bool> &cancel = {});
+                        bool caseSensitive, const std::shared_ptr<std::atomic_bool> &cancel = {},
+                        const QString &projectFile = {});
 
 namespace WorkspaceIndexDetail {
 class SymbolIndexStore;

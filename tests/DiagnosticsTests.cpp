@@ -190,6 +190,7 @@ private slots:
     void fileAndStorageFailuresAreLogged();
     void searchAndCompilerFailuresAreLogged();
     void expectedOutcomesAreNotWarnings();
+    void processMemoryIsExplicit();
     void languageServiceFailures_data();
     void languageServiceFailures();
     void syntaxWarningLimit();
@@ -648,6 +649,17 @@ void DiagnosticsTests::expectedOutcomesAreNotWarnings() {
     QVERIFY(diagnostics.finish(0).isEmpty());
     for (const auto &record : records(diagnostics.sessionDirectory()))
         QVERIFY(record.value("level") != "warning" && record.value("level") != "critical");
+}
+
+void DiagnosticsTests::processMemoryIsExplicit() {
+    const auto memory = Diagnostics::processMemory();
+#if defined(Q_OS_MACOS) || defined(Q_OS_LINUX) || defined(Q_OS_WIN)
+    QVERIFY2(memory.error.isEmpty(), qPrintable(memory.error));
+    QVERIFY(memory.residentBytes > 0);
+#else
+    QVERIFY(!memory.error.isEmpty());
+    QCOMPARE(memory.residentBytes, qint64(-1));
+#endif
 }
 
 void DiagnosticsTests::languageServiceFailures_data() {

@@ -155,6 +155,8 @@ codecairn_test(
 codecairn_test(analysis_parity_tests AnalysisParityTests.cpp analysis_parity)
 option(CODECAIRN_BUILD_BENCHMARKS "Build and register benchmark fixtures" ON)
 if(CODECAIRN_BUILD_BENCHMARKS)
+    codecairn_test(indexing_benchmarks IndexingBenchmarks.cpp large_indexing)
+    set_tests_properties(large_indexing PROPERTIES LABELS benchmark TIMEOUT 900)
     codecairn_test(
         codecairn_benchmarks
         RefactoringBenchmarks.cpp

@@ -46,13 +46,19 @@ QByteArray directorySnapshot(const QFileInfoList &entries, const QStringList &ex
 QStringList scanWorkspaceFiles(SymbolIndexStore &database, const QString &root, bool rescan,
                                const QStringList &excludes,
                                const std::shared_ptr<std::atomic_bool> &cancel,
-                               const std::shared_ptr<IndexProgress> &progress,
-                               IndexResult &result) {
+                               const std::shared_ptr<IndexProgress> &progress, IndexResult &result,
+                               const WorkspaceOptions &options) {
+    auto membership = options;
+    membership.excludedDirectories = excludes;
     QStringList paths;
     if (!rescan) {
         IndexStatement old(database, "SELECT path FROM files ORDER BY path");
-        while (old.next())
-            paths.append(old.text(0));
+        while (old.next()) {
+            if (cancel->load())
+                break;
+            if (projectIncludesPath(root, old.text(0), membership))
+                paths.append(old.text(0));
+        }
     } else {
         QStringList directories{root};
         while (!directories.isEmpty() && !cancel->load()) {
@@ -60,11 +66,15 @@ QStringList scanWorkspaceFiles(SymbolIndexStore &database, const QString &root, 
             result.directories.append(directory);
             const QFileInfo info(directory);
             if (!info.isReadable()) {
-                result.warnings.append("Unreadable directory retained from previous catalog: " +
-                                       directory);
+                if (result.warnings.size() < 100)
+                    result.warnings.append("Unreadable directory retained from previous catalog: " +
+                                           directory);
+                else
+                    ++result.suppressedWarnings;
                 IndexStatement old(database, "SELECT path FROM files");
                 while (old.next())
-                    if (pathInWorkspace(old.text(0), directory))
+                    if (pathInWorkspace(old.text(0), directory) &&
+                        projectIncludesPath(root, old.text(0), membership))
                         paths.append(old.text(0));
                 continue;
             }
@@ -74,9 +84,11 @@ QStringList scanWorkspaceFiles(SymbolIndexStore &database, const QString &root, 
                 if (cancel->load())
                     break;
                 if (entry.isDir()) {
-                    if (!excludedDirectory(entry, excludes))
+                    if (!excludedDirectory(entry, excludes) &&
+                        projectTraversesDirectory(root, entry.absoluteFilePath(), membership))
                         directories.append(entry.absoluteFilePath());
-                } else if (entry.isFile()) {
+                } else if (entry.isFile() &&
+                           projectIncludesPath(root, entry.absoluteFilePath(), membership)) {
                     paths.append(workspacePath(entry.absoluteFilePath()));
                     if (progress)
                         ++progress->discovered;

@@ -38,6 +38,7 @@ struct ReferenceSearchRequest {
     int offset = 0;
     int limit = RuntimeLimits::ReferenceResults;
     QHash<QString, QByteArray> expectedHashes;
+    QString projectFile;
 };
 
 struct ReferenceGroup {
@@ -48,13 +49,13 @@ struct ReferenceGroup {
 };
 QJsonArray referenceHistoryJson(const QVector<ReferenceGroup> &groups);
 QVector<ReferenceGroup> parseReferenceHistory(const QJsonArray &json, const QString &root,
-                                             QString &error);
+                                              QString &error);
 QString exportReferenceHistory(const QString &path, const QVector<ReferenceGroup> &groups,
                                const QString &root);
 
 QString validateReferenceSearch(const QString &query, const SearchOptions &options);
 ReferenceResults searchReferences(const ReferenceSearchRequest &request,
-                                 const std::shared_ptr<std::atomic_bool> &cancel);
+                                  const std::shared_ptr<std::atomic_bool> &cancel);
 bool adjustReferenceHit(ReferenceHit &hit, int position, int removed, int inserted,
                         const QByteArray &beforeHash, const QByteArray &source,
                         const QByteArray &afterHash = {});
@@ -64,10 +65,10 @@ ReferenceResults findTextOccurrences(const QStringList &paths, const QString &id
                                      const QVector<SymbolOverlay> &overlays, bool includeComments,
                                      bool includeStrings,
                                      const std::shared_ptr<std::atomic_bool> &cancel);
-ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
-                                           const QStringList &paths, const QString &identifier,
-                                           const QVector<SymbolOverlay> &overlays,
-                                           const std::shared_ptr<std::atomic_bool> &cancel,
-                                           int offset = 0, int limit = RuntimeLimits::ReferenceResults,
-                                           bool skipInactive = false,
-                                           const QHash<QString, QByteArray> &expectedHashes = {});
+ReferenceResults
+resolveSemanticReferences(const QVector<LspLocation> &targets, const QStringList &paths,
+                          const QString &identifier, const QVector<SymbolOverlay> &overlays,
+                          const std::shared_ptr<std::atomic_bool> &cancel, int offset = 0,
+                          int limit = RuntimeLimits::ReferenceResults, bool skipInactive = false,
+                          const QHash<QString, QByteArray> &expectedHashes = {},
+                          const QString &compilationDirectory = {});

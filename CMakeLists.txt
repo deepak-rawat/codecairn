@@ -61,6 +61,7 @@ add_library(
     src/WorkspaceServices.cpp
     src/DefinitionResolver.cpp
     src/SymbolBrowser.cpp
+    src/SymbolCatalogModel.cpp
     src/SourceCoordinates.cpp
     src/CompilationDatabase.cpp
     src/FileIO.cpp
@@ -115,6 +116,9 @@ target_link_libraries(
             ${codecairn_sqlite}
             re2::re2
 )
+if(WIN32)
+    target_link_libraries(codecairn_core PRIVATE psapi)
+endif()
 target_compile_options(
     codecairn_core PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic>"
                            "$<$<CXX_COMPILER_ID:MSVC>:/W4>"

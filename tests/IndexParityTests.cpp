@@ -1,10 +1,13 @@
 #include "WorkspaceIndex.h"
 #include "SymbolIndexStore.h"
 #include "TestStorage.h"
+#include "FileIO.h"
 
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTest>
 #include <QUuid>
 #include <sqlite3.h>
@@ -128,8 +131,12 @@ class IndexParityTests : public QObject {
     TestStorage storage_;
 private slots:
     void fieldsOrderingFiltersAndOverlays();
-    void cancellationRollsBackWrites();
+    void cancellationPreservesAtomicCompletedFile();
     void parserUpgradeRebuildsUnchangedFiles();
+    void coveringIndexUpgradePreservesSymbolsAndAvoidsSorting();
+    void invalidCachedNamesAreNeverBrowsed();
+    void unicodeAndLiteralFiltersKeepTheirSemantics();
+    void bulkHasherResetsAndPreservesFreshness();
 };
 
 void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
@@ -183,6 +190,13 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
         compareSymbol(page.symbols[i], expected[i]);
         compareSymbol(page.categorySymbols[i], expected[i]);
     }
+    for (int i = 0; i < expected.size(); ++i) {
+        query.anchor = expected[i];
+        const auto anchored = queryWorkspaceSymbols(fixture.root, query);
+        QVERIFY2(anchored.error.isEmpty(), qPrintable(anchored.error));
+        QCOMPARE(anchored.anchorRow, i);
+    }
+    query.anchor.reset();
     query.overlays[0].hash.clear();
     page = queryWorkspaceSymbols(fixture.root, query);
     QCOMPARE(page.symbols.first().hash,
@@ -194,14 +208,14 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
     QCOMPARE(page.total, 5);
     QCOMPARE(page.symbols.size(), 1);
     compareSymbol(page.symbols.first(), expected[1]);
-    QCOMPARE(page.categorySymbols.size(), 5);
+    QCOMPARE(page.categorySymbols.size(), expected.size());
     query.text = "missing";
     query.category = "Variables";
     page = queryWorkspaceSymbols(fixture.root, query);
     QCOMPARE(page.total, 0);
     QVERIFY(page.symbols.isEmpty());
     QCOMPARE(page.categories, categories);
-    QCOMPARE(page.categorySymbols.size(), 5);
+    QCOMPARE(page.categorySymbols.size(), expected.size());
     query.category.clear();
     query.offset = 0;
     query.limit = 0;
@@ -242,7 +256,7 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
     QVERIFY(page.categorySymbols.isEmpty());
 }
 
-void IndexParityTests::cancellationRollsBackWrites() {
+void IndexParityTests::cancellationPreservesAtomicCompletedFile() {
     WorkspaceFixture fixture;
     const auto path = fixture.path("a.cpp");
     const auto write = [&](const QByteArray &source) {
@@ -271,8 +285,17 @@ void IndexParityTests::cancellationRollsBackWrites() {
     QCOMPARE(after.total, before.total);
     QCOMPARE(after.categories, before.categories);
     QCOMPARE(after.symbols.size(), before.symbols.size());
-    for (int i = 0; i < before.symbols.size(); ++i)
-        compareSymbol(after.symbols[i], before.symbols[i]);
+    QCOMPARE(after.symbols.first().symbol.name, "after_cancelled");
+    QCOMPARE(
+        after.symbols.first().hash,
+        QCryptographicHash::hash("int after_cancelled();\n", QCryptographicHash::Sha256).toHex());
+    QVERIFY(after.symbols.first().hash != before.symbols.first().hash);
+    cancel->store(false);
+    const auto resumed = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    QVERIFY2(resumed.error.isEmpty(), qPrintable(resumed.error));
+    QCOMPARE(resumed.parsed, 0);
+    QCOMPARE(resumed.reused, 1);
+    compareSymbol(queryWorkspaceSymbols(fixture.root, {}).symbols.first(), after.symbols.first());
     SymbolIndexStore database(workspaceDatabase(fixture.root), false);
     IndexStatement row(database, "SELECT parser FROM files");
     QVERIFY(row.next());
@@ -291,7 +314,8 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
     QVERIFY2(initial.error.isEmpty(), qPrintable(initial.error));
     {
         SymbolIndexStore database(workspaceDatabase(fixture.root), true);
-        database.exec("UPDATE files SET parser='codecairn-multilanguage-compiler-v11';");
+        database.exec("UPDATE files SET parser='codecairn-multilanguage-syntax-v14';"
+                      "UPDATE symbols SET generated=1,provider='compiler';");
     }
     const auto refreshed = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
     QVERIFY2(refreshed.error.isEmpty(), qPrintable(refreshed.error));
@@ -305,6 +329,168 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
     QVERIFY2(symbols.error.isEmpty(), qPrintable(symbols.error));
     QCOMPARE(symbols.total, 1);
     QCOMPARE(symbols.symbols.first().symbol.name, QString("preserved"));
+    QVERIFY(!symbols.symbols.first().symbol.generated);
+    QCOMPARE(symbols.symbols.first().symbol.provider, "syntax");
+}
+
+void IndexParityTests::unicodeAndLiteralFiltersKeepTheirSemantics() {
+    WorkspaceFixture fixture;
+    {
+        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        database.ensureSchema();
+        persist(database, fixture.path("names.c"),
+                {symbol(QString::fromUtf8("CAF\xc3\x89"), "Variable", 10),
+                 symbol(QString::fromUtf8("\xe2\x84\xaa"
+                                          "elvin"),
+                        "Variable", 30),
+                 symbol("literal%name", "Variable", 50)});
+    }
+    SymbolQuery query;
+    query.text = QString::fromUtf8("caf\xc3\xa9");
+    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 1);
+    query.text = "kelvin";
+    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 1);
+    query.text = "%";
+    const auto literal = queryWorkspaceSymbols(fixture.root, query);
+    QCOMPARE(literal.total, 1);
+    QCOMPARE(literal.symbols.first().symbol.name, QString("literal%name"));
+    query.text = "?^scope::literal";
+    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 1);
+}
+
+void IndexParityTests::coveringIndexUpgradePreservesSymbolsAndAvoidsSorting() {
+    WorkspaceFixture fixture;
+    const auto path = fixture.path("source.cpp");
+    {
+        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        database.ensureSchema();
+        persist(database, path, {symbol("preserved", "Function", 10)});
+        database.exec("DROP INDEX symbol_catalog; DROP INDEX symbol_categories;"
+                      "CREATE INDEX symbol_catalog ON symbols("
+                      "name,qualified,path,start,kind,category,definition,name_start,name_end,end);"
+                      "CREATE INDEX symbol_categories ON symbols(kind,category,definition,path) "
+                      "WHERE name IS NOT NULL AND name<>'' AND name_end>name_start AND end>start;");
+    }
+    const auto before = queryWorkspaceSymbols(fixture.root, {});
+    QCOMPARE(before.total, 1);
+    {
+        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        database.ensureSchema();
+        IndexStatement plan(
+            database, "EXPLAIN QUERY PLAN SELECT rowid FROM symbols INDEXED BY symbol_catalog "
+                      "WHERE name IS NOT NULL AND name<>'' AND name_end>name_start AND end>start "
+                      "ORDER BY name,path,start LIMIT 128 OFFSET 128");
+        bool covering = false;
+        while (plan.next()) {
+            const auto detail = plan.text(3);
+            QVERIFY2(!detail.contains("TEMP B-TREE"), qPrintable(detail));
+            covering = covering || detail.contains("COVERING INDEX");
+        }
+        QVERIFY(covering);
+    }
+    const auto after = queryWorkspaceSymbols(fixture.root, {});
+    QVERIFY2(after.error.isEmpty(), qPrintable(after.error));
+    QCOMPARE(after.total, before.total);
+    compareSymbol(after.symbols.first(), before.symbols.first());
+}
+
+void IndexParityTests::invalidCachedNamesAreNeverBrowsed() {
+    WorkspaceFixture fixture;
+    const auto path = fixture.path("cached.c");
+    const auto valid = symbol("valid", "Variable", 10);
+    auto missing = symbol({}, "Variable", 30);
+    auto emptyRange = symbol("missing", "Variable", 50);
+    emptyRange.nameEnd = emptyRange.nameStart;
+    SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+    database.ensureSchema();
+    persist(database, path, {valid, missing, emptyRange});
+    for (bool categories : {false, true}) {
+        SymbolQuery query;
+        query.includeCategorySymbols = categories;
+        const auto page = queryWorkspaceSymbols(fixture.root, query);
+        QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+        QCOMPARE(page.total, 1);
+        QCOMPARE(page.symbols.size(), 1);
+        QCOMPARE(page.symbols.first().symbol.name, QString("valid"));
+        QCOMPARE(page.categories.value("Variables"), 1);
+    }
+    SymbolQuery live;
+    live.overlays = {{path, {}, SourceAnalysis{}, "livehash"}};
+    live.overlays[0].analysis.symbols = {valid, missing, emptyRange};
+    const auto page = queryWorkspaceSymbols(fixture.root, live);
+    QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+    QCOMPARE(page.total, 1);
+    QCOMPARE(page.symbols.first().symbol.name, QString("valid"));
+    QVERIFY(page.symbols.first().live);
+}
+
+void IndexParityTests::bulkHasherResetsAndPreservesFreshness() {
+    QCOMPARE(sourceContentHash({}),
+             QByteArray("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
+    QCOMPARE(sourceContentHash("abc"),
+             QByteArray("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+    QCOMPARE(sourceContentHash({}),
+             QByteArray("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
+    WorkspaceFixture fixture;
+    QHash<QString, QByteArray> expected;
+    const auto write = [&](const QString &path, const QByteArray &bytes) {
+        QFile file(path);
+        return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+               file.write(bytes) == bytes.size();
+    };
+    for (int i = 0; i < 40; ++i) {
+        const auto path = fixture.path(QString("file_%1.cpp").arg(i));
+        const auto source = "int value_" + QByteArray::number(i) + "(); // \xc3\xa9\n";
+        expected.insert(path, QCryptographicHash::hash(source, QCryptographicHash::Sha256).toHex());
+        QVERIFY(write(path, i == 0 ? QByteArray("\xef\xbb\xbf") + source : source));
+    }
+    const auto empty = fixture.path("empty.txt");
+    QVERIFY(write(empty, {}));
+    expected.insert(empty, QCryptographicHash::hash({}, QCryptographicHash::Sha256).toHex());
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    const auto check = [&](const IndexResult &result) {
+        QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+        SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+        IndexStatement rows(database, "SELECT f.path,f.hash,r.hash FROM files f "
+                                      "JOIN reference_occurrence_files r ON r.path=f.path");
+        int count = 0;
+        while (rows.next()) {
+            const auto path = rows.text(0);
+            QVERIFY(expected.contains(path));
+            QCOMPARE(rows.text(2).toLatin1(), expected.value(path));
+            if (path != empty) {
+                QCOMPARE(rows.text(1).toLatin1(), expected.value(path));
+                QCOMPARE(result.sourceHashes.value(path), expected.value(path));
+            }
+            ++count;
+        }
+        QCOMPARE(count, expected.size());
+    };
+    const auto initial = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    QCOMPARE(initial.parsed, 40);
+    check(initial);
+    const auto cached = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    QCOMPARE(cached.parsed, 0);
+    QCOMPARE(cached.reused, 40);
+    QVERIFY(!cached.changed);
+    check(cached);
+
+    const auto changed = fixture.path("file_0.cpp");
+    const auto modified = QFileInfo(changed).lastModified();
+    const QByteArray replacement = "\xef\xbb\xbfint other_0(); // \xc3\xa9\n";
+    const auto oldSize = QFileInfo(changed).size();
+    QVERIFY(write(changed, replacement));
+    QCOMPARE(QFileInfo(changed).size(), oldSize);
+    QFile file(changed);
+    QVERIFY(file.open(QIODevice::ReadWrite));
+    QVERIFY(file.setFileTime(modified, QFileDevice::FileModificationTime));
+    file.close();
+    expected[changed] =
+        QCryptographicHash::hash(replacement.mid(3), QCryptographicHash::Sha256).toHex();
+    const auto refreshed = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    QCOMPARE(refreshed.parsed, 1);
+    QCOMPARE(refreshed.reused, 39);
+    check(refreshed);
 }
 
 QTEST_GUILESS_MAIN(IndexParityTests)
