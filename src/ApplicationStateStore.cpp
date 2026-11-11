@@ -71,10 +71,38 @@ void absolutePath(const QString &value, const QString &key, bool allowEmpty = tr
 
 ApplicationState parseState(const QJsonObject &object) {
     schema(object);
-    keys(object, {"schemaVersion", "window", "lastWorkspace"});
+    keys(object, {"schemaVersion", "window", "lastWorkspace", "lastProjectFile", "recentProjects"});
     ApplicationState state;
     state.lastWorkspace = string(object, "lastWorkspace");
     absolutePath(state.lastWorkspace, "lastWorkspace");
+    state.lastProjectFile = string(object, "lastProjectFile");
+    absolutePath(state.lastProjectFile, "lastProjectFile");
+    if (!state.lastProjectFile.isEmpty() && state.lastWorkspace.isEmpty())
+        invalid("lastProjectFile requires lastWorkspace.");
+    if (object.contains("recentProjects") && !object.value("recentProjects").isArray())
+        invalid("recentProjects must be an array.");
+    const auto recent = object.value("recentProjects").toArray();
+    if (recent.size() > 12)
+        invalid("recentProjects exceeds 12 entries.");
+    QSet<QString> identities;
+    for (const auto &value : recent) {
+        if (!value.isObject())
+            invalid("Each recent project must be an object.");
+        const auto entry = value.toObject();
+        keys(entry, {"root", "projectFile", "name"});
+        RecentProject project{string(entry, "root"), string(entry, "projectFile"),
+                              string(entry, "name")};
+        absolutePath(project.root, "root", false);
+        absolutePath(project.projectFile, "projectFile");
+        if (project.name.trimmed().isEmpty())
+            invalid("Recent project name must not be empty.");
+        const auto identity = project.projectFile.isEmpty() ? workspacePath(project.root)
+                                                            : workspacePath(project.projectFile);
+        if (identities.contains(identity))
+            invalid("Duplicate recent project.");
+        identities.insert(identity);
+        state.recentProjects.append(project);
+    }
     if (object.contains("window") && !object.value("window").isObject())
         invalid("window must be an object.");
     const auto window = object.value("window").toObject();
@@ -87,8 +115,14 @@ ApplicationState parseState(const QJsonObject &object) {
 }
 
 QJsonObject stateJson(const ApplicationState &state) {
+    QJsonArray recent;
+    for (const auto &project : state.recentProjects)
+        recent.append(QJsonObject{
+            {"root", project.root}, {"projectFile", project.projectFile}, {"name", project.name}});
     return {{"schemaVersion", 1},
             {"lastWorkspace", state.lastWorkspace},
+            {"lastProjectFile", state.lastProjectFile},
+            {"recentProjects", recent},
             {"window",
              QJsonObject{{"geometry", QString::fromLatin1(state.geometry.toBase64())},
                          {"mainSplitter", QString::fromLatin1(state.mainSplitter.toBase64())},
@@ -135,7 +169,8 @@ WorkspaceSession parseSession(const QJsonObject &object, const QString &root) {
     if (object.contains("references") && !object.value("references").isArray())
         invalid("references must be an array.");
     QString referenceError;
-    session.references = parseReferenceHistory(object.value("references").toArray(), root, referenceError);
+    session.references =
+        parseReferenceHistory(object.value("references").toArray(), root, referenceError);
     if (!referenceError.isEmpty())
         invalid(referenceError);
     return session;
@@ -168,11 +203,18 @@ QString ApplicationStateStore::statePath() const {
     return directory_.isEmpty() ? QString{} : QDir(directory_).filePath("state.json");
 }
 
-QString ApplicationStateStore::sessionPath(const QString &root) const {
+QString ApplicationStateStore::sessionPath(const QString &root, const QString &projectFile) const {
     if (directory_.isEmpty() || root.isEmpty())
         return {};
-    const auto directory = workspaceStorageDirectory(root, directory_);
-    return directory.isEmpty() ? QString{} : QDir(directory).filePath("session.json");
+    const auto directory = workspaceStorageDirectory(root, directory_, projectFile);
+    if (directory.isEmpty())
+        return {};
+    const auto name =
+        projectFile.isEmpty()
+            ? QString("session.json")
+            : "session-" + QString::fromLatin1(fingerprint(workspacePath(root).toUtf8()).toHex()) +
+                  ".json";
+    return QDir(directory).filePath(name);
 }
 
 ApplicationStateStore::JsonResult ApplicationStateStore::loadJson(const QString &path,
@@ -190,7 +232,8 @@ ApplicationStateStore::JsonResult ApplicationStateStore::loadJson(const QString 
     if (!file.open(QIODevice::ReadOnly))
         return {{}, path + ": " + file.errorString()};
     const auto maximum = path == statePath() ? MaximumStateBytes : MaximumSessionBytes;
-    const auto sizeError = path + QString(": state exceeds the %1 MiB limit.").arg(maximum / (1024 * 1024));
+    const auto sizeError =
+        path + QString(": state exceeds the %1 MiB limit.").arg(maximum / (1024 * 1024));
     if (file.size() > maximum)
         return {{}, sizeError};
     const auto bytes = file.read(maximum + 1);
@@ -292,8 +335,9 @@ QString ApplicationStateStore::saveState(const ApplicationState &state) {
     return error;
 }
 
-WorkspaceSessionResult ApplicationStateStore::loadSession(const QString &root) {
-    const auto path = sessionPath(root);
+WorkspaceSessionResult ApplicationStateStore::loadSession(const QString &root,
+                                                          const QString &projectFile) {
+    const auto path = sessionPath(root, projectFile);
     try {
         absolutePath(root, "workspaceRoot", false);
         const auto result = loadJson(path, sessionJson(root, {}));
@@ -301,6 +345,19 @@ WorkspaceSessionResult ApplicationStateStore::loadSession(const QString &root) {
             qCWarning(storageLog) << "storage.session_read_failed" << "path=" << path
                                   << "error=" << result.error;
             return {{}, result.error};
+        }
+        if (!projectFile.isEmpty() && !QFileInfo::exists(path)) {
+            const auto previous = QDir(workspaceStorageDirectory(root, directory_, projectFile))
+                                      .filePath("session.json");
+            if (QFileInfo::exists(previous)) {
+                const auto legacy = loadJson(previous, {});
+                if (!legacy.object)
+                    throw std::invalid_argument(legacy.error.toStdString());
+                const auto previousRoot = string(*legacy.object, "workspaceRoot");
+                const auto session = parseSession(*legacy.object, previousRoot);
+                if (workspacePath(previousRoot) == workspacePath(root))
+                    return {session, {}};
+            }
         }
         return {parseSession(*result.object, root), {}};
     } catch (const std::invalid_argument &error) {
@@ -311,20 +368,22 @@ WorkspaceSessionResult ApplicationStateStore::loadSession(const QString &root) {
     }
 }
 
-QString ApplicationStateStore::saveSession(const QString &root, const WorkspaceSession &session) {
+QString ApplicationStateStore::saveSession(const QString &root, const WorkspaceSession &session,
+                                           const QString &projectFile) {
     try {
         absolutePath(root, "workspaceRoot", false);
         const auto object = sessionJson(root, session);
         parseSession(object, root);
-        const auto error = saveJson(sessionPath(root), object);
+        const auto error = saveJson(sessionPath(root, projectFile), object);
         if (!error.isEmpty())
-            qCWarning(storageLog) << "storage.session_write_failed" << "path=" << sessionPath(root)
-                                  << "error=" << error;
+            qCWarning(storageLog) << "storage.session_write_failed"
+                                  << "path=" << sessionPath(root, projectFile) << "error=" << error;
         return error;
     } catch (const std::invalid_argument &error) {
-        qCWarning(storageLog) << "storage.session_write_failed" << "path=" << sessionPath(root)
+        qCWarning(storageLog) << "storage.session_write_failed"
+                              << "path=" << sessionPath(root, projectFile)
                               << "error=" << error.what();
-        return sessionPath(root) + ": " + QString::fromUtf8(error.what());
+        return sessionPath(root, projectFile) + ": " + QString::fromUtf8(error.what());
     }
 }
 

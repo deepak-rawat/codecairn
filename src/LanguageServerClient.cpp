@@ -152,13 +152,13 @@ void LanguageServerClient::failQueuedLookups(const QString &error) {
 }
 
 void LanguageServerClient::start(const QString &root, const QString &compilationDirectory,
-                                 const QString &executable) {
+                                 const QString &executable, const QString &projectFile) {
     stop();
     stopping_ = false;
     serviceName_ = "clangd";
     root_ = workspacePath(root);
     configured_ = false;
-    const auto database = prepareCompilationDatabase(root_, compilationDirectory);
+    const auto database = prepareCompilationDatabase(root_, compilationDirectory, projectFile);
     if (!database.error.isEmpty()) {
         emit status(database.error);
         return;

@@ -10,8 +10,8 @@
 #include <QJsonObject>
 #include <QSaveFile>
 
-CompilationDatabaseResult prepareCompilationDatabase(const QString &root,
-                                                     const QString &directory) {
+CompilationDatabaseResult prepareCompilationDatabase(const QString &root, const QString &directory,
+                                                     const QString &projectFile) {
     CompilationDatabaseResult result;
     QString source;
     const auto fail = [&](const QString &error) {
@@ -21,10 +21,10 @@ CompilationDatabaseResult prepareCompilationDatabase(const QString &root,
         result.error = error;
         return result;
     };
-    const auto storageError = WorkspaceOptionsStore::initialize(root);
+    const auto storageError = WorkspaceOptionsStore::initialize(root, projectFile);
     if (!storageError.isEmpty())
         return fail(storageError);
-    const auto metadata = workspaceClangdDirectory(root);
+    const auto metadata = workspaceClangdDirectory(root, projectFile);
     if (QFileInfo(metadata).isSymLink() ||
         (!QDir().mkpath(metadata) && !QFileInfo(metadata).isDir()))
         return fail("Cannot create clangd storage: " + metadata);

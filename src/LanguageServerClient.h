@@ -14,7 +14,7 @@ public:
     explicit LanguageServerClient(QObject *parent = nullptr);
     ~LanguageServerClient() override;
     void start(const QString &root, const QString &compilationDirectory = {},
-               const QString &executable = {});
+               const QString &executable = {}, const QString &projectFile = {});
     void startServer(const QString &root, const QStringList &command);
     void stop();
     void syncDocument(const QString &path, const QByteArray &source, int version,

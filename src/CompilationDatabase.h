@@ -8,4 +8,5 @@ struct CompilationDatabaseResult {
     QString error;
 };
 
-CompilationDatabaseResult prepareCompilationDatabase(const QString &root, const QString &directory);
+CompilationDatabaseResult prepareCompilationDatabase(const QString &root, const QString &directory,
+                                                     const QString &projectFile = {});

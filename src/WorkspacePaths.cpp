@@ -41,27 +41,32 @@ bool pathInWorkspace(const QString &path, const QString &root) {
     return relative != ".." && !relative.startsWith("../") && !QDir::isAbsolutePath(relative);
 }
 
-QString workspaceStorageDirectory(const QString &root, const QString &stateDirectory) {
+QString workspaceStorageDirectory(const QString &root, const QString &stateDirectory,
+                                  const QString &projectFile) {
     const auto state = stateDirectory.isEmpty() ? defaultStateDirectory() : stateDirectory;
     if (root.isEmpty() || !QDir::isAbsolutePath(root) || state.isEmpty())
         return {};
+    const auto identity =
+        projectFile.isEmpty() ? workspacePath(root) : "project:" + workspacePath(projectFile);
     const auto hash =
-        QCryptographicHash::hash(workspacePath(root).toUtf8(), QCryptographicHash::Sha256).toHex();
+        QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Sha256).toHex();
     return QDir(state).filePath("workspaces/" + QString::fromLatin1(hash));
 }
 
-QString workspaceOptionsPath(const QString &root) {
+QString workspaceOptionsPath(const QString &root, const QString &projectFile) {
+    if (!projectFile.isEmpty())
+        return workspacePath(projectFile);
     const auto directory = workspaceStorageDirectory(root);
     return directory.isEmpty() ? QString{} : QDir(directory).filePath("workspace.json");
 }
 
-QString workspaceClangdDirectory(const QString &root) {
-    const auto directory = workspaceStorageDirectory(root);
+QString workspaceClangdDirectory(const QString &root, const QString &projectFile) {
+    const auto directory = workspaceStorageDirectory(root, {}, projectFile);
     return directory.isEmpty() ? QString{} : QDir(directory).filePath("clangd");
 }
 
-QString workspaceDatabase(const QString &root) {
-    const auto directory = workspaceStorageDirectory(root);
+QString workspaceDatabase(const QString &root, const QString &projectFile) {
+    const auto directory = workspaceStorageDirectory(root, {}, projectFile);
     return directory.isEmpty() ? QString{} : QDir(directory).filePath("index.sqlite3");
 }
 

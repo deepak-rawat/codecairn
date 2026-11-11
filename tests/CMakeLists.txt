@@ -129,6 +129,7 @@ codecairn_test(
 )
 codecairn_test(refactoring_tests RefactoringTests.cpp refactoring)
 codecairn_test(application_state_tests ApplicationStateTests.cpp application_state)
+codecairn_test(project_tests ProjectTests.cpp projects)
 codecairn_test(
     diagnostics_tests
     DiagnosticsTests.cpp

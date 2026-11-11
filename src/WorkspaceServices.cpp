@@ -27,11 +27,12 @@ LanguageServerClient *WorkspaceServices::languageService(const QString &root, co
 }
 
 void WorkspaceServices::restartLanguageServices(const QString &root,
-                                                const QString &compilationDirectory) {
+                                                const QString &compilationDirectory,
+                                                const QString &projectFile) {
     for (auto *service : std::as_const(languageServices_))
         delete service;
     languageServices_.clear();
-    cppService_->start(root, compilationDirectory);
+    cppService_->start(root, compilationDirectory, {}, projectFile);
 }
 
 void WorkspaceServices::stopLanguageServices() {

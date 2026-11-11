@@ -13,7 +13,8 @@ public:
     LanguageServerClient *cppService() const { return cppService_; }
     LanguageServerClient *languageService(const QString &root, const QString &path,
                                           const QByteArray &source);
-    void restartLanguageServices(const QString &root, const QString &compilationDirectory);
+    void restartLanguageServices(const QString &root, const QString &compilationDirectory,
+                                 const QString &projectFile = {});
     void stopLanguageServices();
 
 signals:

@@ -8,12 +8,20 @@
 #include <QString>
 #include <optional>
 
+struct RecentProject {
+    QString root;
+    QString projectFile;
+    QString name;
+};
+
 struct ApplicationState {
     QByteArray geometry;
     QByteArray mainSplitter;
     QByteArray rightSplitter;
     int browserTab = 0;
     QString lastWorkspace;
+    QString lastProjectFile;
+    QVector<RecentProject> recentProjects;
 };
 
 struct WorkspaceSession {
@@ -36,11 +44,12 @@ class ApplicationStateStore {
 public:
     explicit ApplicationStateStore(QString directory);
     QString statePath() const;
-    QString sessionPath(const QString &root) const;
+    QString sessionPath(const QString &root, const QString &projectFile = {}) const;
     ApplicationStateResult loadState();
     QString saveState(const ApplicationState &state);
-    WorkspaceSessionResult loadSession(const QString &root);
-    QString saveSession(const QString &root, const WorkspaceSession &session);
+    WorkspaceSessionResult loadSession(const QString &root, const QString &projectFile = {});
+    QString saveSession(const QString &root, const WorkspaceSession &session,
+                        const QString &projectFile = {});
     void invalidateState();
 
 private:

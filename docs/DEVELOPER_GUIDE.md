@@ -597,9 +597,28 @@ invalidation or migration, not silent database deletion.
 | Per-user `settings.json` or `--config` profile | Appearance, panel/search options, initial layout, debounce and refresh intervals |
 | `state.json` | Window geometry, splitters, browser tab, last workspace |
 | `workspaces/<workspace-hash>/session.json` | Ordered open files, active path, selections/scroll, completed search groups |
+| `workspaces/<project-hash>/session-<root-hash>.json` | Root-specific managed-project session; changing the base folder does not reuse an incompatible session |
 | `workspaces/<workspace-hash>/workspace.json` | Schema, canonical root, compilation directory, exclusions |
 | `workspaces/<workspace-hash>/index.sqlite3` | Generated file/symbol catalog and reference postings |
 | `workspaces/<workspace-hash>/clangd/` | Normalized compilation database and semantic caches |
+| User-chosen `*.cairn` | Managed project's base folder, name, membership rules, and compilation/exclusion options |
+
+`ProjectDialog` starts new projects without inheriting the active root or membership.
+It receives the active AppSettings, uses UiAppearance's shared QTreeView styling,
+and shows a lazy filesystem browser beside a model-backed list of actual included
+files. Membership rules remain recursive; the right pane is a discovered preview,
+not a replacement for folder rules. Removing individual files adds exclusions.
+Discovery workers receive immutable root/options snapshots and cancellation flags,
+publish bounded batches, and never access widgets. Generations reject obsolete
+results, and changing scope also discards pending progress batches. Create/Save is
+disabled until a current discovery pass completes without errors.
+
+The new-project dialog contains the descriptor path and its explicit Browse action.
+The suggested path uses Documents rather than the source base folder; the caller saves
+directly after Create, without an implicit second file chooser. Editing an existing
+project keeps its descriptor identity fixed and preserves the optimistic
+projectFile/projectDigest tokens. Save failures reopen the same populated dialog
+with inline errors instead of discarding the user's selection.
 
 `--config` changes only the preferences path. Runtime state uses Qt
 StateLocation on Qt 6.7+, or `state` under AppLocalDataLocation on Qt 6.5/6.6.
@@ -607,7 +626,19 @@ It lives outside source folders and custom profiles; see the
 [user guide location table](USER_GUIDE.md#per-user-locations). The organization name is
 empty, so the standard path has one CodeCairn component.
 
-Workspace directory names are SHA-256 hashes of canonical-root UTF-8 paths.
+Folder-workspace directory names are SHA-256 hashes of canonical-root UTF-8 paths.
+Managed projects instead hash `"project:"` plus the canonical descriptor path.
+Two descriptors sharing a base folder therefore have independent indexes,
+sessions, and clangd directories; moving a descriptor changes its storage identity.
+Managed session filenames additionally include the canonical base-folder hash.
+An earlier managed `session.json` is validated and reused only for its matching
+root, then saved to the root-specific path; the earlier file is retained.
+Manage Project Files completes save/discard/cancel handling before changing a
+descriptor's base folder, so cancelling document closure leaves the descriptor
+unchanged.
+Successful workspace-option saves reload the active membership snapshot before
+applying new exclusions. Failed saves leave the live index and buffer membership
+unchanged rather than starting an index pass with unsaved settings.
 Missing file paths resolve through their nearest existing canonical ancestor,
 so deleted files and new buffers retain workspace membership through directory
 aliases. Reference posting lookups and LSP request URIs use the same canonical

@@ -67,6 +67,7 @@ add_library(
     src/MainWindow.cpp
     src/MainWindowUi.cpp
     src/MainWindowWorkspace.cpp
+    src/ProjectDialog.cpp
     src/MainWindowSettings.cpp
     src/MainWindowNavigation.cpp
     src/MainWindowLinks.cpp

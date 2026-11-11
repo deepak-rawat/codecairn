@@ -52,9 +52,67 @@ private slots:
     void invalidSavesAreRejected();
     void staleStateWritersCannotOverwriteChanges();
     void staleSessionWritersAreIndependentPerWorkspace();
+    void managedSessionsAndRecentProjectsAreIndependent();
+    void managedSessionRootsRemainIndependent();
     void concurrentLocksAreReportedAndRetryable();
     void unwritableDirectoriesAreReported();
 };
+
+void ApplicationStateTests::managedSessionsAndRecentProjectsAreIndependent() {
+    QTemporaryDir directory;
+    ApplicationStateStore store(directory.filePath("state"));
+    QVERIFY(store.loadState().state.has_value());
+    const auto first = directory.filePath("first.cairn");
+    const auto second = directory.filePath("second.cairn");
+    ApplicationState state;
+    state.lastWorkspace = directory.path();
+    state.lastProjectFile = first;
+    state.recentProjects = {{directory.path(), first, "First"},
+                            {directory.path(), second, "Second"},
+                            {directory.path(), {}, "Whole folder"}};
+    QVERIFY(store.saveState(state).isEmpty());
+    ApplicationStateStore reader(directory.filePath("state"));
+    const auto loaded = reader.loadState();
+    QVERIFY2(loaded.state.has_value(), qPrintable(loaded.error));
+    QCOMPARE(loaded.state->lastProjectFile, first);
+    QCOMPARE(loaded.state->recentProjects.size(), 3);
+    QVERIFY(store.loadSession(directory.path(), first).session.has_value());
+    QVERIFY(store.loadSession(directory.path(), second).session.has_value());
+    const auto session = sessionFor(directory.path());
+    QVERIFY(store.saveSession(directory.path(), session, first).isEmpty());
+    QVERIFY(reader.loadSession(directory.path(), first).session->files.size() == 2);
+    QVERIFY(reader.loadSession(directory.path(), second).session->files.isEmpty());
+    QVERIFY(store.sessionPath(directory.path(), first) !=
+            store.sessionPath(directory.path(), second));
+}
+
+void ApplicationStateTests::managedSessionRootsRemainIndependent() {
+    QTemporaryDir directory, first, second, third;
+    const auto projectFile = directory.filePath("project.cairn");
+    ApplicationStateStore store(directory.filePath("state"));
+    QVERIFY(store.loadSession(first.path(), projectFile).session.has_value());
+    const auto original = sessionFor(first.path());
+    QVERIFY(store.saveSession(first.path(), original, projectFile).isEmpty());
+    QVERIFY(store.loadSession(second.path(), projectFile).session->files.isEmpty());
+    const auto replacement = sessionFor(second.path());
+    QVERIFY(store.saveSession(second.path(), replacement, projectFile).isEmpty());
+    ApplicationStateStore restored(directory.filePath("state"));
+    QCOMPARE(restored.loadSession(first.path(), projectFile).session->activeFile,
+             original.activeFile);
+    QCOMPARE(restored.loadSession(second.path(), projectFile).session->activeFile,
+             replacement.activeFile);
+    const auto legacy =
+        QDir(workspaceStorageDirectory(first.path(), directory.filePath("state"), projectFile))
+            .filePath("session.json");
+    QVERIFY(QFile::rename(restored.sessionPath(first.path(), projectFile), legacy));
+    ApplicationStateStore oldReader(directory.filePath("state"));
+    QVERIFY(oldReader.loadSession(third.path(), projectFile).session->files.isEmpty());
+    QVERIFY(oldReader.saveSession(third.path(), {}, projectFile).isEmpty());
+    QCOMPARE(oldReader.loadSession(first.path(), projectFile).session->activeFile,
+             original.activeFile);
+    QVERIFY(oldReader.saveSession(first.path(), original, projectFile).isEmpty());
+    QVERIFY(QFileInfo::exists(legacy));
+}
 
 void ApplicationStateTests::defaultPathsHaveOneApplicationComponent() {
     const auto previousName = QCoreApplication::applicationName();

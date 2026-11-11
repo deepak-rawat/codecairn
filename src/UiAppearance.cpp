@@ -104,7 +104,8 @@ public:
             font.setBold(true);
             p->setFont(font);
             p->drawText(QRectF(3, 1, 8, 13), Qt::AlignCenter, "?");
-        } else if (kind_ == "referenceLink" || kind_ == "referencePrevious" || kind_ == "referenceNext") {
+        } else if (kind_ == "referenceLink" || kind_ == "referencePrevious" ||
+                   kind_ == "referenceNext") {
             p->setPen(QPen(QColor("#727272"), 1));
             p->setBrush(QColor("#dedede"));
             p->drawRect(QRectF(1, 3, 14, 10));
@@ -320,11 +321,15 @@ QImage referenceLinkImage(int size, bool hovered) {
 }
 
 void configureTree(QTreeWidget *tree, const QStringList &headers, const AppSettings &settings) {
+    tree->setHeaderLabels(headers);
+    configureTree(static_cast<QTreeView *>(tree), settings);
+}
+
+void configureTree(QTreeView *tree, const AppSettings &settings) {
     auto *style = new TreeBranches;
     style->setObjectName("codecairnBranches");
     style->setParent(tree);
     tree->setStyle(style);
-    tree->setHeaderLabels(headers);
     tree->setAlternatingRowColors(false);
     tree->setUniformRowHeights(true);
     tree->setItemDelegate(new CompactRows(tree));
@@ -336,6 +341,10 @@ void configureTree(QTreeWidget *tree, const QStringList &headers, const AppSetti
 }
 
 void applyTreeAppearance(QTreeWidget *tree, const AppSettings &settings) {
+    applyTreeAppearance(static_cast<QTreeView *>(tree), settings);
+}
+
+void applyTreeAppearance(QTreeView *tree, const AppSettings &settings) {
     auto *branches =
         dynamic_cast<TreeBranches *>(tree->findChild<QProxyStyle *>("codecairnBranches"));
     auto *rows = dynamic_cast<CompactRows *>(tree->itemDelegate());
@@ -371,10 +380,10 @@ QString styleSheet(const AppSettings &settings) {
             border: 1px solid @ui.strongBorder@; border-radius: 0; padding: 1px 2px;
             selection-background-color: @ui.selectionBackground@; }
         QLineEdit:focus { border-color: @ui.activeBorder@; }
-        QTreeWidget { background: @ui.panelBackground@; border: 1px solid @ui.border@; outline: none; }
-        QTreeWidget::item { padding: 0; margin: 0; border: none; }
-        QTreeWidget::item:selected { background: @ui.selectionBackground@; color: @ui.selectionForeground@; }
-        QTreeWidget::branch:selected { background: @ui.selectionBackground@; }
+        QTreeView { background: @ui.panelBackground@; border: 1px solid @ui.border@; outline: none; }
+        QTreeView::item { padding: 0; margin: 0; border: none; }
+        QTreeView::item:selected { background: @ui.selectionBackground@; color: @ui.selectionForeground@; }
+        QTreeView::branch:selected { background: @ui.selectionBackground@; }
         QHeaderView::section { background: @ui.headerBackground@; color: @ui.foreground@;
             border: none; border-right: 1px solid @ui.headerBorder@; padding: 1px 3px; }
         QTabWidget::pane { border: none; }
