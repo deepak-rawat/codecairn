@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SourceAnalysis.h"
+#include <codecairn/SourceAnalysis.h>
 #include <QFutureWatcher>
 #include <QObject>
 #include <QTimer>

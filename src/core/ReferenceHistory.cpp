@@ -1,5 +1,5 @@
-#include "ReferenceSearch.h"
-#include "WorkspacePaths.h"
+#include <codecairn/ReferenceSearch.h>
+#include <codecairn/WorkspacePaths.h>
 #include <QDir>
 #include <QJsonObject>
 #include <QRegularExpression>

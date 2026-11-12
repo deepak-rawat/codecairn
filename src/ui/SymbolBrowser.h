@@ -1,6 +1,6 @@
 #pragma once
 
-#include "IndexTypes.h"
+#include <codecairn/IndexTypes.h>
 #include <Qt>
 
 class QTreeWidget;

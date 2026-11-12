@@ -1,6 +1,6 @@
-#include "WorkspaceServices.h"
-#include "LanguageRegistry.h"
-#include "Diagnostics.h"
+#include <codecairn/WorkspaceServices.h>
+#include <codecairn/LanguageRegistry.h>
+#include <codecairn/Diagnostics.h>
 #include <QFileInfo>
 #include <utility>
 
@@ -9,8 +9,8 @@ WorkspaceServices::WorkspaceServices(QObject *parent)
       cppService_(new LanguageServerClient(this)) {
 }
 
-QString WorkspaceServices::commitProject(const PreparedProject &project, bool indexing,
-                                         bool semantic) {
+QString WorkspaceServices::commitProject(const PreparedProject &project,
+                                         const ProjectOpenOptions &options) {
     if (!project.error.isEmpty() || project.root.isEmpty() || !QFileInfo(project.root).isDir() ||
         !QFileInfo(project.root).isReadable()) {
         const auto error = project.error.isEmpty()
@@ -19,10 +19,21 @@ QString WorkspaceServices::commitProject(const PreparedProject &project, bool in
         qCWarning(storageLog) << "project.commit_failed" << error;
         return error;
     }
+    const bool switching =
+        project_.root != project.root || project_.projectFile != project.projectFile;
+    if (switching || options.indexing == IndexStartup::Automatic ||
+        options.languages == LanguageStartup::Automatic)
+        emit projectAboutToChange();
+    if (switching) {
+        if (options.indexing == IndexStartup::Manual)
+            index_->close();
+        if (options.languages == LanguageStartup::Manual)
+            stopLanguageServices();
+    }
     project_ = project;
-    if (indexing)
+    if (options.indexing == IndexStartup::Automatic)
         index_->open(project.root, project.projectFile);
-    if (semantic)
+    if (options.languages == LanguageStartup::Automatic)
         restartLanguageServices(project.root, project.options.compilationDirectory,
                                 project.projectFile);
     return {};
@@ -41,6 +52,7 @@ QString WorkspaceServices::reloadProjectOptions() {
 }
 
 void WorkspaceServices::closeProject() {
+    emit projectAboutToChange();
     index_->close();
     stopLanguageServices();
     project_ = {};

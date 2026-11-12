@@ -1,5 +1,5 @@
-#include "DocumentAnalysis.h"
-#include "FileIO.h"
+#include <codecairn/DocumentAnalysis.h>
+#include <codecairn/FileIO.h>
 #include <QCryptographicHash>
 #include <QSignalSpy>
 #include <QTest>

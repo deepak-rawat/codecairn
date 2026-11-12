@@ -1,7 +1,7 @@
 #pragma once
-#include "SearchOptions.h"
+#include <codecairn/SearchOptions.h>
 
-#include "SourceAnalysis.h"
+#include <codecairn/SourceAnalysis.h>
 #include <QColor>
 #include <QJsonObject>
 #include <QMap>

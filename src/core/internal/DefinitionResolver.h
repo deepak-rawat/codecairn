@@ -1,16 +1,9 @@
 #pragma once
 
-#include "IndexTypes.h"
+#include <codecairn/NavigationTarget.h>
 #include <QFutureWatcher>
 #include <QObject>
 #include <optional>
-
-struct DefinitionCandidates {
-    QVector<IndexedSymbol> targets;
-    int total = 0;
-    bool complete = false;
-    QString error;
-};
 
 DefinitionCandidates definitionCandidates(const SymbolPage &page, int offset = 0);
 

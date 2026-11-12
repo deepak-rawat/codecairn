@@ -1,4 +1,4 @@
-#include "WorkspacePaths.h"
+#include <codecairn/WorkspacePaths.h>
 
 #include <QDir>
 #include <QFileInfo>

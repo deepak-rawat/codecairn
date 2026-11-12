@@ -1,10 +1,10 @@
-#include "WorkspaceIndex.h"
-#include "LanguageServerClient.h"
-#include "FileIO.h"
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/LanguageServerClient.h>
+#include <codecairn/FileIO.h>
 #include "MainWindow.h"
 #include "TestStorage.h"
-#include "WorkspaceOptionsStore.h"
-#include "CompilationDatabase.h"
+#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/CompilationDatabase.h>
 #include "CompilerSymbolRecovery.h"
 #include "SymbolIndexStore.h"
 #include "SymbolBrowser.h"
@@ -39,7 +39,10 @@
 
 namespace {
 IndexResult index(const QString &root, bool force = false, bool rescan = true) {
-    return buildWorkspaceIndex(workspacePath(root), force, rescan, {".git", "build"},
+    const auto mode =
+        force ? (rescan ? IndexRefresh::RebuildFilesAndSymbols : IndexRefresh::ReparseKnownFiles)
+              : (rescan ? IndexRefresh::DiscoverChanges : IndexRefresh::CheckKnownFiles);
+    return buildWorkspaceIndex(workspacePath(root), mode, {".git", "build"},
                                std::make_shared<std::atomic_bool>(false));
 }
 void write(const QString &path, const QByteArray &bytes) {
@@ -316,8 +319,8 @@ void WorkspaceTests::cancellationPreservesCompletedIndex() {
         QVERIFY(page.total < 41);
         cancel->store(true);
     };
-    const auto stopped =
-        buildWorkspaceIndex(workspacePath(dir.path()), false, true, {}, cancel, progress);
+    const auto stopped = buildWorkspaceIndex(workspacePath(dir.path()),
+                                             IndexRefresh::DiscoverChanges, {}, cancel, progress);
     QVERIFY(stopped.cancelled);
     QVERIFY(stopped.parsed > 0);
     const auto partial = queryWorkspaceSymbols(dir.path(), {});
@@ -419,12 +422,14 @@ void WorkspaceTests::managedProjectsIndexOnlySelectedMembership() {
     const auto second = QDir(root).filePath("second.cairn");
     QVERIFY(WorkspaceOptionsStore::saveProject(second, root, options).isEmpty());
     const auto cancel = std::make_shared<std::atomic_bool>(false);
-    const auto selected = buildWorkspaceIndex(root, false, true, {}, cancel, {}, first);
+    const auto selected =
+        buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {}, cancel, {}, first);
     QVERIFY2(selected.error.isEmpty(), qPrintable(selected.error));
     QCOMPARE(selected.files, QStringList{workspacePath(dir.filePath("selected/one.cpp"))});
     QVERIFY(!selected.directories.contains(workspacePath(dir.filePath("other"))));
     QVERIFY(!selected.directories.contains(workspacePath(dir.filePath("selected/excluded"))));
-    const auto other = buildWorkspaceIndex(root, false, true, {}, cancel, {}, second);
+    const auto other =
+        buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {}, cancel, {}, second);
     QVERIFY2(other.error.isEmpty(), qPrintable(other.error));
     SymbolQuery query;
     query.projectFile = first;
@@ -467,7 +472,7 @@ void WorkspaceTests::parallelParsersOverlapAndPublishWhileBusy() {
     for (int i = 0; i < 12; ++i)
         write(dir.filePath(QString("parallel_%1.cpp").arg(i)), source);
     const auto progress = std::make_shared<IndexProgress>();
-    const auto built = buildWorkspaceIndex(dir.path(), false, true, {},
+    const auto built = buildWorkspaceIndex(dir.path(), IndexRefresh::DiscoverChanges, {},
                                            std::make_shared<std::atomic_bool>(false), progress);
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     QCOMPARE(built.parsed, 12);
@@ -769,7 +774,7 @@ void WorkspaceTests::managedCompilerRecoveryUsesOwnConfiguration() {
         prepareCompilationDatabase(directory.path(), commands.path(), projectFile);
     QVERIFY2(prepared.error.isEmpty(), qPrintable(prepared.error));
     const auto built =
-        buildWorkspaceIndex(directory.path(), true, true, {},
+        buildWorkspaceIndex(directory.path(), IndexRefresh::RebuildFilesAndSymbols, {},
                             std::make_shared<std::atomic_bool>(false), {}, projectFile);
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     SymbolQuery query;
@@ -856,7 +861,7 @@ void WorkspaceTests::excludedNamesCanBeRemoved() {
     const auto skipped = index(directory.path());
     QVERIFY2(skipped.error.isEmpty(), qPrintable(skipped.error));
     QVERIFY(skipped.files.isEmpty());
-    const auto rebuilt = buildWorkspaceIndex(directory.path(), false, true, {},
+    const auto rebuilt = buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {},
                                              std::make_shared<std::atomic_bool>(false));
     QVERIFY2(rebuilt.error.isEmpty(), qPrintable(rebuilt.error));
     QCOMPARE(rebuilt.files.size(), 1);
@@ -874,7 +879,7 @@ void WorkspaceTests::watcherRefreshAndWorkspaceSwitch() {
     write(first.filePath("added.cpp"), "int added();\n");
     QTRY_VERIFY_WITH_TIMEOUT(ready.count() >= 2, 10000);
     QCOMPARE(service.files().size(), 2);
-    service.refresh(true, true);
+    service.refresh(IndexRefresh::RebuildFilesAndSymbols);
     service.open(second.path());
     QTRY_VERIFY_WITH_TIMEOUT(!service.busy(), 15000);
     QCOMPARE(service.root(), workspacePath(second.path()));

@@ -1,7 +1,7 @@
 #include "SymbolCatalogModel.h"
 #include "SymbolBrowser.h"
 #include "UiAppearance.h"
-#include "WorkspaceIndex.h"
+#include <codecairn/WorkspaceIndex.h>
 
 #include <QDir>
 #include <QFileInfo>

@@ -1,6 +1,6 @@
 #include "AppSettings.h"
-#include "Diagnostics.h"
-#include "RuntimeLimits.h"
+#include <codecairn/Diagnostics.h>
+#include <codecairn/RuntimeLimits.h>
 
 #include <QCryptographicHash>
 #include <QDir>

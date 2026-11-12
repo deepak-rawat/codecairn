@@ -1,6 +1,6 @@
 #pragma once
 
-#include "LanguageRegistry.h"
+#include <codecairn/LanguageRegistry.h>
 
 #include <QByteArray>
 #include <QString>

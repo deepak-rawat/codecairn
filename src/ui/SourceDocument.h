@@ -1,7 +1,7 @@
 #pragma once
 
-#include "DocumentAnalysis.h"
-#include "FileIO.h"
+#include <codecairn/DocumentAnalysis.h>
+#include <codecairn/FileIO.h>
 #include <QSet>
 
 class CodeEditor;

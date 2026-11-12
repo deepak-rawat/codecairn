@@ -1,8 +1,8 @@
 #pragma once
-#include "NavigationHistory.h"
-#include "IndexTypes.h"
-#include "SourceCoordinates.h"
-#include "SearchOptions.h"
+#include <codecairn/NavigationHistory.h>
+#include <codecairn/IndexTypes.h>
+#include <codecairn/SourceCoordinates.h>
+#include <codecairn/SearchOptions.h>
 #include <QJsonArray>
 #include <functional>
 

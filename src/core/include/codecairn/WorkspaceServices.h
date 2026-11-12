@@ -1,18 +1,25 @@
 #pragma once
 
-#include "LanguageServerClient.h"
-#include "WorkspaceIndex.h"
-#include "ProjectSession.h"
+#include <codecairn/LanguageServerClient.h>
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/ProjectSession.h>
 #include <QHash>
 #include <QObject>
+
+enum class IndexStartup { Automatic, Manual };
+enum class LanguageStartup { Automatic, Manual };
+
+struct ProjectOpenOptions {
+    IndexStartup indexing = IndexStartup::Automatic;
+    LanguageStartup languages = LanguageStartup::Automatic;
+};
 
 class WorkspaceServices final : public QObject {
     Q_OBJECT
 public:
     explicit WorkspaceServices(QObject *parent = nullptr);
     const PreparedProject &project() const { return project_; }
-    QString commitProject(const PreparedProject &project, bool indexing = true,
-                          bool semantic = true);
+    QString commitProject(const PreparedProject &project, const ProjectOpenOptions &options = {});
     QString reloadProjectOptions();
     void closeProject();
     WorkspaceIndex *index() const { return index_; }
@@ -24,6 +31,7 @@ public:
     void stopLanguageServices();
 
 signals:
+    void projectAboutToChange();
     void serviceCreated(LanguageServerClient *service);
 
 private:

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "IndexTypes.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/IndexTypes.h>
+#include <codecairn/WorkspaceOptionsStore.h>
 #include <QFileInfo>
 
 namespace WorkspaceIndexDetail {

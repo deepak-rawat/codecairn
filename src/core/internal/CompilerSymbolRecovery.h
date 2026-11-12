@@ -1,6 +1,6 @@
 #pragma once
-#include "SourceTypes.h"
-#include "IndexTypes.h"
+#include <codecairn/SourceTypes.h>
+#include <codecairn/IndexTypes.h>
 
 void recoverCompilerSymbols(SourceAnalysis &analysis, const QByteArray &source, const QString &path,
                             const QString &compilationDirectory = {});

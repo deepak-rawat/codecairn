@@ -1,5 +1,6 @@
-#include "NavigationService.h"
-#include "Diagnostics.h"
+#include <codecairn/NavigationService.h>
+#include "DefinitionResolver.h"
+#include <codecairn/Diagnostics.h>
 
 #include <QtConcurrentRun>
 #include <algorithm>

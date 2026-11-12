@@ -1,8 +1,8 @@
 #include "MainWindow.h"
 #include "ReferenceResultsView.h"
-#include "Diagnostics.h"
+#include <codecairn/Diagnostics.h>
 #include "UiAppearance.h"
-#include "RuntimeLimits.h"
+#include <codecairn/RuntimeLimits.h>
 #include "NavigationTree.h"
 #include "SymbolCatalogModel.h"
 
@@ -549,12 +549,13 @@ void MainWindow::buildUi() {
     action(searchMenu, "findPrevious", "Find Previous", "back", QKeySequence::FindPrevious,
            [this] { findText(true); });
     refreshFiles_ = action(projectMenu, "refreshFiles", "Refresh File List", "refresh",
-                           QKeySequence("Ctrl+Shift+R"), [this] { refreshWorkspace(false, true); });
+                           QKeySequence("Ctrl+Shift+R"),
+                           [this] { refreshWorkspace(IndexRefresh::DiscoverChanges); });
     refreshFiles_->setEnabled(false);
     rebuildSymbols_ = action(projectMenu, "rebuildSymbols", "Rebuild Symbol Index", "refresh", {},
-                             [this] { refreshWorkspace(true, false); });
+                             [this] { refreshWorkspace(IndexRefresh::ReparseKnownFiles); });
     rebuildAll_ = action(projectMenu, "rebuildAll", "Rebuild Files and Symbols", "refresh", {},
-                         [this] { refreshWorkspace(true, true); });
+                         [this] { refreshWorkspace(IndexRefresh::RebuildFilesAndSymbols); });
     cancelIndex_ = action(projectMenu, "cancelIndex", "Cancel Background Indexing", "collapse", {},
                           [this] { workspaceIndex_->cancel(); });
     rebuildSymbols_->setEnabled(false);

@@ -1,7 +1,7 @@
-#include "SourceAnalysis.h"
-#include "Diagnostics.h"
-#include "FileIO.h"
-#include "LanguageRegistry.h"
+#include <codecairn/SourceAnalysis.h>
+#include <codecairn/Diagnostics.h>
+#include <codecairn/FileIO.h>
+#include <codecairn/LanguageRegistry.h>
 #include "CompilerSymbolRecovery.h"
 
 #include <QFileInfo>

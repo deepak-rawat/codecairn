@@ -1,10 +1,11 @@
-#include "DocumentAnalysis.h"
-#include "FileIO.h"
-#include "NavigationService.h"
-#include "ProjectSession.h"
-#include "ProjectDiscovery.h"
-#include "ReferenceSession.h"
-#include "WorkspaceIndex.h"
+#include <codecairn/DocumentAnalysis.h>
+#include <codecairn/CoreSession.h>
+#include <codecairn/FileIO.h>
+#include <codecairn/NavigationService.h>
+#include <codecairn/ProjectSession.h>
+#include <codecairn/ProjectDiscovery.h>
+#include <codecairn/ReferenceSession.h>
+#include <codecairn/WorkspaceIndex.h>
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -380,7 +381,8 @@ int main(int argc, char **argv) {
         const auto source = sourceForPath(filePath);
         if (!source.error.isEmpty())
             return fail(source.error, 1);
-        DocumentAnalysis document(filePath, source.bytes, source.utf8Bom, 0);
+        CoreSession core;
+        auto &document = *core.createDocument(filePath, source.bytes, source.utf8Bom);
         QEventLoop loop;
         QObject::connect(&document, &DocumentAnalysis::analysisCompleted, &loop, &QEventLoop::quit);
         QObject::connect(&document, &DocumentAnalysis::analysisRejected, &loop, &QEventLoop::quit);
@@ -428,19 +430,29 @@ int main(int argc, char **argv) {
         if (operation.stopCode())
             return stopped();
     }
-    WorkspaceServices services;
+    CoreSession core;
+    auto &services = core.projects();
+    core.setSnapshotProvider([&](const QString &path) -> std::optional<QByteArray> {
+        const auto source = overlaySources.constFind(workspacePath(path));
+        if (source != overlaySources.cend())
+            return source->bytes;
+        return {};
+    });
     const bool semantic = parser.isSet("semantic");
-    if (const auto error = services.commitProject(project, false, semantic); !error.isEmpty())
+    const ProjectOpenOptions startup{IndexStartup::Manual, semantic ? LanguageStartup::Automatic
+                                                                    : LanguageStartup::Manual};
+    if (const auto error = services.commitProject(project, startup); !error.isEmpty())
         return fail(error, 1);
     if (command == "index") {
         const auto excludes =
             project.options.excludedDirectories.value_or(defaultWorkspaceExcludes());
-        const auto indexed =
-            operation.result(QtConcurrent::run([&] {
-                                 return buildWorkspaceIndex(root, parser.isSet("force"), true,
-                                                            excludes, cancel, {}, projectFile);
-                             }),
-                             cancel);
+        const auto indexed = operation.result(
+            QtConcurrent::run([&] {
+                const auto mode = parser.isSet("force") ? IndexRefresh::RebuildFilesAndSymbols
+                                                        : IndexRefresh::DiscoverChanges;
+                return buildWorkspaceIndex(root, mode, excludes, cancel, {}, projectFile);
+            }),
+            cancel);
         if (operation.stopCode())
             return stopped();
         if (!indexed.error.isEmpty())
@@ -510,13 +522,7 @@ int main(int argc, char **argv) {
                                         sourceContentHash(definition.source)});
         definition.policy =
             semantic ? DefinitionPolicy::SemanticOnly : DefinitionPolicy::SyntaxOnly;
-        NavigationService navigation(&services);
-        navigation.setSnapshotProvider([&](const QString &path) -> std::optional<QByteArray> {
-            const auto source = overlaySources.constFind(workspacePath(path));
-            if (source != overlaySources.cend())
-                return source->bytes;
-            return {};
-        });
+        auto &navigation = core.navigation();
         QEventLoop loop;
         DefinitionResult definitions;
         bool finished = false;
@@ -661,7 +667,7 @@ int main(int argc, char **argv) {
     inputs.options = project.options;
     inputs.filePatterns = parser.value("file-patterns");
     request.paths = resolveReferenceScope(inputs);
-    ReferenceSession session(&services);
+    auto &session = core.references();
     QEventLoop loop;
     ReferenceResults matches;
     bool finished = false;

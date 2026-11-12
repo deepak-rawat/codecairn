@@ -1,9 +1,9 @@
 #pragma once
 
-#include "ReferenceSearch.h"
-#include "WorkspaceServices.h"
-#include "WorkspaceOptionsStore.h"
-#include "DocumentAnalysis.h"
+#include <codecairn/ReferenceSearch.h>
+#include <codecairn/WorkspaceServices.h>
+#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/DocumentAnalysis.h>
 
 #include <QFutureWatcher>
 #include <QPointer>

@@ -1,5 +1,5 @@
-#include "NavigationHistory.h"
-#include "RuntimeLimits.h"
+#include <codecairn/NavigationHistory.h>
+#include <codecairn/RuntimeLimits.h>
 
 void NavigationHistory::record(const NavigationLocation &origin,
                                const NavigationLocation &destination) {

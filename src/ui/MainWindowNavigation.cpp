@@ -1,8 +1,8 @@
 #include "MainWindow.h"
-#include "LanguageRegistry.h"
+#include <codecairn/LanguageRegistry.h>
 #include "NavigationTree.h"
-#include "Diagnostics.h"
-#include "NavigationTarget.h"
+#include <codecairn/Diagnostics.h>
+#include <codecairn/NavigationTarget.h>
 #include "SymbolCatalogModel.h"
 #include <QAction>
 #include <QApplication>

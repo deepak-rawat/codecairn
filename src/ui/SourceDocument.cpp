@@ -1,6 +1,6 @@
 #include "SourceDocument.h"
 #include "CodeEditor.h"
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include <QCryptographicHash>
 #include <QFileInfo>
 #include <QtConcurrentRun>

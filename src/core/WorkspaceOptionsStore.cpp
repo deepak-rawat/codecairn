@@ -1,6 +1,6 @@
-#include "WorkspaceOptionsStore.h"
-#include "Diagnostics.h"
-#include "WorkspacePaths.h"
+#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/Diagnostics.h>
+#include <codecairn/WorkspacePaths.h>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>

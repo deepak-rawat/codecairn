@@ -1,4 +1,4 @@
-#include "LanguageRegistry.h"
+#include <codecairn/LanguageRegistry.h>
 #include <QFileInfo>
 
 extern "C" {

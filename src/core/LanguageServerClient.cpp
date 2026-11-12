@@ -1,8 +1,8 @@
-#include "LanguageServerClient.h"
-#include "LanguageRegistry.h"
-#include "WorkspacePaths.h"
-#include "CompilationDatabase.h"
-#include "Diagnostics.h"
+#include <codecairn/LanguageServerClient.h>
+#include <codecairn/LanguageRegistry.h>
+#include <codecairn/WorkspacePaths.h>
+#include <codecairn/CompilationDatabase.h>
+#include <codecairn/Diagnostics.h>
 
 #include <QCoreApplication>
 #include <QDateTime>

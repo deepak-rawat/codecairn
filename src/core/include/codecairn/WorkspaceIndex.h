@@ -1,7 +1,7 @@
 #pragma once
 
-#include "IndexTypes.h"
-#include "WorkspacePaths.h"
+#include <codecairn/IndexTypes.h>
+#include <codecairn/WorkspacePaths.h>
 #include <QFileSystemWatcher>
 #include <QElapsedTimer>
 #include <QFutureWatcher>
@@ -12,8 +12,14 @@
 #include <atomic>
 #include <memory>
 
-IndexResult buildWorkspaceIndex(const QString &root, bool force, bool rescan,
-                                const QStringList &excludes,
+enum class IndexRefresh {
+    DiscoverChanges,
+    ReparseKnownFiles,
+    RebuildFilesAndSymbols,
+    CheckKnownFiles
+};
+
+IndexResult buildWorkspaceIndex(const QString &root, IndexRefresh mode, const QStringList &excludes,
                                 const std::shared_ptr<std::atomic_bool> &cancel,
                                 const std::shared_ptr<IndexProgress> &progress = {},
                                 const QString &projectFile = {});
@@ -26,7 +32,7 @@ public:
     ~WorkspaceIndex() override;
     void open(const QString &root, const QString &projectFile = {});
     void close();
-    void refresh(bool force = false, bool rescan = true);
+    void refresh(IndexRefresh mode = IndexRefresh::DiscoverChanges);
     void cancel();
     QString recreateDatabase();
     bool busy() const { return busy_; }

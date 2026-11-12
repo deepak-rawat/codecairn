@@ -1,7 +1,7 @@
 #include "CompilerSymbolRecovery.h"
-#include "Diagnostics.h"
-#include "LanguageRegistry.h"
-#include "WorkspacePaths.h"
+#include <codecairn/Diagnostics.h>
+#include <codecairn/LanguageRegistry.h>
+#include <codecairn/WorkspacePaths.h>
 #include <clang-c/Index.h>
 #include <clang-c/CXCompilationDatabase.h>
 #include <QDir>

@@ -1,10 +1,10 @@
-#include "WorkspaceIndex.h"
-#include "Diagnostics.h"
-#include "FileIO.h"
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Diagnostics.h>
+#include <codecairn/FileIO.h>
 #include "ReferenceCandidateIndex.h"
 #include "SymbolIndexStore.h"
 #include "WorkspaceScanner.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QDateTime>
 #include <QDir>
@@ -94,11 +94,15 @@ PreparedFile prepareFile(PreparedFile file, const QString &oldHash, const QStrin
 }
 }
 
-IndexResult buildWorkspaceIndex(const QString &requestedRoot, bool force, bool rescan,
+IndexResult buildWorkspaceIndex(const QString &requestedRoot, IndexRefresh mode,
                                 const QStringList &excludes,
                                 const std::shared_ptr<std::atomic_bool> &cancel,
                                 const std::shared_ptr<IndexProgress> &progress,
                                 const QString &projectFile) {
+    const bool force =
+        mode == IndexRefresh::ReparseKnownFiles || mode == IndexRefresh::RebuildFilesAndSymbols;
+    const bool rescan =
+        mode == IndexRefresh::DiscoverChanges || mode == IndexRefresh::RebuildFilesAndSymbols;
     IndexResult result;
     const auto root =
         QDir::isAbsolutePath(requestedRoot) ? workspacePath(requestedRoot) : requestedRoot;

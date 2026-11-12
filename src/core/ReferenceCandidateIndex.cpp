@@ -1,9 +1,9 @@
 #include "ReferenceCandidateIndex.h"
-#include "Diagnostics.h"
+#include <codecairn/Diagnostics.h>
 
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "SymbolIndexStore.h"
-#include "WorkspacePaths.h"
+#include <codecairn/WorkspacePaths.h>
 
 #include <QDateTime>
 #include <QFileInfo>

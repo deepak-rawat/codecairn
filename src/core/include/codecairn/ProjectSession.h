@@ -1,6 +1,6 @@
 #pragma once
 
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/WorkspaceOptionsStore.h>
 
 struct PreparedProject {
     QString root;

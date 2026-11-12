@@ -1,10 +1,10 @@
 #include "MainWindow.h"
-#include "FileIO.h"
-#include "RuntimeLimits.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/FileIO.h>
+#include <codecairn/RuntimeLimits.h>
+#include <codecairn/WorkspaceOptionsStore.h>
 #include "SymbolBrowser.h"
 #include "SymbolCatalogModel.h"
-#include "Diagnostics.h"
+#include <codecairn/Diagnostics.h>
 
 #include <QAction>
 #include <QComboBox>
@@ -21,23 +21,17 @@
 #include <algorithm>
 
 void MainWindow::initializeWorkspace() {
-    workspaceServices_ = new WorkspaceServices(this);
-    navigationService_ = new NavigationService(workspaceServices_, workspaceServices_);
-    navigationService_->setSnapshotProvider(
-        [this](const QString &path) -> std::optional<QByteArray> {
-            if (auto *document = findDocument(path))
-                return snapshot(document);
-            return {};
-        });
+    coreSession_ = new CoreSession(this);
+    workspaceServices_ = &coreSession_->projects();
+    navigationService_ = &coreSession_->navigation();
+    referenceSession_ = &coreSession_->references();
+    coreSession_->setSnapshotProvider([this](const QString &path) -> std::optional<QByteArray> {
+        if (auto *document = findDocument(path))
+            return snapshot(document);
+        return {};
+    });
     connect(navigationService_, &NavigationService::definitionReady, this,
             &MainWindow::handleDefinitionResult);
-    referenceSession_ = new ReferenceSession(workspaceServices_, workspaceServices_);
-    referenceSession_->setSnapshotProvider(
-        [this](const QString &path) -> std::optional<QByteArray> {
-            if (auto *document = findDocument(path))
-                return snapshot(document);
-            return {};
-        });
     connect(referenceSession_, &ReferenceSession::pageReady, this,
             [this](quint64 token, const ReferenceResults &results, bool semantic) {
                 if (token == referenceToken_ && referenceResultsPage_)
@@ -522,10 +516,10 @@ void MainWindow::semanticPreview(const LspLocation &target) {
     }
 }
 
-void MainWindow::refreshWorkspace(bool force, bool rescan) {
+void MainWindow::refreshWorkspace(IndexRefresh mode) {
     if (!projectPath_.isEmpty()) {
         indexRecoveryOffered_ = false;
-        workspaceIndex_->refresh(force, rescan);
+        workspaceIndex_->refresh(mode);
     }
 }
 
@@ -685,7 +679,7 @@ bool MainWindow::closeProject() {
         referencesDialog_->close();
     navigationService_->cancelLookups();
     navigationService_->cancelRead();
-    workspaceServices_->closeProject();
+    coreSession_->closeProject();
     while (!documents_.empty())
         closeTab(documentsTabs_->indexOf(documents_.back()->editor), false);
     if (referenceResultsPage_)

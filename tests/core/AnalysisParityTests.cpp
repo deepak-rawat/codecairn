@@ -1,5 +1,5 @@
-#include "SourceAnalysis.h"
-#include "FileIO.h"
+#include <codecairn/SourceAnalysis.h>
+#include <codecairn/FileIO.h>
 #include "TestStorage.h"
 
 #include <QCoreApplication>

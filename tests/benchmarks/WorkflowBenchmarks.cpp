@@ -1,6 +1,7 @@
-#include "FileIO.h"
-#include "NavigationService.h"
-#include "ReferenceSession.h"
+#include <codecairn/FileIO.h>
+#include <codecairn/CoreSession.h>
+#include <codecairn/NavigationService.h>
+#include <codecairn/ReferenceSession.h>
 #include "TestStorage.h"
 
 #include <QElapsedTimer>
@@ -52,8 +53,8 @@ private slots:
     }
 
     void referenceDispatch() {
-        WorkspaceServices services;
-        ReferenceSession session(&services);
+        CoreSession core;
+        auto &session = core.references();
         const auto run = [&](bool shared) {
             ReferenceResults result;
             QEventLoop loop;
@@ -95,8 +96,8 @@ private slots:
     }
 
     void navigationRead() {
-        WorkspaceServices services;
-        NavigationService navigation(&services);
+        CoreSession core;
+        auto &navigation = core.navigation();
         const auto path = request_.paths.first();
         const auto bytes = request_.overlays.first().source;
         const NavigationLocation location{path, 4, 10, -1, sourceContentHash(bytes)};

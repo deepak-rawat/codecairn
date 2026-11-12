@@ -1,17 +1,24 @@
-#include "FileIO.h"
-#include "NavigationTarget.h"
-#include "NavigationService.h"
-#include "ProjectDiscovery.h"
-#include "ProjectSession.h"
-#include "ReferenceSession.h"
+#include <codecairn/FileIO.h>
+#include <codecairn/CoreSession.h>
+#include <codecairn/NavigationTarget.h>
+#include <codecairn/NavigationService.h>
+#include <codecairn/ProjectDiscovery.h>
+#include <codecairn/ProjectSession.h>
+#include <codecairn/ReferenceSession.h>
 #include "TestStorage.h"
 
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QPointer>
 
 #if defined(QT_GUI_LIB) || defined(QT_WIDGETS_LIB) || defined(SCINTILLA_QT)
 #error Core tests must not inherit GUI dependencies.
+#endif
+
+#if __has_include("SymbolIndexStore.h") || __has_include("CompilerSymbolRecovery.h") ||            \
+                                                         __has_include("DefinitionResolver.h")
+#error Public core consumers must not inherit engine implementation headers.
 #endif
 
 class CoreTests : public QObject {
@@ -19,19 +26,114 @@ class CoreTests : public QObject {
     TestStorage storage_;
 
 private slots:
+    void owningSessionUsesLiveDocumentsAndShutsDownSafely() {
+        QTemporaryDir directory;
+        const auto path = directory.filePath("source.py");
+        const QByteArray disk = "def saved(): pass\n";
+        const QByteArray live = "def unsaved(): pass\n";
+        QVERIFY(writeSourceFile(path, disk, false).isEmpty());
+        QPointer<DocumentAnalysis> owned;
+        {
+            CoreSession session;
+            auto *document = session.createDocument(path, disk);
+            owned = document;
+            document->setBytes(live);
+            QSignalSpy analyzed(document, &DocumentAnalysis::analysisCompleted);
+            document->startAnalysis();
+            QTRY_COMPARE(analyzed.size(), 1);
+            QCOMPARE(document->analysis.symbols[0].name, "unsaved");
+            const NavigationLocation target{path, 4, 11, -1, sourceContentHash(live)};
+            QSignalSpy reads(&session.navigation(), &NavigationService::readReady);
+            session.navigation().read(target, 1);
+            QTRY_COMPARE(reads.size(), 1);
+            const auto read = qvariant_cast<NavigationRead>(reads[0][1]);
+            QVERIFY(read.range.error.isEmpty());
+            QCOMPARE(read.file.bytes, live);
+            QCOMPARE(readSourceFile(path).bytes, disk);
+            auto *temporary = session.createDocument(directory.filePath("other.py"), live);
+            QPointer<DocumentAnalysis> closed = temporary;
+            QVERIFY(session.closeDocument(temporary).isEmpty());
+            QVERIFY(closed.isNull());
+            DocumentAnalysis external(path, disk, false, 0);
+            QVERIFY(!session.closeDocument(&external).isEmpty());
+            document->startAnalysis();
+            session.navigation().read(target, 2);
+        }
+        QVERIFY(owned.isNull());
+    }
+
+    void projectChangesCancelOwnedSearchesButInvalidProjectsDoNot() {
+        QTemporaryDir directory;
+        QTemporaryDir next;
+        const auto path = directory.filePath("source.txt");
+        QVERIFY(writeSourceFile(path, "target\n", false).isEmpty());
+        CoreSession session;
+        const ProjectOpenOptions manual{IndexStartup::Manual, LanguageStartup::Manual};
+        const auto prepared = prepareProject(directory.path());
+        QVERIFY(session.projects().commitProject(prepared, manual).isEmpty());
+        ReferenceSearchRequest request;
+        request.paths = {path};
+        request.query = "target";
+        request.options.method = SearchMethod::Literal;
+        request.options.smartMatching = false;
+        QSignalSpy pages(&session.references(), &ReferenceSession::pageReady);
+        session.references().start(request, 1);
+        auto invalid = prepared;
+        invalid.error = "Preparation failed";
+        QVERIFY(!session.projects().commitProject(invalid, manual).isEmpty());
+        QVERIFY(session.projects().commitProject(prepared, manual).isEmpty());
+        QTRY_COMPARE(pages.size(), 1);
+        session.references().start(request, 2);
+        QVERIFY(session.projects().commitProject(prepareProject(next.path()), manual).isEmpty());
+        QCoreApplication::processEvents();
+        QCOMPARE(pages.size(), 1);
+        QVERIFY(!session.index().busy());
+    }
+
+    void namedRefreshDistinguishesKnownFilesFromDiscovery() {
+        QTemporaryDir directory;
+        QVERIFY(
+            writeSourceFile(directory.filePath("a.py"), "def first(): pass\n", false).isEmpty());
+        CoreSession session;
+        QSignalSpy ready(&session.index(), &WorkspaceIndex::ready);
+        QSignalSpy errors(&session.index(), &WorkspaceIndex::failed);
+        const ProjectOpenOptions indexing{IndexStartup::Automatic, LanguageStartup::Manual};
+        QVERIFY(
+            session.projects().commitProject(prepareProject(directory.path()), indexing).isEmpty());
+        QTRY_COMPARE(ready.size(), 1);
+        session.index().cancel();
+        QVERIFY(
+            writeSourceFile(directory.filePath("b.py"), "def second(): pass\n", false).isEmpty());
+        session.index().refresh(IndexRefresh::ReparseKnownFiles);
+        QTRY_COMPARE(ready.size(), 2);
+        auto result = qvariant_cast<IndexResult>(ready[1][0]);
+        QCOMPARE(result.files.size(), 1);
+        QCOMPARE(result.parsed, 1);
+        session.index().cancel();
+        session.index().refresh(IndexRefresh::RebuildFilesAndSymbols);
+        QTRY_COMPARE(ready.size(), 3);
+        result = qvariant_cast<IndexResult>(ready[2][0]);
+        QCOMPARE(result.files.size(), 2);
+        QCOMPARE(result.parsed, 2);
+        QVERIFY(errors.isEmpty());
+        session.closeProject();
+        QVERIFY(session.index().files().isEmpty());
+    }
+
     void preparedProjectDoesNotSwitchActiveServices() {
         QTemporaryDir first;
         QTemporaryDir second;
         WorkspaceServices services;
         const auto initial = prepareProject(first.path());
-        QVERIFY(services.commitProject(initial, false, false).isEmpty());
+        const ProjectOpenOptions manual{IndexStartup::Manual, LanguageStartup::Manual};
+        QVERIFY(services.commitProject(initial, manual).isEmpty());
         const auto prepared = prepareProject(second.path());
         QCOMPARE(services.project().root, workspacePath(first.path()));
         auto invalid = prepared;
         invalid.error = "Preparation failed";
-        QVERIFY(!services.commitProject(invalid, false, false).isEmpty());
+        QVERIFY(!services.commitProject(invalid, manual).isEmpty());
         QCOMPARE(services.project().root, workspacePath(first.path()));
-        QVERIFY(services.commitProject(prepared, false, false).isEmpty());
+        QVERIFY(services.commitProject(prepared, manual).isEmpty());
         QCOMPARE(services.project().root, workspacePath(second.path()));
         services.closeProject();
         QVERIFY(services.project().root.isEmpty());
@@ -44,7 +146,8 @@ private slots:
         const QByteArray source = "def target(): pass\n";
         QVERIFY(writeSourceFile(path, source, false).isEmpty());
         const auto cancelled = std::make_shared<std::atomic_bool>(false);
-        const auto indexed = buildWorkspaceIndex(directory.path(), false, true, {}, cancelled);
+        const auto indexed =
+            buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {}, cancelled);
         QVERIFY2(indexed.error.isEmpty(), qPrintable(indexed.error));
         WorkspaceServices services;
         NavigationService navigation(&services);

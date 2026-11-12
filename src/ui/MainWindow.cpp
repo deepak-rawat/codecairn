@@ -1,11 +1,11 @@
 #include "MainWindow.h"
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "UiAppearance.h"
-#include "RuntimeLimits.h"
-#include "LanguageRegistry.h"
+#include <codecairn/RuntimeLimits.h>
+#include <codecairn/LanguageRegistry.h>
 #include "SymbolBrowser.h"
-#include "CompilationDatabase.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/CompilationDatabase.h>
+#include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QAction>
 #include <QApplication>
@@ -179,7 +179,8 @@ MainWindow::~MainWindow() {
     workspaceServices_->stopLanguageServices();
     for (auto *watcher : watchers)
         watcher->waitForFinished();
-    delete workspaceServices_;
+    delete coreSession_;
+    coreSession_ = nullptr;
     workspaceServices_ = nullptr;
     workspaceIndex_ = nullptr;
     cppLanguageService_ = nullptr;

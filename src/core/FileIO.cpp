@@ -1,5 +1,5 @@
-#include "FileIO.h"
-#include "Diagnostics.h"
+#include <codecairn/FileIO.h>
+#include <codecairn/Diagnostics.h>
 
 #include <QFile>
 #include <QCryptographicHash>

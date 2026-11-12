@@ -1,12 +1,12 @@
 #include "DefinitionResolver.h"
 #include "CodeEditor.h"
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "SourceDocument.h"
 #include "SymbolBrowser.h"
-#include "WorkspaceOptionsStore.h"
-#include "ApplicationStateStore.h"
+#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ApplicationStateStore.h>
 #include "TestStorage.h"
-#include "ReferenceSearch.h"
+#include <codecairn/ReferenceSearch.h>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>

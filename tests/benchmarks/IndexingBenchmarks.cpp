@@ -1,6 +1,6 @@
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "TestStorage.h"
-#include "WorkspaceIndex.h"
+#include <codecairn/WorkspaceIndex.h>
 
 #include <QElapsedTimer>
 #include <QFile>
@@ -67,7 +67,8 @@ private slots:
 
         const auto cancel = std::make_shared<std::atomic_bool>(false);
         elapsed.restart();
-        const auto warm = buildWorkspaceIndex(directory.path(), false, true, {}, cancel);
+        const auto warm =
+            buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {}, cancel);
         const auto warmMs = elapsed.elapsed();
         QVERIFY2(warm.error.isEmpty(), qPrintable(warm.error));
         QCOMPARE(warm.reused, fileCount);

@@ -50,6 +50,15 @@ endif()
 
 add_library(
     codecairn_core STATIC
+    src/core/include/codecairn/CoreSession.h
+    src/core/CoreSession.cpp
+    src/core/internal/DefinitionResolver.h
+    src/core/include/codecairn/DocumentAnalysis.h
+    src/core/include/codecairn/WorkspaceIndex.h
+    src/core/include/codecairn/WorkspaceServices.h
+    src/core/include/codecairn/LanguageServerClient.h
+    src/core/include/codecairn/NavigationService.h
+    src/core/include/codecairn/ReferenceSession.h
     src/core/Diagnostics.cpp
     src/core/ApplicationStateStore.cpp
     src/core/SourceAnalysis.cpp
@@ -82,8 +91,8 @@ add_library(
 )
 target_include_directories(
     codecairn_core
-    PUBLIC src/core
-    PRIVATE "${TREE_SITTER_INCLUDE_DIR}" "${LIBCLANG_INCLUDE_DIR}"
+    PUBLIC src/core/include
+    PRIVATE src/core/internal "${TREE_SITTER_INCLUDE_DIR}" "${LIBCLANG_INCLUDE_DIR}"
 )
 target_link_libraries(
     codecairn_core

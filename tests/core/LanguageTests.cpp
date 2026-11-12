@@ -1,9 +1,9 @@
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "CompilerSymbolRecovery.h"
-#include "WorkspaceIndex.h"
-#include "LanguageRegistry.h"
-#include "NavigationHistory.h"
-#include "ReferenceSearch.h"
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/LanguageRegistry.h>
+#include <codecairn/NavigationHistory.h>
+#include <codecairn/ReferenceSearch.h>
 #include "TestStorage.h"
 #include <QDirIterator>
 #include <QFileInfo>
@@ -444,7 +444,7 @@ void LanguageTests::includedMacrosGenerateFunctionDefinitions() {
     for (const auto &entry : result.symbols)
         if (entry.kind == "Function")
             QVERIFY(entry.name != "first" && entry.name != "second");
-    const auto built = buildWorkspaceIndex(directory.path(), false, true, {},
+    const auto built = buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {},
                                            std::make_shared<std::atomic_bool>(false));
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     SymbolQuery query;
@@ -469,7 +469,7 @@ void LanguageTests::workspaceLanguagesAndCancellation() {
     QVERIFY(
         writeSourceFile(directory.filePath("run"), "#!/bin/bash\ngreet() { echo hello; }\n", false)
             .isEmpty());
-    const auto result = buildWorkspaceIndex(directory.path(), false, true, {},
+    const auto result = buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {},
                                             std::make_shared<std::atomic_bool>(false));
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     QCOMPARE(result.parsed, 2);

@@ -1,5 +1,5 @@
 #include "ReferenceResultsView.h"
-#include "ReferenceSearch.h"
+#include <codecairn/ReferenceSearch.h>
 #include <QAbstractTextDocumentLayout>
 #include <QApplication>
 #include <QClipboard>
@@ -58,8 +58,10 @@ void ReferenceResultsView::rebuildTextDocument() {
         lineNumbers_.insert(lines_[line], line);
         auto display = lines_[line]->data(0, ReferenceItemRole::DisplayText).toString();
         // Context blocks remain multi-line in stored hits, but occupy one visual result row.
-        display.replace('\r', ' ').replace('\n', ' ')
-            .replace(QChar::ParagraphSeparator, ' ').replace(QChar::LineSeparator, ' ');
+        display.replace('\r', ' ')
+            .replace('\n', ' ')
+            .replace(QChar::ParagraphSeparator, ' ')
+            .replace(QChar::LineSeparator, ' ');
         text << display;
     }
     text_.setDefaultFont(font());
@@ -84,9 +86,11 @@ void ReferenceResultsView::applyCursor(const QTextCursor &cursor) {
         const int x = qRound(block.layout()->lineAt(0).cursorToX(cursor_.positionInBlock())) +
                       visualItemRect(lines_[line]).left() + iconSize().width() + 10;
         if (x > viewport()->width() - 4)
-            horizontalScrollBar()->setValue(horizontalScrollBar()->value() + x - viewport()->width() + 4);
+            horizontalScrollBar()->setValue(horizontalScrollBar()->value() + x -
+                                            viewport()->width() + 4);
         else if (x < iconSize().width() + 10)
-            horizontalScrollBar()->setValue(horizontalScrollBar()->value() + x - iconSize().width() - 10);
+            horizontalScrollBar()->setValue(horizontalScrollBar()->value() + x -
+                                            iconSize().width() - 10);
     }
     cursorVisible_ = true;
     viewport()->update();
@@ -147,20 +151,42 @@ void ReferenceResultsView::keyPressEvent(QKeyEvent *event) {
     QTextCursor::MoveOperation operation = QTextCursor::NoMove;
     int count = 1;
     switch (event->key()) {
-    case Qt::Key_Left: operation = control ? QTextCursor::PreviousWord : QTextCursor::PreviousCharacter; break;
-    case Qt::Key_Right: operation = control ? QTextCursor::NextWord : QTextCursor::NextCharacter; break;
-    case Qt::Key_Up: operation = QTextCursor::Up; break;
-    case Qt::Key_Down: operation = QTextCursor::Down; break;
-    case Qt::Key_Home: operation = control ? QTextCursor::Start : QTextCursor::StartOfBlock; break;
-    case Qt::Key_End: operation = control ? QTextCursor::End : QTextCursor::EndOfBlock; break;
-    case Qt::Key_PageUp: operation = QTextCursor::Up; count = qMax(1, viewport()->height() / qMax(1, fontMetrics().height())); break;
-    case Qt::Key_PageDown: operation = QTextCursor::Down; count = qMax(1, viewport()->height() / qMax(1, fontMetrics().height())); break;
-    default: break;
+    case Qt::Key_Left:
+        operation = control ? QTextCursor::PreviousWord : QTextCursor::PreviousCharacter;
+        break;
+    case Qt::Key_Right:
+        operation = control ? QTextCursor::NextWord : QTextCursor::NextCharacter;
+        break;
+    case Qt::Key_Up:
+        operation = QTextCursor::Up;
+        break;
+    case Qt::Key_Down:
+        operation = QTextCursor::Down;
+        break;
+    case Qt::Key_Home:
+        operation = control ? QTextCursor::Start : QTextCursor::StartOfBlock;
+        break;
+    case Qt::Key_End:
+        operation = control ? QTextCursor::End : QTextCursor::EndOfBlock;
+        break;
+    case Qt::Key_PageUp:
+        operation = QTextCursor::Up;
+        count = qMax(1, viewport()->height() / qMax(1, fontMetrics().height()));
+        break;
+    case Qt::Key_PageDown:
+        operation = QTextCursor::Down;
+        count = qMax(1, viewport()->height() / qMax(1, fontMetrics().height()));
+        break;
+    default:
+        break;
     }
     if (operation != QTextCursor::NoMove) {
         auto cursor = cursor_;
-        cursor.movePosition(operation, event->modifiers().testFlag(Qt::ShiftModifier)
-                                           ? QTextCursor::KeepAnchor : QTextCursor::MoveAnchor, count);
+        cursor.movePosition(operation,
+                            event->modifiers().testFlag(Qt::ShiftModifier)
+                                ? QTextCursor::KeepAnchor
+                                : QTextCursor::MoveAnchor,
+                            count);
         applyCursor(cursor);
         event->accept();
     } else if (!event->text().isEmpty() || event->key() == Qt::Key_Delete ||
@@ -202,7 +228,8 @@ void ReferenceResultsView::mouseMoveEvent(QMouseEvent *event) {
         NavigationTree::mouseMoveEvent(event);
     auto *item = itemAt(point);
     const auto hovered = item && itemIconRect(item).contains(point)
-                             ? QPersistentModelIndex(indexFromItem(item)) : QPersistentModelIndex{};
+                             ? QPersistentModelIndex(indexFromItem(item))
+                             : QPersistentModelIndex{};
     if (hovered != hoveredIcon_) {
         hoveredIcon_ = hovered;
         viewport()->update();
@@ -254,8 +281,8 @@ void ReferenceResultsView::focusOutEvent(QFocusEvent *event) {
 }
 
 void ReferenceResultsView::paintText(QPainter *painter, const QPointF &origin,
-                                   const QModelIndex &index, const QColor &foreground,
-                                   const QColor &heading) const {
+                                     const QModelIndex &index, const QColor &foreground,
+                                     const QColor &heading) const {
     auto *item = itemFromIndex(index);
     if (!lineNumbers_.contains(item))
         return;
@@ -266,10 +293,12 @@ void ReferenceResultsView::paintText(QPainter *painter, const QPointF &origin,
         QTextCharFormat format;
         format.setForeground(heading);
         format.setFontUnderline(true);
-        formats.append({5, static_cast<int>(index.data(ReferenceItemRole::Query).toString().size()), format});
+        formats.append(
+            {5, static_cast<int>(index.data(ReferenceItemRole::Query).toString().size()), format});
     }
     const int start = qMax(cursor_.selectionStart(), block.position()) - block.position();
-    const int end = qMin(cursor_.selectionEnd(), block.position() + block.length() - 1) - block.position();
+    const int end =
+        qMin(cursor_.selectionEnd(), block.position() + block.length() - 1) - block.position();
     if (end > start) {
         QTextCharFormat selection;
         selection.setBackground(palette().highlight());

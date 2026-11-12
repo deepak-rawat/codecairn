@@ -1,19 +1,19 @@
 #pragma once
 
 #include "CodeEditor.h"
-#include "WorkspaceIndex.h"
-#include "LanguageServerClient.h"
-#include "NavigationHistory.h"
-#include "NavigationService.h"
-#include "FileIO.h"
-#include "ReferenceSearch.h"
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/LanguageServerClient.h>
+#include <codecairn/NavigationHistory.h>
+#include <codecairn/NavigationService.h>
+#include <codecairn/CoreSession.h>
+#include <codecairn/FileIO.h>
+#include <codecairn/ReferenceSearch.h>
 #include "ReferenceItemRoles.h"
-#include "ReferenceSession.h"
+#include <codecairn/ReferenceSession.h>
 #include "SourceDocument.h"
-#include "DefinitionResolver.h"
-#include "WorkspaceServices.h"
-#include "ApplicationStateStore.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/WorkspaceServices.h>
+#include <codecairn/ApplicationStateStore.h>
+#include <codecairn/WorkspaceOptionsStore.h>
 #include <QMainWindow>
 #include <QFutureWatcher>
 #include <QSet>
@@ -133,6 +133,7 @@ private:
     void navigateDefinition(const LspLocation &target);
     void lookupLink(CodeEditor *editor, int position, bool activate);
     WorkspaceServices *workspaceServices_;
+    CoreSession *coreSession_;
     ReferenceSession *referenceSession_;
     NavigationService *navigationService_;
     quint64 linkGeneration_ = 0;
@@ -216,7 +217,7 @@ private:
     void synchronizeLanguageDocuments();
     void readWorkspaceOptions();
     bool writeWorkspaceOptions(const QStringList &excludedDirectories);
-    void refreshWorkspace(bool force, bool rescan);
+    void refreshWorkspace(IndexRefresh mode);
     void reconcileOpenDocuments(const IndexResult &result);
     Document *currentDocument() const;
     Document *findDocument(const QString &path) const;

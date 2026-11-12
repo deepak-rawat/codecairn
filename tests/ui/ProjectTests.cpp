@@ -1,6 +1,6 @@
 #include "ProjectDialog.h"
-#include "WorkspaceOptionsStore.h"
-#include "WorkspacePaths.h"
+#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/WorkspacePaths.h>
 #include "TestStorage.h"
 #include <QDir>
 #include <QDialogButtonBox>

@@ -1,7 +1,7 @@
 #include "WorkspaceScanner.h"
-#include "LanguageRegistry.h"
+#include <codecairn/LanguageRegistry.h>
 #include "SymbolIndexStore.h"
-#include "WorkspacePaths.h"
+#include <codecairn/WorkspacePaths.h>
 
 #include <QDataStream>
 #include <QDateTime>

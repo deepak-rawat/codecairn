@@ -1,8 +1,8 @@
-#include "WorkspaceIndex.h"
-#include "Diagnostics.h"
-#include "FileIO.h"
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Diagnostics.h>
+#include <codecairn/FileIO.h>
 #include "SymbolIndexStore.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QElapsedTimer>
 #include <QFileInfo>

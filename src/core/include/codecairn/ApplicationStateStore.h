@@ -1,8 +1,8 @@
 #pragma once
 
-#include "NavigationHistory.h"
-#include "ReferenceSearch.h"
-#include "WorkspacePaths.h"
+#include <codecairn/NavigationHistory.h>
+#include <codecairn/ReferenceSearch.h>
+#include <codecairn/WorkspacePaths.h>
 #include <QHash>
 #include <QJsonObject>
 #include <QString>

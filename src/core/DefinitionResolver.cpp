@@ -1,5 +1,5 @@
 #include "DefinitionResolver.h"
-#include "WorkspaceIndex.h"
+#include <codecairn/WorkspaceIndex.h>
 #include <QtConcurrentRun>
 #include <algorithm>
 #include <utility>

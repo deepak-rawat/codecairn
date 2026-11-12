@@ -45,6 +45,10 @@ codecairn_core_test(cli_tests cli/CliTests.cpp cli)
 add_dependencies(cli_tests codecairn-cli)
 target_compile_definitions(cli_tests PRIVATE CODECAIRN_CLI_PATH="$<TARGET_FILE:codecairn-cli>")
 
+foreach(target index_parity_tests reference_candidate_index_tests language_tests)
+    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src/core/internal")
+endforeach()
+
 option(CODECAIRN_BUILD_BENCHMARKS "Build and register benchmark fixtures" ON)
 if(CODECAIRN_BUILD_BENCHMARKS)
     codecairn_core_test(workflow_benchmarks benchmarks/WorkflowBenchmarks.cpp workflows)
@@ -192,6 +196,15 @@ codecairn_test(
     reference-results.txt,txt
 )
 codecairn_test(symbol_scaling_tests ui/SymbolScalingTests.cpp symbol_scaling)
+foreach(
+    target
+    workspace_tests
+    refactoring_tests
+    diagnostics_tests
+    symbol_scaling_tests
+)
+    target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src/core/internal")
+endforeach()
 if(CODECAIRN_BUILD_BENCHMARKS)
     codecairn_test(indexing_benchmarks benchmarks/IndexingBenchmarks.cpp large_indexing)
     set_tests_properties(

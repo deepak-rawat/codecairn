@@ -1,11 +1,11 @@
 #include "MainWindow.h"
-#include "Diagnostics.h"
-#include "LanguageServerClient.h"
+#include <codecairn/Diagnostics.h>
+#include <codecairn/LanguageServerClient.h>
 #include "SymbolCatalogModel.h"
 #include "SymbolIndexStore.h"
 #include "TestStorage.h"
-#include "WorkspaceIndex.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QElapsedTimer>
 #include <QApplication>
@@ -36,8 +36,8 @@ private slots:
         QVERIFY(writeSourceFile(path, source, false).isEmpty());
         const auto catalogPath = QDir(root).filePath("catalog.c");
         QVERIFY(writeSourceFile(catalogPath, "int unused;\n", false).isEmpty());
-        const auto built =
-            buildWorkspaceIndex(root, false, true, {}, std::make_shared<std::atomic_bool>(false));
+        const auto built = buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {},
+                                               std::make_shared<std::atomic_bool>(false));
         QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
         const int requested = qEnvironmentVariableIntValue("CODECAIRN_SYMBOL_SCALE");
         const int count = requested > 0 ? requested : 100000;
@@ -170,9 +170,9 @@ private slots:
         const auto root = workspacePath(directory.path());
         const auto path = QDir(root).filePath("source.c");
         QVERIFY(writeSourceFile(path, "int source;\n", false).isEmpty());
-        QVERIFY(
-            buildWorkspaceIndex(root, false, true, {}, std::make_shared<std::atomic_bool>(false))
-                .error.isEmpty());
+        QVERIFY(buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {},
+                                    std::make_shared<std::atomic_bool>(false))
+                    .error.isEmpty());
         {
             SymbolIndexStore db(workspaceDatabase(root), true);
             db.exec("BEGIN; DELETE FROM symbols;"

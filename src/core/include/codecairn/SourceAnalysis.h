@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SourceTypes.h"
+#include <codecairn/SourceTypes.h>
 
 enum class SourceAnalysisMode { Editor, Index, SyntaxOnly };
 

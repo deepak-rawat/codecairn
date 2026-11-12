@@ -1,7 +1,7 @@
 #include "ProjectDialog.h"
-#include "Diagnostics.h"
+#include <codecairn/Diagnostics.h>
 #include "UiAppearance.h"
-#include "WorkspacePaths.h"
+#include <codecairn/WorkspacePaths.h>
 
 #include <QAbstractListModel>
 #include <QDialogButtonBox>

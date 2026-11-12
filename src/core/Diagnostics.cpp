@@ -1,4 +1,4 @@
-#include "Diagnostics.h"
+#include <codecairn/Diagnostics.h>
 
 #include <QCoreApplication>
 #include <QDateTime>

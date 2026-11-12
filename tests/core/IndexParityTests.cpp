@@ -1,7 +1,7 @@
-#include "WorkspaceIndex.h"
+#include <codecairn/WorkspaceIndex.h>
 #include "SymbolIndexStore.h"
 #include "TestStorage.h"
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -266,7 +266,8 @@ void IndexParityTests::cancellationPreservesAtomicCompletedFile() {
     };
     QVERIFY(write("int before();\n"));
     auto cancel = std::make_shared<std::atomic_bool>(false);
-    const auto initial = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    const auto initial =
+        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QVERIFY2(initial.error.isEmpty(), qPrintable(initial.error));
     const auto before = queryWorkspaceSymbols(fixture.root, {});
     QCOMPARE(before.total, 1);
@@ -274,7 +275,8 @@ void IndexParityTests::cancellationPreservesAtomicCompletedFile() {
     IndexResult cancelled;
     {
         CancelDuringWrite hook(*cancel);
-        cancelled = buildWorkspaceIndex(fixture.root, true, true, {}, cancel);
+        cancelled =
+            buildWorkspaceIndex(fixture.root, IndexRefresh::RebuildFilesAndSymbols, {}, cancel);
     }
     QVERIFY(cancel->load());
     QVERIFY(cancelled.cancelled);
@@ -291,7 +293,8 @@ void IndexParityTests::cancellationPreservesAtomicCompletedFile() {
         QCryptographicHash::hash("int after_cancelled();\n", QCryptographicHash::Sha256).toHex());
     QVERIFY(after.symbols.first().hash != before.symbols.first().hash);
     cancel->store(false);
-    const auto resumed = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    const auto resumed =
+        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QVERIFY2(resumed.error.isEmpty(), qPrintable(resumed.error));
     QCOMPARE(resumed.parsed, 0);
     QCOMPARE(resumed.reused, 1);
@@ -310,14 +313,16 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
     QCOMPARE(file.write("int preserved();\n"), qint64{17});
     file.close();
     auto cancel = std::make_shared<std::atomic_bool>(false);
-    const auto initial = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    const auto initial =
+        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QVERIFY2(initial.error.isEmpty(), qPrintable(initial.error));
     {
         SymbolIndexStore database(workspaceDatabase(fixture.root), true);
         database.exec("UPDATE files SET parser='codecairn-multilanguage-syntax-v14';"
                       "UPDATE symbols SET generated=1,provider='compiler';");
     }
-    const auto refreshed = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    const auto refreshed =
+        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QVERIFY2(refreshed.error.isEmpty(), qPrintable(refreshed.error));
     QCOMPARE(refreshed.parsed, 1);
     QCOMPARE(refreshed.reused, 0);
@@ -466,10 +471,12 @@ void IndexParityTests::bulkHasherResetsAndPreservesFreshness() {
         }
         QCOMPARE(count, expected.size());
     };
-    const auto initial = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    const auto initial =
+        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QCOMPARE(initial.parsed, 40);
     check(initial);
-    const auto cached = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    const auto cached =
+        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QCOMPARE(cached.parsed, 0);
     QCOMPARE(cached.reused, 40);
     QVERIFY(!cached.changed);
@@ -487,7 +494,8 @@ void IndexParityTests::bulkHasherResetsAndPreservesFreshness() {
     file.close();
     expected[changed] =
         QCryptographicHash::hash(replacement.mid(3), QCryptographicHash::Sha256).toHex();
-    const auto refreshed = buildWorkspaceIndex(fixture.root, false, true, {}, cancel);
+    const auto refreshed =
+        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QCOMPARE(refreshed.parsed, 1);
     QCOMPARE(refreshed.reused, 39);
     check(refreshed);

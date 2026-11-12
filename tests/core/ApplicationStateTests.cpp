@@ -1,5 +1,5 @@
-#include "ApplicationStateStore.h"
-#include "WorkspacePaths.h"
+#include <codecairn/ApplicationStateStore.h>
+#include <codecairn/WorkspacePaths.h>
 #include "TestStorage.h"
 #include <QDir>
 #include <QCryptographicHash>

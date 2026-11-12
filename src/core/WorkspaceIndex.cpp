@@ -1,7 +1,7 @@
-#include "WorkspaceIndex.h"
+#include <codecairn/WorkspaceIndex.h>
 #include "WorkspaceScanner.h"
-#include "Diagnostics.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/Diagnostics.h>
+#include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QFileInfo>
 #include <QDir>
@@ -167,14 +167,14 @@ void WorkspaceIndex::open(const QString &root, const QString &projectFile) {
     if (!watcher_.files().isEmpty())
         watcher_.removePaths(watcher_.files());
     pollTimer_.start();
-    refresh(false, true);
+    refresh();
 }
 
 void WorkspaceIndex::setExcludes(const QStringList &names) {
     if (excludes_ == names)
         return;
     excludes_ = names;
-    refresh(false, true);
+    refresh();
 }
 
 void WorkspaceIndex::close() {
@@ -204,7 +204,11 @@ void WorkspaceIndex::setRefreshIntervalMinutes(int minutes) {
         pollTimer_.setInterval(minutes * 60000);
 }
 
-void WorkspaceIndex::refresh(bool force, bool rescan) {
+void WorkspaceIndex::refresh(IndexRefresh mode) {
+    const bool force =
+        mode == IndexRefresh::ReparseKnownFiles || mode == IndexRefresh::RebuildFilesAndSymbols;
+    const bool rescan =
+        mode == IndexRefresh::DiscoverChanges || mode == IndexRefresh::RebuildFilesAndSymbols;
     requestRefresh(force, rescan, false, true);
 }
 
@@ -213,10 +217,10 @@ void WorkspaceIndex::requestRefresh(bool force, bool rescan, bool automatic, boo
         return;
     paused_ = false;
     pendingAutomatic_ = pending_ ? pendingAutomatic_ && automatic : automatic;
+    force_ = pending_ ? force_ || force : force;
+    rescan_ = pending_ ? rescan_ || rescan : rescan;
+    verifyContents_ = pending_ ? verifyContents_ || verifyContents : verifyContents;
     pending_ = true;
-    force_ = force_ || force;
-    rescan_ = rescan_ || rescan;
-    verifyContents_ = verifyContents_ || verifyContents;
     startPending();
 }
 
@@ -286,7 +290,7 @@ QString WorkspaceIndex::recreateDatabase() {
         watcher_.removePaths(watcher_.files());
     emit status("Previous index archived; rebuilding workspace index.");
     pollTimer_.start();
-    refresh(false, true);
+    refresh();
     return {};
 }
 
@@ -340,35 +344,38 @@ void WorkspaceIndex::startPending() {
     resourceElapsed_.start();
     logResources("start");
     resourceTimer_.start();
-    indexJob_.setFuture(
-        QtConcurrent::run(&indexPool_, [root, projectFile, excludes, cancel, progress, snapshots,
-                                        automatic, verifyContents, force, rescan] {
-            if (automatic && !force && !verifyContents && !snapshots.isEmpty()) {
-                bool unchanged = true;
-                for (auto it = snapshots.cbegin(); it != snapshots.cend(); ++it) {
-                    const QFileInfo directory(it.key());
-                    if (!directory.isDir() || !directory.isReadable() ||
-                        directorySnapshot(directoryEntries(it.key()), excludes) != it.value()) {
-                        unchanged = false;
-                        break;
-                    }
-                    if (cancel->load())
-                        break;
+    indexJob_.setFuture(QtConcurrent::run(&indexPool_, [root, projectFile, excludes, cancel,
+                                                        progress, snapshots, automatic,
+                                                        verifyContents, force, rescan] {
+        if (automatic && !force && !verifyContents && !snapshots.isEmpty()) {
+            bool unchanged = true;
+            for (auto it = snapshots.cbegin(); it != snapshots.cend(); ++it) {
+                const QFileInfo directory(it.key());
+                if (!directory.isDir() || !directory.isReadable() ||
+                    directorySnapshot(directoryEntries(it.key()), excludes) != it.value()) {
+                    unchanged = false;
+                    break;
                 }
-                if (unchanged || cancel->load()) {
-                    IndexResult result;
-                    result.root = root;
-                    result.automatic = true;
-                    result.skipped = unchanged;
-                    result.cancelled = cancel->load();
-                    return result;
-                }
+                if (cancel->load())
+                    break;
             }
-            auto result =
-                buildWorkspaceIndex(root, force, rescan, excludes, cancel, progress, projectFile);
-            result.automatic = automatic;
-            return result;
-        }));
+            if (unchanged || cancel->load()) {
+                IndexResult result;
+                result.root = root;
+                result.automatic = true;
+                result.skipped = unchanged;
+                result.cancelled = cancel->load();
+                return result;
+            }
+        }
+        const auto mode =
+            force
+                ? (rescan ? IndexRefresh::RebuildFilesAndSymbols : IndexRefresh::ReparseKnownFiles)
+                : (rescan ? IndexRefresh::DiscoverChanges : IndexRefresh::CheckKnownFiles);
+        auto result = buildWorkspaceIndex(root, mode, excludes, cancel, progress, projectFile);
+        result.automatic = automatic;
+        return result;
+    }));
 }
 
 void WorkspaceIndex::search(const SymbolQuery &query) {

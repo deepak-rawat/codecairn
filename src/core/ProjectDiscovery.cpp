@@ -1,6 +1,6 @@
-#include "ProjectDiscovery.h"
-#include "Diagnostics.h"
-#include "WorkspacePaths.h"
+#include <codecairn/ProjectDiscovery.h>
+#include <codecairn/Diagnostics.h>
+#include <codecairn/WorkspacePaths.h>
 #include "WorkspaceScanner.h"
 
 #include <QCoreApplication>

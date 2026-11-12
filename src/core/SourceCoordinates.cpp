@@ -1,4 +1,4 @@
-#include "SourceCoordinates.h"
+#include <codecairn/SourceCoordinates.h>
 
 QJsonObject lspPosition(const QByteArray &source, int byteOffset) {
     byteOffset = qBound(0, byteOffset, static_cast<int>(source.size()));

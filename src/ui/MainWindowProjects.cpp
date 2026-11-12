@@ -1,7 +1,7 @@
 #include "MainWindow.h"
-#include "CompilationDatabase.h"
+#include <codecairn/CompilationDatabase.h>
 #include "ProjectDialog.h"
-#include "ProjectSession.h"
+#include <codecairn/ProjectSession.h>
 #include "SymbolBrowser.h"
 #include "UiAppearance.h"
 
@@ -53,7 +53,10 @@ void MainWindow::openWorkspace(const QString &root, const QString &projectFile) 
         navigationService_->cancelLookups();
         navigationService_->cancelRead();
     }
-    const auto commitError = workspaceServices_->commitProject(prepared, switching, switching);
+    const ProjectOpenOptions startup{switching ? IndexStartup::Automatic : IndexStartup::Manual,
+                                     switching ? LanguageStartup::Automatic
+                                               : LanguageStartup::Manual};
+    const auto commitError = workspaceServices_->commitProject(prepared, startup);
     if (!commitError.isEmpty()) {
         reportError(commitError);
         return;

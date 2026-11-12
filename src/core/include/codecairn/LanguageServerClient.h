@@ -1,5 +1,5 @@
 #pragma once
-#include "SourceCoordinates.h"
+#include <codecairn/SourceCoordinates.h>
 
 #include <QHash>
 #include <QJsonObject>

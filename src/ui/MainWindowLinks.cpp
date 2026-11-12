@@ -1,6 +1,6 @@
 #include "MainWindow.h"
-#include "LanguageRegistry.h"
-#include "NavigationTarget.h"
+#include <codecairn/LanguageRegistry.h>
+#include <codecairn/NavigationTarget.h>
 #include <QCryptographicHash>
 #include <QInputDialog>
 #include <QLineEdit>

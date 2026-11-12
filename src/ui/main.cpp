@@ -1,7 +1,7 @@
 #include "MainWindow.h"
-#include "RuntimeLimits.h"
+#include <codecairn/RuntimeLimits.h>
 #include "UiAppearance.h"
-#include "Diagnostics.h"
+#include <codecairn/Diagnostics.h>
 
 #include <QApplication>
 #include <QCommandLineParser>

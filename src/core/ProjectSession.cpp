@@ -1,6 +1,6 @@
-#include "ProjectSession.h"
-#include "CompilationDatabase.h"
-#include "WorkspacePaths.h"
+#include <codecairn/ProjectSession.h>
+#include <codecairn/CompilationDatabase.h>
+#include <codecairn/WorkspacePaths.h>
 
 #include <QFileInfo>
 

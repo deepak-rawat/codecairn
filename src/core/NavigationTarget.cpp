@@ -1,5 +1,5 @@
-#include "NavigationTarget.h"
-#include "SourceCoordinates.h"
+#include <codecairn/NavigationTarget.h>
+#include <codecairn/SourceCoordinates.h>
 
 #include <QCryptographicHash>
 

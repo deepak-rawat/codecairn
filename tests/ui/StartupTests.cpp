@@ -488,8 +488,9 @@ void StartupTests::cachedWorkspacePopulatesSymbols() {
     QVERIFY(writeSourceFile(project.filePath("main.c"), "int cached_symbol(void) { return 0; }\n",
                             false)
                 .isEmpty());
-    const auto built = buildWorkspaceIndex(workspacePath(project.path()), false, true, {},
-                                           std::make_shared<std::atomic_bool>(false));
+    const auto built =
+        buildWorkspaceIndex(workspacePath(project.path()), IndexRefresh::DiscoverChanges, {},
+                            std::make_shared<std::atomic_bool>(false));
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     MainWindow window(false);
     window.openStartupPaths({project.path() + QDir::separator()});

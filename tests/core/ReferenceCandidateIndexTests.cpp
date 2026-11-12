@@ -1,8 +1,8 @@
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "ReferenceCandidateIndex.h"
 #include "SymbolIndexStore.h"
 #include "TestStorage.h"
-#include "WorkspaceIndex.h"
+#include <codecairn/WorkspaceIndex.h>
 
 #include <QDateTime>
 #include <QCryptographicHash>
@@ -30,7 +30,9 @@ public:
             qFatal("Cannot write reference candidate fixture");
     }
     IndexResult build(bool force = false) const {
-        return buildWorkspaceIndex(root, force, true, defaultWorkspaceExcludes(),
+        const auto mode =
+            force ? IndexRefresh::RebuildFilesAndSymbols : IndexRefresh::DiscoverChanges;
+        return buildWorkspaceIndex(root, mode, defaultWorkspaceExcludes(),
                                    std::make_shared<std::atomic_bool>(false));
     }
     QString root;
@@ -301,8 +303,8 @@ void ReferenceCandidateIndexTests::cancellationAndAtomicRefresh() {
     QVERIFY(result.cancelled);
     QCOMPARE(result.files, paths);
     fixture.write("a.cpp", "// Needle\n");
-    const auto cancelledBuild =
-        buildWorkspaceIndex(fixture.root, false, true, defaultWorkspaceExcludes(), cancel);
+    const auto cancelledBuild = buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges,
+                                                    defaultWorkspaceExcludes(), cancel);
     QVERIFY(cancelledBuild.cancelled);
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
     cancel->store(false);
@@ -342,8 +344,8 @@ void ReferenceCandidateIndexTests::symbolsCommitBeforeReferenceAcceleration() {
         QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
         cancel->store(true);
     };
-    const auto stopped = buildWorkspaceIndex(fixture.root, false, true, defaultWorkspaceExcludes(),
-                                             cancel, progress);
+    const auto stopped = buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges,
+                                             defaultWorkspaceExcludes(), cancel, progress);
     QVERIFY2(stopped.error.isEmpty(), qPrintable(stopped.error));
     QVERIFY(stopped.cancelled);
     QCOMPARE(stopped.parsed, 1);

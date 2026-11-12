@@ -1,7 +1,7 @@
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "CodeEditor.h"
-#include "WorkspaceIndex.h"
-#include "ReferenceSearch.h"
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/ReferenceSearch.h>
 #include "SourceDocument.h"
 #include "SymbolBrowser.h"
 #include "TestStorage.h"
@@ -41,7 +41,8 @@ void RefactoringBenchmarks::initTestCase() {
         paths_.append(path);
         overlays_.append({path, source, analyzeSource(source, path)});
     }
-    const auto result = buildWorkspaceIndex(directory_.path(), false, true, {}, cancel_);
+    const auto result =
+        buildWorkspaceIndex(directory_.path(), IndexRefresh::DiscoverChanges, {}, cancel_);
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     SymbolQuery query;
     query.limit = 2000;

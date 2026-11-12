@@ -1,14 +1,14 @@
-#include "Diagnostics.h"
+#include <codecairn/Diagnostics.h>
 #include "AppSettings.h"
-#include "ApplicationStateStore.h"
-#include "CompilationDatabase.h"
+#include <codecairn/ApplicationStateStore.h>
+#include <codecairn/CompilationDatabase.h>
 #include "CompilerSymbolRecovery.h"
-#include "FileIO.h"
-#include "LanguageServerClient.h"
-#include "ReferenceSearch.h"
-#include "SourceAnalysis.h"
-#include "WorkspaceIndex.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/FileIO.h>
+#include <codecairn/LanguageServerClient.h>
+#include <codecairn/ReferenceSearch.h>
+#include <codecairn/SourceAnalysis.h>
+#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/WorkspaceOptionsStore.h>
 #include "TestStorage.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -601,7 +601,8 @@ void DiagnosticsTests::searchAndCompilerFailuresAreLogged() {
     query.text = "?[";
     QVERIFY(!queryWorkspaceSymbols({}, query).error.isEmpty());
     const auto cancel = std::make_shared<std::atomic_bool>(false);
-    QVERIFY(!buildWorkspaceIndex(root.filePath("missing"), false, true, {}, cancel, {})
+    QVERIFY(!buildWorkspaceIndex(root.filePath("missing"), IndexRefresh::DiscoverChanges, {},
+                                 cancel, {})
                  .error.isEmpty());
     QVERIFY(diagnostics.finish(0).isEmpty());
     const QStringList events{"analysis.inactive_failed", "lsp.compilation_failed", "search.failed",
@@ -641,7 +642,7 @@ void DiagnosticsTests::expectedOutcomesAreNotWarnings() {
     QVERIFY(QDir().mkpath(catalog));
     const auto asset = QDir(catalog).filePath("image.png");
     QVERIFY(writeSourceFile(asset, QByteArray(1, '\0') + "BINARY_ASSET", false).isEmpty());
-    const auto index = buildWorkspaceIndex(catalog, false, true, {},
+    const auto index = buildWorkspaceIndex(catalog, IndexRefresh::DiscoverChanges, {},
                                            std::make_shared<std::atomic_bool>(false), {});
     QVERIFY(index.error.isEmpty() && index.warnings.isEmpty());
     QCOMPARE(index.files.size(), 1);

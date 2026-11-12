@@ -1,8 +1,8 @@
 #pragma once
 
 #include "AppSettings.h"
-#include "WorkspaceOptionsStore.h"
-#include "ProjectDiscovery.h"
+#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectDiscovery.h>
 #include <QDialog>
 #include <QFutureWatcher>
 #include <QTimer>

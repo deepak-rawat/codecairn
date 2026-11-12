@@ -1,7 +1,7 @@
-#include "CompilationDatabase.h"
-#include "Diagnostics.h"
-#include "WorkspaceOptionsStore.h"
-#include "WorkspacePaths.h"
+#include <codecairn/CompilationDatabase.h>
+#include <codecairn/Diagnostics.h>
+#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/WorkspacePaths.h>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>

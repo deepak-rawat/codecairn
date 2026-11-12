@@ -1,12 +1,12 @@
 #pragma once
 
-#include "DefinitionResolver.h"
-#include "NavigationTarget.h"
-#include "WorkspaceServices.h"
-
+#include <codecairn/NavigationTarget.h>
+#include <codecairn/WorkspaceServices.h>
 #include <QFutureWatcher>
 #include <QPointer>
 #include <functional>
+
+class DefinitionResolver;
 
 enum class DefinitionPolicy { SyntaxOnly, SemanticOnly, PreferSemantic };
 

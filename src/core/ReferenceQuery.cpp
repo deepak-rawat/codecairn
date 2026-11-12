@@ -1,10 +1,10 @@
-#include "ReferenceSearch.h"
-#include "Diagnostics.h"
+#include <codecairn/ReferenceSearch.h>
+#include <codecairn/Diagnostics.h>
 #include "ReferenceCandidateIndex.h"
 #include "CompilerSymbolRecovery.h"
-#include "FileIO.h"
-#include "SourceAnalysis.h"
-#include "WorkspacePaths.h"
+#include <codecairn/FileIO.h>
+#include <codecairn/SourceAnalysis.h>
+#include <codecairn/WorkspacePaths.h>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>

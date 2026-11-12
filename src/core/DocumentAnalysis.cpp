@@ -1,6 +1,6 @@
-#include "DocumentAnalysis.h"
-#include "FileIO.h"
-#include "Diagnostics.h"
+#include <codecairn/DocumentAnalysis.h>
+#include <codecairn/FileIO.h>
+#include <codecairn/Diagnostics.h>
 #include <QCryptographicHash>
 #include <QtConcurrentRun>
 

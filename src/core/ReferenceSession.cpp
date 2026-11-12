@@ -1,6 +1,6 @@
-#include "ReferenceSession.h"
-#include "FileIO.h"
-#include "Diagnostics.h"
+#include <codecairn/ReferenceSession.h>
+#include <codecairn/FileIO.h>
+#include <codecairn/Diagnostics.h>
 
 #include <QDir>
 #include <QFileInfo>

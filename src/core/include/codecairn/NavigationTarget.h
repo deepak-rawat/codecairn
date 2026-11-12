@@ -1,8 +1,15 @@
 #pragma once
 
-#include "FileIO.h"
-#include "IndexTypes.h"
-#include "NavigationHistory.h"
+#include <codecairn/FileIO.h>
+#include <codecairn/IndexTypes.h>
+#include <codecairn/NavigationHistory.h>
+
+struct DefinitionCandidates {
+    QVector<IndexedSymbol> targets;
+    int total = 0;
+    bool complete = false;
+    QString error;
+};
 
 struct ResolvedNavigation {
     int start = 0;

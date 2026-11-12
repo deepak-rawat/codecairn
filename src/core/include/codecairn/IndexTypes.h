@@ -1,7 +1,7 @@
 #pragma once
 
-#include "SourceAnalysis.h"
-#include "RuntimeLimits.h"
+#include <codecairn/SourceAnalysis.h>
+#include <codecairn/RuntimeLimits.h>
 #include <QHash>
 #include <QMap>
 #include <atomic>

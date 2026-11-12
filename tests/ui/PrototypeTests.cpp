@@ -1,11 +1,11 @@
 #include "CodeEditor.h"
-#include "FileIO.h"
+#include <codecairn/FileIO.h>
 #include "MainWindow.h"
-#include "SourceAnalysis.h"
+#include <codecairn/SourceAnalysis.h>
 #include "UiAppearance.h"
 #include "TestFixtures.h"
 #include "TestStorage.h"
-#include "WorkspaceOptionsStore.h"
+#include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QCheckBox>
 #include <QAction>

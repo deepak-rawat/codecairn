@@ -1,5 +1,5 @@
 #include "SymbolBrowser.h"
-#include "SourceAnalysis.h"
+#include <codecairn/SourceAnalysis.h>
 #include "UiAppearance.h"
 #include <QDir>
 #include <QFileInfo>

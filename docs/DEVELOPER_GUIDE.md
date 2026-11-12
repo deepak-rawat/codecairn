@@ -72,10 +72,10 @@ implementation line by line.
 | 1 | [main.cpp](../src/ui/main.cpp), [MainWindow.h](../src/ui/MainWindow.h) | Startup and ownership |
 | 2 | `buildUi()` in [MainWindowUi.cpp](../src/ui/MainWindowUi.cpp) | Map visible controls to widgets |
 | 3 | [CodeEditor.cpp](../src/ui/CodeEditor.cpp), [SourceDocument.cpp](../src/ui/SourceDocument.cpp) | Buffer events, revisions, snapshots, workers |
-| 4 | [SourceAnalysis.h](../src/core/SourceAnalysis.h), [SourceTypes.h](../src/core/SourceTypes.h) | Styles, symbols, coordinates, and provenance |
+| 4 | [SourceAnalysis.h](../src/core/include/codecairn/SourceAnalysis.h), [SourceTypes.h](../src/core/include/codecairn/SourceTypes.h) | Styles, symbols, coordinates, and provenance |
 | 5 | [MainWindowNavigation.cpp](../src/ui/MainWindowNavigation.cpp) | Preview, activation, focus, and safe targets |
 | 6 | [MainWindowReferences.cpp](../src/ui/MainWindowReferences.cpp), [ReferenceTests.cpp](../tests/ui/ReferenceTests.cpp) | Trace a complete asynchronous feature |
-| 7 | [WorkspaceIndex.h](../src/core/WorkspaceIndex.h), [MainWindowWorkspace.cpp](../src/ui/MainWindowWorkspace.cpp) | Saved symbols versus live overlays |
+| 7 | [WorkspaceIndex.h](../src/core/include/codecairn/WorkspaceIndex.h), [MainWindowWorkspace.cpp](../src/ui/MainWindowWorkspace.cpp) | Saved symbols versus live overlays |
 | 8 | Parser, compiler, and language-server implementations | Study internals as a change requires |
 
 Before changing behavior, be able to answer: which widget starts it, who owns
@@ -213,10 +213,10 @@ separate controllers.
 | SQLite and path identity | [SymbolIndexStore.cpp](../src/core/SymbolIndexStore.cpp), [WorkspacePaths.cpp](../src/core/WorkspacePaths.cpp) |
 | Browser rows and syntax fallback | [SymbolBrowser.cpp](../src/ui/SymbolBrowser.cpp), [DefinitionResolver.cpp](../src/core/DefinitionResolver.cpp) |
 | LSP, compilation database, coordinate conversion | [LanguageServerClient.cpp](../src/core/LanguageServerClient.cpp), [CompilationDatabase.cpp](../src/core/CompilationDatabase.cpp), [SourceCoordinates.cpp](../src/core/SourceCoordinates.cpp) |
-| Typed search options, matching, semantic result resolution | [SearchOptions.h](../src/core/SearchOptions.h), [ReferenceQuery.cpp](../src/core/ReferenceQuery.cpp), [ReferenceSearch.cpp](../src/core/ReferenceSearch.cpp) |
+| Typed search options, matching, semantic result resolution | [SearchOptions.h](../src/core/include/codecairn/SearchOptions.h), [ReferenceQuery.cpp](../src/core/ReferenceQuery.cpp), [ReferenceSearch.cpp](../src/core/ReferenceSearch.cpp) |
 | Candidate postings, history validation/export, text caret | [ReferenceCandidateIndex.cpp](../src/core/ReferenceCandidateIndex.cpp), [ReferenceHistory.cpp](../src/core/ReferenceHistory.cpp), [ReferenceResultsView.cpp](../src/ui/ReferenceResultsView.cpp) |
 | Preferences, window/session state, workspace options | [AppSettings.cpp](../src/ui/AppSettings.cpp), [ApplicationStateStore.cpp](../src/core/ApplicationStateStore.cpp), [WorkspaceOptionsStore.cpp](../src/core/WorkspaceOptionsStore.cpp) |
-| File safety, shared limits, appearance | [FileIO.cpp](../src/core/FileIO.cpp), [RuntimeLimits.h](../src/core/RuntimeLimits.h), [UiAppearance.cpp](../src/ui/UiAppearance.cpp) |
+| File safety, shared limits, appearance | [FileIO.cpp](../src/core/FileIO.cpp), [RuntimeLimits.h](../src/core/include/codecairn/RuntimeLimits.h), [UiAppearance.cpp](../src/ui/UiAppearance.cpp) |
 
 MainWindow aliases `SourceDocument` as `Document`. Its important state is:
 
@@ -241,8 +241,8 @@ or context snapshot is not automatically the same version of that text.
 - Keep UI focus, selection, and presentation generations in MainWindow.
   DocumentAnalysis owns revisions, cached snapshots and accepted analysis;
   SourceDocument binds it to the editor and applies external reloads.
-- [SourceTypes.h](../src/core/SourceTypes.h) and [IndexTypes.h](../src/core/IndexTypes.h) hold
-  shared result data; [SourceCoordinates.h](../src/core/SourceCoordinates.h) defines LSP
+- [SourceTypes.h](../src/core/include/codecairn/SourceTypes.h) and [IndexTypes.h](../src/core/include/codecairn/IndexTypes.h) hold
+  shared result data; [SourceCoordinates.h](../src/core/include/codecairn/SourceCoordinates.h) defines LSP
   locations and explicit coordinate conversion.
 - Keep language identity typed as `LanguageId`.
 - Use purpose-specific names and named item roles such as `SymbolItemRole`.
@@ -255,8 +255,11 @@ or context snapshot is not automatically the same version of that text.
 
 Sources follow the build boundaries: `src/core/` contains headless services and
 shared types, `src/ui/` contains Qt presentation plus the GUI and launcher entry
-points, and `src/cli/` contains the headless CLI entry point. Core and UI targets
-export only their own include directories; the UI also inherits core headers.
+points, and `src/cli/` contains the headless CLI entry point. Supported core
+headers live in `src/core/include/codecairn/` and are included as
+`<codecairn/CoreSession.h>`. Only `src/core/include/` is exported. Engine/storage
+implementation headers live in `src/core/internal/`; only the core and explicitly
+selected white-box tests can include them. The UI also inherits public core headers.
 
 `codecairn_core` contains public data types and nonvisual functionality. It links
 Qt Core/Concurrent, grammars, Tree-sitter, libclang, SQLite, and RE2, but not Qt
@@ -300,6 +303,156 @@ thread. Keep requests/results implicitly shared and in-process: no JSON
 serialization between the GUI and core. Queued work must not outlive its owner.
 Call `configureStateDirectory()` only during startup, before any services or
 worker jobs; it changes the process-wide core storage root, not GUI preferences.
+
+### Using the core API
+
+[CoreSession](../src/core/include/codecairn/CoreSession.h) is the recommended owner.
+Link to `codecairn_core`, construct a QCoreApplication (or use the GUI's existing
+QApplication), then construct one session on the event-loop thread. Construction
+does not scan a project, parse documents or launch a language server.
+
+| Facet | Operations | Completion |
+|---|---|---|
+| `projects()` | `prepareProject`, `commitProject`, options reload, close | Preparation/commit return explicit errors; index/provider work is asynchronous |
+| `index()` | `refresh`, `search`, `cancel`, `invalidateSearch` | `catalogReady`, `batchReady`, `ready`, `symbolsReady`, `failed` |
+| Documents | `createDocument`, `setBytes`, `startAnalysis`, `closeDocument` | `analysisCompleted` or `analysisRejected` |
+| `navigation()` | `lookup`, `read`, cancellation | `definitionReady`, `readReady` with the caller's token/channel |
+| `references()` | `start`, `nextPage`, `cancel` | `pageReady` with the caller's token |
+
+Use the named index modes for both `refresh()` and the advanced synchronous
+`buildWorkspaceIndex()` entry point:
+
+- `DiscoverChanges`: rediscover files and reuse unchanged analysis.
+- `ReparseKnownFiles`: reparse the current catalog without discovering new files.
+- `RebuildFilesAndSymbols`: rediscover and reparse.
+- `CheckKnownFiles`: check/reuse known files without discovery or forced parsing.
+
+ProjectOpenOptions independently names index and language startup as `Automatic`
+or `Manual`. Manual mode does not start that work; switching projects stops old
+services rather than allowing them to remain attached to a different root.
+Prepare first, obtain any frontend save/discard/cancel decision, then commit.
+Invalid preparation/commit leaves the current project and its requests intact.
+Successful project switches and close cancel the session's navigation/reference
+requests before changing services. Recommitting the same project in manual mode
+does not invalidate existing requests.
+
+This complete example opens a project, waits for indexing, and queries symbols.
+Configuration/storage errors and asynchronous indexing/query errors remain visible:
+
+```cpp
+#include <codecairn/CoreSession.h>
+#include <QCoreApplication>
+#include <QDebug>
+
+int main(int argc, char **argv) {
+    QCoreApplication app(argc, argv);
+    app.setApplicationName("CoreExample");
+    if (app.arguments().size() != 2) {
+        qCritical() << "Expected a workspace directory";
+        return 2;
+    }
+    CoreSession core;
+    QObject::connect(&core.index(), &WorkspaceIndex::failed, &app,
+                     [&](const QString &error) {
+                         qCritical().noquote() << error;
+                         app.exit(1);
+                     });
+    QObject::connect(&core.index(), &WorkspaceIndex::ready, &app,
+                     [&](const IndexResult &) {
+                         SymbolQuery query;
+                         query.text = "parse";
+                         core.index().search(query);
+                     });
+    QObject::connect(&core.index(), &WorkspaceIndex::symbolsReady, &app,
+                     [&](const SymbolPage &page) {
+                         if (!page.error.isEmpty()) {
+                             qCritical().noquote() << page.error;
+                             app.exit(1);
+                         } else {
+                             qInfo() << page.total << "matches";
+                             app.quit();
+                         }
+                     });
+    const auto project = prepareProject(app.arguments()[1]);
+    const ProjectOpenOptions startup{IndexStartup::Automatic, LanguageStartup::Manual};
+    const auto error = core.projects().commitProject(project, startup);
+    if (!error.isEmpty()) {
+        qCritical().noquote() << error;
+        return 1;
+    }
+    return app.exec();
+}
+```
+
+This standalone reference example searches one file and consumes all pages:
+
+```cpp
+#include <codecairn/CoreSession.h>
+#include <QCoreApplication>
+#include <QDebug>
+#include <QTimer>
+
+int main(int argc, char **argv) {
+    QCoreApplication app(argc, argv);
+    if (app.arguments().size() != 2)
+        return 2;
+    CoreSession core;
+    ReferenceSearchRequest request;
+    request.paths = {workspacePath(app.arguments()[1])};
+    request.query = "parse";
+    request.options.method = SearchMethod::Literal;
+    request.options.smartMatching = false;
+    quint64 token = 1;
+    QObject::connect(&core.references(), &ReferenceSession::pageReady, &app,
+                     [&](quint64, const ReferenceResults &page, bool) {
+                         if (!page.error.isEmpty()) {
+                             qCritical().noquote() << page.error;
+                             app.exit(1);
+                         } else if (page.cancelled) {
+                             app.exit(130);
+                         } else {
+                             qInfo() << page.hits.size() << "matches on this page";
+                             if (page.truncated)
+                                 core.references().nextPage(++token);
+                             else
+                                 app.quit();
+                         }
+                     });
+    QTimer::singleShot(0, &core, [&] { core.references().start(request, token); });
+    return app.exec();
+}
+```
+
+Use `core.references().cancel()` to abandon a search without deleting completed
+frontend results. The CLI and [CoreTests.cpp](../tests/core/CoreTests.cpp) show
+executed end-to-end examples, including navigation requests and live documents.
+
+#### Lifetime, threading and result contracts
+
+- Session facets are borrowed references; do not delete/reparent them. Documents
+  created by the session are owned until `closeDocument()` or session destruction.
+  Never retain a document pointer after close. The GUI may retain its own
+  editor-bound SourceDocument lifetime and supply snapshots instead.
+  Closing a project does not discard owned documents; close them explicitly
+  after frontend save/discard decisions or let session destruction release them.
+- All service calls, snapshot providers and result delivery run on the owning
+  event-loop thread. Workers receive snapshots, never widgets or document pointers.
+  A custom snapshot provider replaces the default session-document lookup and
+  must not outlive its captured state. Use a QObject context on signal connections.
+- Requests/results retain Qt implicit sharing. Do not copy source bytes manually,
+  convert them through JSON, or introduce another worker hop to call these APIs.
+  UTF-8 byte ranges and UTF-16 LSP coordinates keep their existing conversions.
+- Connect before starting: validation errors may complete synchronously. Check
+  the feature's `error` before accepting data. Zero matches is success.
+  `truncated` reference results require `nextPage`; symbol pages expose totals.
+  Semantic-only requests never silently become syntax/text results.
+- Navigation tokens identify requests within independent channels. Reference
+  tokens identify page requests within one search. Cancelling invalidates late
+  completions; no cancellation completion signal is promised. Already delivered
+  frontend results remain frontend-owned.
+- `stopBackgroundWork()` is terminal for a document. Destruction cancels pending
+  services and joins owned jobs; it can wait for a noninterruptible parser.
+  Close the session before destroying QApplication and captured frontend state.
 
 ## UI and interaction model
 
@@ -603,7 +756,7 @@ function names. Bump ParserVersion when saved extraction meaning changes.
 6. Retain panel focus for browsing or focus/pin on activation.
 
 Editing a preview pins it. A dirty editor is never silently reused.
-[NavigationHistory.h](../src/core/NavigationHistory.h) defines locations with byte or
+[NavigationHistory.h](../src/core/include/codecairn/NavigationHistory.h) defines locations with byte or
 LSP ranges, expected hashes, scroll state, and reference-line selection.
 
 Automatic context follows `updateContext()` -> `resolveDefinition()` ->
@@ -1324,6 +1477,33 @@ Windows atomic-save fixtures wait for startup readers before replacement.
 
 ### Refactoring contracts and performance
 
+The public API uses a thin CoreSession owner and namespaced public headers,
+without serialization, additional worker hops or new parsing/index algorithms.
+The API cleanup was compared with pre-change Debug executables on the same
+Apple Silicon host, using isolated fixtures and serial, alternating-order runs.
+All 22 functional suites passed; new core cases cover owned-document lifetime,
+live snapshots, cancellation on project switches, and named refresh behavior.
+
+| API cleanup comparison | Before | After |
+|---|---:|---:|
+| Text occurrences, median of 3 runs (100 iterations/run) | 3.88 ms | 3.93 ms |
+| Warm symbol query, same sampling | 1.03 ms | 1.05 ms |
+| Render 1,024 rows, same sampling | 12.97 ms | 12.86 ms |
+| Editor bytes, 3 follow-up runs (1,000 iterations/run) | 0.025 ms | 0.025 ms |
+| Reference dispatch, median of 3 runs (40 samples/run) | 11.409 ms | 11.377 ms |
+| Navigation read, median of 3 runs (100 samples/run) | 36.084 us | 36.916 us |
+| 1k cold index, 5 candidate-first follow-up pairs | 506 ms | 506 ms |
+| 25k cold index, 3 candidate-first follow-up pairs | 12,563 ms | 12,485 ms |
+| 25k warm reuse, same sampling | 3,016 ms | 2,974 ms |
+
+Initial 1k medians were 514/554 ms and 25k medians were 12,451/12,595 ms;
+follow-up pairs above did not reproduce a consistent slowdown. Final 25k peak
+process RSS medians were 144.1/145.6 MB, including fixture construction rather
+than isolated service memory. Sub-microsecond navigation differences and small
+percentage changes in queries varied between runs; no speedup is attributed.
+These shared-host measurements detected no reproducible material regression,
+but do not certify zero overhead, native-platform behavior, or every real workload.
+
 Core/UI extraction passed local functional and headless suites. An initial
 100k cold-index slowdown did not reproduce in follow-up comparisons; shared-host
 measurements do not certify zero performance impact. Native Windows/Linux and
@@ -1717,7 +1897,7 @@ separate formatter/linter build target. Use original/licensed icons and fixtures
 - Index rebuilds never delete source; generated workspace data is per-user.
 - Keep dependency/build outputs and unrelated files out of commits.
 
-Shared limits are in [RuntimeLimits.h](../src/core/RuntimeLimits.h): two global workers,
+Shared limits are in [RuntimeLimits.h](../src/core/include/codecairn/RuntimeLimits.h): two global workers,
 300-row defaults for internal symbol queries (not the browser), 100 definition
 candidates, 200 navigation entries, and 10,000 reference matches per page.
 Other bounds include 4 MiB source files, 32 MiB LSP messages, and 64 MiB
