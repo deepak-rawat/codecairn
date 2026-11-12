@@ -26,8 +26,9 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 include(CTest)
+option(CODECAIRN_BUILD_GUI "Build the Qt Widgets application and launcher" ON)
 set(CODECAIRN_DATA_DIRECTORY share/codecairn)
-if(APPLE)
+if(APPLE AND CODECAIRN_BUILD_GUI)
     set(CODECAIRN_DATA_DIRECTORY codecairn.app/Contents/Resources/share/codecairn)
 endif()
 option(CODECAIRN_BUNDLE_RUNTIME "Deploy runtime dependencies alongside CodeCairn" ON)
@@ -49,57 +50,44 @@ endif()
 
 add_library(
     codecairn_core STATIC
-    src/AppSettings.cpp
-    src/Diagnostics.cpp
-    src/ApplicationStateStore.cpp
-    src/SourceAnalysis.cpp
-    src/LanguageRegistry.cpp
-    src/CompilerSymbolRecovery.cpp
-    src/CodeEditor.cpp
-    src/SourceDocument.cpp
-    src/WorkspaceOptionsStore.cpp
-    src/WorkspaceServices.cpp
-    src/DefinitionResolver.cpp
-    src/SymbolBrowser.cpp
-    src/SymbolCatalogModel.cpp
-    src/SourceCoordinates.cpp
-    src/CompilationDatabase.cpp
-    src/FileIO.cpp
-    src/MainWindow.cpp
-    src/MainWindowUi.cpp
-    src/MainWindowWorkspace.cpp
-    src/MainWindowProjects.cpp
-    src/ProjectDialog.cpp
-    src/MainWindowSettings.cpp
-    src/MainWindowNavigation.cpp
-    src/MainWindowLinks.cpp
-    src/MainWindowPanels.cpp
-    src/MainWindowReferences.cpp
-    src/ReferenceSearch.cpp
-    src/ReferenceQuery.cpp
-    src/ReferenceHistory.cpp
-    src/ReferenceResultsView.cpp
-    src/NavigationHistory.cpp
-    src/NavigationTree.cpp
-    src/UiAppearance.cpp
-    src/WorkspaceIndex.cpp
-    src/WorkspacePaths.cpp
-    src/SymbolIndexStore.cpp
-    src/ReferenceCandidateIndex.cpp
-    src/WorkspaceScanner.cpp
-    src/WorkspaceIndexBuilder.cpp
-    src/WorkspaceSymbolQuery.cpp
-    src/LanguageServerClient.cpp
-    resources.qrc
+    src/core/Diagnostics.cpp
+    src/core/ApplicationStateStore.cpp
+    src/core/SourceAnalysis.cpp
+    src/core/LanguageRegistry.cpp
+    src/core/CompilerSymbolRecovery.cpp
+    src/core/DocumentAnalysis.cpp
+    src/core/WorkspaceOptionsStore.cpp
+    src/core/WorkspaceServices.cpp
+    src/core/DefinitionResolver.cpp
+    src/core/SourceCoordinates.cpp
+    src/core/CompilationDatabase.cpp
+    src/core/FileIO.cpp
+    src/core/ProjectDiscovery.cpp
+    src/core/ProjectSession.cpp
+    src/core/NavigationTarget.cpp
+    src/core/NavigationService.cpp
+    src/core/ReferenceSession.cpp
+    src/core/ReferenceSearch.cpp
+    src/core/ReferenceQuery.cpp
+    src/core/ReferenceHistory.cpp
+    src/core/NavigationHistory.cpp
+    src/core/WorkspaceIndex.cpp
+    src/core/WorkspacePaths.cpp
+    src/core/SymbolIndexStore.cpp
+    src/core/ReferenceCandidateIndex.cpp
+    src/core/WorkspaceScanner.cpp
+    src/core/WorkspaceIndexBuilder.cpp
+    src/core/WorkspaceSymbolQuery.cpp
+    src/core/LanguageServerClient.cpp
 )
 target_include_directories(
     codecairn_core
-    PUBLIC src
+    PUBLIC src/core
     PRIVATE "${TREE_SITTER_INCLUDE_DIR}" "${LIBCLANG_INCLUDE_DIR}"
 )
 target_link_libraries(
     codecairn_core
-    PUBLIC scintilla_qt Qt6::Concurrent
+    PUBLIC Qt6::Core Qt6::Concurrent
     PRIVATE c_grammar
             cpp_grammar
             python_grammar
@@ -139,10 +127,66 @@ if(CODECAIRN_CLANGD)
         codecairn_core PRIVATE CODECAIRN_CONFIGURED_CLANGD="${CODECAIRN_CLANGD}"
     )
 endif()
-qt_add_executable(codecairn src/main.cpp)
-target_link_libraries(codecairn PRIVATE codecairn_core)
+add_executable(codecairn-cli src/cli/Cli.cpp)
+target_link_libraries(codecairn-cli PRIVATE codecairn_core)
+target_compile_definitions(codecairn-cli PRIVATE CODECAIRN_VERSION="${PROJECT_VERSION}")
+set_target_properties(codecairn-cli PROPERTIES WIN32_EXECUTABLE FALSE MACOSX_BUNDLE FALSE)
+if(WIN32)
+    set_target_properties(
+        codecairn-cli PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}/bin"
+    )
+endif()
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
+if(NOT CODECAIRN_BUILD_GUI)
+    if(CODECAIRN_BUNDLE_RUNTIME)
+        message(STATUS "Headless install uses system runtime dependencies; bundling is GUI-only.")
+    endif()
+    install(TARGETS codecairn-cli RUNTIME DESTINATION bin)
+    install(
+        FILES LICENSE
+        DESTINATION share/codecairn/licenses
+        RENAME CodeCairn.txt
+    )
+    install(FILES packaging/THIRD-PARTY-NOTICES.txt DESTINATION share/codecairn/licenses)
+    return()
+endif()
+
+add_library(
+    codecairn_ui_qt STATIC
+    src/ui/AppSettings.cpp
+    src/ui/CodeEditor.cpp
+    src/ui/SourceDocument.cpp
+    src/ui/SymbolBrowser.cpp
+    src/ui/SymbolCatalogModel.cpp
+    src/ui/MainWindow.cpp
+    src/ui/MainWindowUi.cpp
+    src/ui/MainWindowWorkspace.cpp
+    src/ui/MainWindowProjects.cpp
+    src/ui/ProjectDialog.cpp
+    src/ui/MainWindowSettings.cpp
+    src/ui/MainWindowNavigation.cpp
+    src/ui/MainWindowLinks.cpp
+    src/ui/MainWindowPanels.cpp
+    src/ui/MainWindowReferences.cpp
+    src/ui/ReferenceResultsView.cpp
+    src/ui/NavigationTree.cpp
+    src/ui/UiAppearance.cpp
+    resources.qrc
+)
+target_link_libraries(codecairn_ui_qt PUBLIC codecairn_core scintilla_qt)
+target_include_directories(codecairn_ui_qt PUBLIC src/ui)
+target_compile_options(
+    codecairn_ui_qt PRIVATE "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wall;-Wextra;-Wpedantic>"
+                            "$<$<CXX_COMPILER_ID:MSVC>:/W4>"
+)
+qt_add_executable(codecairn src/ui/main.cpp)
+target_link_libraries(codecairn PRIVATE codecairn_ui_qt)
 target_compile_definitions(codecairn PRIVATE CODECAIRN_VERSION="${PROJECT_VERSION}")
-add_executable(cairn src/Launcher.cpp)
+add_executable(cairn src/ui/Launcher.cpp)
 target_link_libraries(cairn PRIVATE Qt6::Core)
 target_compile_definitions(cairn PRIVATE CODECAIRN_VERSION="${PROJECT_VERSION}")
 set_target_properties(cairn PROPERTIES WIN32_EXECUTABLE FALSE MACOSX_BUNDLE FALSE)
@@ -180,11 +224,7 @@ if(UNIX
    AND NOT APPLE
    AND CODECAIRN_BUNDLE_RUNTIME
 )
-    set_target_properties(codecairn cairn PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
-endif()
-
-if(BUILD_TESTING)
-    add_subdirectory(tests)
+    set_target_properties(codecairn cairn codecairn-cli PROPERTIES INSTALL_RPATH "$ORIGIN/../lib")
 endif()
 
 install(
@@ -194,11 +234,12 @@ install(
 )
 if(APPLE)
     install(PROGRAMS "$<TARGET_FILE:cairn>" DESTINATION codecairn.app/Contents/MacOS)
+    install(PROGRAMS "$<TARGET_FILE:codecairn-cli>" DESTINATION codecairn.app/Contents/MacOS)
     if(NOT CODECAIRN_BUNDLE_RUNTIME)
-        install(TARGETS cairn RUNTIME DESTINATION bin)
+        install(TARGETS cairn codecairn-cli RUNTIME DESTINATION bin)
     endif()
 else()
-    install(TARGETS cairn RUNTIME DESTINATION bin)
+    install(TARGETS cairn codecairn-cli RUNTIME DESTINATION bin)
 endif()
 install(FILES config/default-settings.json DESTINATION "${CODECAIRN_DATA_DIRECTORY}")
 install(

@@ -1,12 +1,14 @@
-codecairn_source(
-    scintilla
-    CODECAIRN_SCINTILLA_SOURCE_DIR
-    https://www.scintilla.org/scintilla569.tgz
-    1622546ce1d3804b589292f1adae98ad1d87fa8c43bb401edc098adae12dcacb
-    include/Scintilla.h
-    qt/ScintillaEditBase/ScintillaEditBase.cpp
-    License.txt
-)
+if(CODECAIRN_BUILD_GUI)
+    codecairn_source(
+        scintilla
+        CODECAIRN_SCINTILLA_SOURCE_DIR
+        https://www.scintilla.org/scintilla569.tgz
+        1622546ce1d3804b589292f1adae98ad1d87fa8c43bb401edc098adae12dcacb
+        include/Scintilla.h
+        qt/ScintillaEditBase/ScintillaEditBase.cpp
+        License.txt
+    )
+endif()
 codecairn_source(
     tree_sitter_c
     CODECAIRN_C_GRAMMAR_SOURCE_DIR

@@ -20,12 +20,13 @@ if(WIN32)
         deploy ALL
         COMMAND
             "${CMAKE_COMMAND}" "-DEXECUTABLE=$<TARGET_FILE:codecairn>"
+            "-DCLI_EXECUTABLE=$<TARGET_FILE:codecairn-cli>"
             "-DDESTINATION=$<TARGET_FILE_DIR:codecairn>" "-DWINDEPLOYQT=${CODECAIRN_WINDEPLOYQT}"
             "-DQT_BIN=${codecairn_qt_bin}" "-DOBJDUMP=${CMAKE_OBJDUMP}"
             "-DCLANGD=${CODECAIRN_CLANGD}" "-DCLANG_RESOURCE_ROOT=${codecairn_clang_resource_root}"
             "-DCLANG_RESOURCE_DESTINATION=$<TARGET_FILE_DIR:codecairn>/../lib/clang" -P
             "${codecairn_deploy_script}"
-        DEPENDS codecairn
+        DEPENDS codecairn codecairn-cli
         COMMENT "Deploying Qt plugins and non-system runtime DLLs for direct launch"
         VERBATIM
     )
@@ -64,7 +65,7 @@ else()
         message(FATAL_ERROR "Bundled Linux packages require Qt 6.7 or newer.")
     endif()
     find_program(CODECAIRN_PATCHELF patchelf REQUIRED)
-    set(codecairn_linux_executables "\"bin/cairn\"")
+    set(codecairn_linux_executables "\"bin/cairn\" \"bin/codecairn-cli\"")
     if(CODECAIRN_CLANGD)
         install(PROGRAMS "${CODECAIRN_CLANGD}" DESTINATION bin)
         string(APPEND codecairn_linux_executables " \"bin/clangd\"")
@@ -98,10 +99,12 @@ else()
     install(SCRIPT "${codecairn_install_deploy}")
     set(codecairn_linux_application "")
     set(codecairn_linux_launcher "")
+    set(codecairn_linux_cli "")
     set(codecairn_qt_plugins "")
     if(CODECAIRN_RELEASE)
         set(codecairn_linux_application "$<TARGET_FILE:codecairn>")
         set(codecairn_linux_launcher "$<TARGET_FILE:cairn>")
+        set(codecairn_linux_cli "$<TARGET_FILE:codecairn-cli>")
         get_target_property(codecairn_qmake Qt6::qmake IMPORTED_LOCATION)
         execute_process(
             COMMAND "${codecairn_qmake}" -query QT_INSTALL_PLUGINS

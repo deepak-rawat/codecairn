@@ -83,6 +83,11 @@ See the [user guide](docs/USER_GUIDE.md) for usage and troubleshooting, and the
 Use `cairn --no-project` to start without restoring a project, or **Project >
 New Project** to create a named selection of files and folders.
 
+For headless analysis, indexing, symbols and references, use
+[`codecairn-cli`](docs/USER_GUIDE.md#headless-command-line).
+A [core/CLI-only build](docs/DEVELOPER_GUIDE.md#configure-build-test-install)
+uses Qt Core/Concurrent without Qt Widgets, Qt Gui or Scintilla.
+
 ## Packages and releases
 
 See the [release guide](docs/RELEASING.md) for standalone Windows ZIP, macOS DMG,

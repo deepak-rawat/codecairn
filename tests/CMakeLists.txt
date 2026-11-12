@@ -1,5 +1,60 @@
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
+function(
+    codecairn_core_test
+    target
+    source
+    name
+)
+    add_executable(${target} "${source}")
+    target_link_libraries(${target} PRIVATE codecairn_core Qt6::Test)
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_target_properties(
+        ${target}
+        PROPERTIES MACOSX_BUNDLE FALSE
+                   WIN32_EXECUTABLE FALSE
+                   RUNTIME_OUTPUT_DIRECTORY "${PROJECT_BINARY_DIR}"
+    )
+    add_test(NAME ${name} COMMAND ${target} ${ARGN})
+    set_tests_properties(${name} PROPERTIES TIMEOUT 180)
+endfunction()
+
+codecairn_core_test(core_tests core/CoreTests.cpp core)
+codecairn_core_test(document_analysis_tests core/DocumentAnalysisTests.cpp document_analysis)
+codecairn_core_test(analysis_parity_tests core/AnalysisParityTests.cpp analysis_parity)
+codecairn_core_test(index_parity_tests core/IndexParityTests.cpp index_parity)
+codecairn_core_test(application_state_tests core/ApplicationStateTests.cpp application_state)
+codecairn_core_test(
+    reference_candidate_index_tests core/ReferenceCandidateIndexTests.cpp reference_candidate_index
+)
+codecairn_core_test(
+    language_tests
+    core/LanguageTests.cpp
+    languages
+    -o
+    language-results.xml,junitxml
+    -o
+    language-results.txt,txt
+)
+set_tests_properties(languages PROPERTIES WORKING_DIRECTORY "${PROJECT_BINARY_DIR}")
+target_compile_definitions(
+    language_tests
+    PRIVATE CODECAIRN_LANGUAGE_FIXTURES_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/languages"
+)
+codecairn_core_test(cli_tests cli/CliTests.cpp cli)
+add_dependencies(cli_tests codecairn-cli)
+target_compile_definitions(cli_tests PRIVATE CODECAIRN_CLI_PATH="$<TARGET_FILE:codecairn-cli>")
+
+option(CODECAIRN_BUILD_BENCHMARKS "Build and register benchmark fixtures" ON)
+if(CODECAIRN_BUILD_BENCHMARKS)
+    codecairn_core_test(workflow_benchmarks benchmarks/WorkflowBenchmarks.cpp workflows)
+    set_tests_properties(workflows PROPERTIES LABELS benchmark)
+endif()
+
+if(NOT CODECAIRN_BUILD_GUI)
+    return()
+endif()
+
 add_test(NAME application_version COMMAND codecairn --version)
 set_tests_properties(
     application_version
@@ -14,10 +69,10 @@ add_test(NAME launcher_version COMMAND cairn --version)
 set_tests_properties(
     launcher_version PROPERTIES PASS_REGULAR_EXPRESSION "CodeCairn ${PROJECT_VERSION}"
 )
-add_executable(launcher_fixture LauncherFixture.cpp)
+add_executable(launcher_fixture fixtures/LauncherFixture.cpp)
 target_link_libraries(launcher_fixture PRIVATE Qt6::Core)
 set_target_properties(launcher_fixture PROPERTIES MACOSX_BUNDLE FALSE WIN32_EXECUTABLE FALSE)
-qt_add_executable(launcher_tests LauncherTests.cpp)
+qt_add_executable(launcher_tests ui/LauncherTests.cpp)
 target_link_libraries(launcher_tests PRIVATE Qt6::Test)
 set_target_properties(launcher_tests PROPERTIES MACOSX_BUNDLE FALSE WIN32_EXECUTABLE FALSE)
 add_dependencies(launcher_tests cairn launcher_fixture)
@@ -43,7 +98,8 @@ function(
     name
 )
     qt_add_executable(${target} "${source}")
-    target_link_libraries(${target} PRIVATE codecairn_core Qt6::Test)
+    target_link_libraries(${target} PRIVATE codecairn_ui_qt Qt6::Test)
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     set_target_properties(
         ${target}
         PROPERTIES WIN32_EXECUTABLE FALSE
@@ -72,7 +128,7 @@ endfunction()
 
 codecairn_test(
     codecairn_tests
-    PrototypeTests.cpp
+    ui/PrototypeTests.cpp
     prototype
     -o
     test-results.xml,junitxml
@@ -81,7 +137,7 @@ codecairn_test(
 )
 codecairn_test(
     workspace_tests
-    WorkspaceTests.cpp
+    ui/WorkspaceTests.cpp
     workspace
     -o
     workspace-results.xml,junitxml
@@ -90,7 +146,7 @@ codecairn_test(
 )
 codecairn_test(
     configuration_tests
-    ConfigurationTests.cpp
+    ui/ConfigurationTests.cpp
     configuration
     -o
     configuration-results.xml,junitxml
@@ -98,20 +154,8 @@ codecairn_test(
     configuration-results.txt,txt
 )
 codecairn_test(
-    language_tests
-    LanguageTests.cpp
-    languages
-    -o
-    language-results.xml,junitxml
-    -o
-    language-results.txt,txt
-)
-target_compile_definitions(
-    language_tests PRIVATE CODECAIRN_EXAMPLES_PATH="${PROJECT_SOURCE_DIR}/examples/languages"
-)
-codecairn_test(
     interaction_tests
-    InteractionTests.cpp
+    ui/InteractionTests.cpp
     interactions
     -o
     interaction-results.xml,junitxml
@@ -120,19 +164,18 @@ codecairn_test(
 )
 codecairn_test(
     startup_tests
-    StartupTests.cpp
+    ui/StartupTests.cpp
     startup
     -o
     startup-results.xml,junitxml
     -o
     startup-results.txt,txt
 )
-codecairn_test(refactoring_tests RefactoringTests.cpp refactoring)
-codecairn_test(application_state_tests ApplicationStateTests.cpp application_state)
-codecairn_test(project_tests ProjectTests.cpp projects)
+codecairn_test(refactoring_tests ui/RefactoringTests.cpp refactoring)
+codecairn_test(project_tests ui/ProjectTests.cpp projects)
 codecairn_test(
     diagnostics_tests
-    DiagnosticsTests.cpp
+    ui/DiagnosticsTests.cpp
     diagnostics
     -o
     diagnostics-results.xml,junitxml
@@ -141,26 +184,26 @@ codecairn_test(
 )
 codecairn_test(
     reference_tests
-    ReferenceTests.cpp
+    ui/ReferenceTests.cpp
     references
     -o
     reference-results.xml,junitxml
     -o
     reference-results.txt,txt
 )
-codecairn_test(index_parity_tests IndexParityTests.cpp index_parity)
-codecairn_test(symbol_scaling_tests SymbolScalingTests.cpp symbol_scaling)
-codecairn_test(
-    reference_candidate_index_tests ReferenceCandidateIndexTests.cpp reference_candidate_index
-)
-codecairn_test(analysis_parity_tests AnalysisParityTests.cpp analysis_parity)
-option(CODECAIRN_BUILD_BENCHMARKS "Build and register benchmark fixtures" ON)
+codecairn_test(symbol_scaling_tests ui/SymbolScalingTests.cpp symbol_scaling)
 if(CODECAIRN_BUILD_BENCHMARKS)
-    codecairn_test(indexing_benchmarks IndexingBenchmarks.cpp large_indexing)
-    set_tests_properties(large_indexing PROPERTIES LABELS benchmark TIMEOUT 900)
+    codecairn_test(indexing_benchmarks benchmarks/IndexingBenchmarks.cpp large_indexing)
+    set_tests_properties(
+        large_indexing
+        PROPERTIES LABELS
+                   benchmark
+                   TIMEOUT
+                   900
+    )
     codecairn_test(
         codecairn_benchmarks
-        RefactoringBenchmarks.cpp
+        benchmarks/RefactoringBenchmarks.cpp
         benchmarks
         -iterations
         1
@@ -170,5 +213,5 @@ if(CODECAIRN_BUILD_BENCHMARKS)
     set_tests_properties(benchmarks PROPERTIES LABELS benchmark)
 endif()
 foreach(target codecairn_tests configuration_tests interaction_tests)
-    target_sources(${target} PRIVATE fixtures.qrc)
+    target_sources(${target} PRIVATE fixtures/fixtures.qrc)
 endforeach()

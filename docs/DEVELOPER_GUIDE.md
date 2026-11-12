@@ -69,13 +69,13 @@ implementation line by line.
 
 | Pass | Read | Goal |
 |---|---|---|
-| 1 | [main.cpp](../src/main.cpp), [MainWindow.h](../src/MainWindow.h) | Startup and ownership |
-| 2 | `buildUi()` in [MainWindowUi.cpp](../src/MainWindowUi.cpp) | Map visible controls to widgets |
-| 3 | [CodeEditor.cpp](../src/CodeEditor.cpp), [SourceDocument.cpp](../src/SourceDocument.cpp) | Buffer events, revisions, snapshots, workers |
-| 4 | [SourceAnalysis.h](../src/SourceAnalysis.h), [SourceTypes.h](../src/SourceTypes.h) | Styles, symbols, coordinates, and provenance |
-| 5 | [MainWindowNavigation.cpp](../src/MainWindowNavigation.cpp) | Preview, activation, focus, and safe targets |
-| 6 | [MainWindowReferences.cpp](../src/MainWindowReferences.cpp), [ReferenceTests.cpp](../tests/ReferenceTests.cpp) | Trace a complete asynchronous feature |
-| 7 | [WorkspaceIndex.h](../src/WorkspaceIndex.h), [MainWindowWorkspace.cpp](../src/MainWindowWorkspace.cpp) | Saved symbols versus live overlays |
+| 1 | [main.cpp](../src/ui/main.cpp), [MainWindow.h](../src/ui/MainWindow.h) | Startup and ownership |
+| 2 | `buildUi()` in [MainWindowUi.cpp](../src/ui/MainWindowUi.cpp) | Map visible controls to widgets |
+| 3 | [CodeEditor.cpp](../src/ui/CodeEditor.cpp), [SourceDocument.cpp](../src/ui/SourceDocument.cpp) | Buffer events, revisions, snapshots, workers |
+| 4 | [SourceAnalysis.h](../src/core/SourceAnalysis.h), [SourceTypes.h](../src/core/SourceTypes.h) | Styles, symbols, coordinates, and provenance |
+| 5 | [MainWindowNavigation.cpp](../src/ui/MainWindowNavigation.cpp) | Preview, activation, focus, and safe targets |
+| 6 | [MainWindowReferences.cpp](../src/ui/MainWindowReferences.cpp), [ReferenceTests.cpp](../tests/ui/ReferenceTests.cpp) | Trace a complete asynchronous feature |
+| 7 | [WorkspaceIndex.h](../src/core/WorkspaceIndex.h), [MainWindowWorkspace.cpp](../src/ui/MainWindowWorkspace.cpp) | Saved symbols versus live overlays |
 | 8 | Parser, compiler, and language-server implementations | Study internals as a change requires |
 
 Before changing behavior, be able to answer: which widget starts it, who owns
@@ -86,7 +86,7 @@ rejected, and which test proves the result?
 
 ### Application, widgets, and layouts
 
-[main.cpp](../src/main.cpp) creates `QApplication`, sets application identity and
+[main.cpp](../src/ui/main.cpp) creates `QApplication`, sets application identity and
 worker limits, parses arguments, constructs the window, opens startup paths,
 and enters `app.exec()`. The event loop dispatches input, timers, painting,
 process output, and worker completions. Blocking a handler with parsing or a
@@ -95,7 +95,7 @@ filesystem scan prevents other UI work.
 `QMainWindow` supplies menus, toolbars, a central widget, and a status bar.
 `QVBoxLayout` and `QGridLayout` arrange controls; `QSplitter` provides resizable
 regions; `QTabWidget` owns pages. The UI is constructed in C++ in
-[MainWindowUi.cpp](../src/MainWindowUi.cpp), not in a Designer `.ui` file.
+[MainWindowUi.cpp](../src/ui/MainWindowUi.cpp), not in a Designer `.ui` file.
 
 ### Signals, connections, and resources
 
@@ -157,7 +157,8 @@ before using widgets or applying changes.
 flowchart TD
     UI["MainWindow: UI coordination and generations"] --> DOC["SourceDocument: revision and snapshots"]
     DOC --> EDIT["CodeEditor: Scintilla adapter"]
-    DOC --> PARSE["SourceAnalysis and LanguageRegistry"]
+    DOC --> ANALYSIS["DocumentAnalysis: headless revision/snapshot jobs"]
+    ANALYSIS --> PARSE["SourceAnalysis and LanguageRegistry"]
     PARSE --> COMP["CompilerSymbolRecovery: libclang"]
     UI --> SERVICES["WorkspaceServices"]
     SERVICES --> INDEX["WorkspaceIndex: scheduling"]
@@ -169,8 +170,9 @@ flowchart TD
     SERVICES --> LSP["LanguageServerClient: QProcess and LSP"]
     LSP --> SERVER["clangd or optional server"]
     UI --> BROWSER["SymbolBrowser and DefinitionResolver"]
-    UI --> REFS["ReferenceQuery, ReferenceSearch, ReferenceResultsView"]
+    UI --> REFS["ReferenceSession and ReferenceHistoryModel"]
     REFS --> DB
+    UI --> RESULTS["ReferenceResultsView: Qt presentation"]
     UI --> STATE["ApplicationStateStore and WorkspaceOptionsStore"]
     UI --> SETTINGS["AppSettings and SettingsFile"]
 ```
@@ -189,32 +191,32 @@ translation unit. A same-named syntax symbol is a candidate, not proof of identi
 ### Code map
 
 All `MainWindow*.cpp` files implement the **same class**, declared in
-[MainWindow.h](../src/MainWindow.h). They split UI responsibilities; they are not
+[MainWindow.h](../src/ui/MainWindow.h). They split UI responsibilities; they are not
 separate controllers.
 
 | Area | Entry points |
 |---|---|
-| Startup and command-line paths | [main.cpp](../src/main.cpp) |
-| Window, document UI, outline, context, open/save/close | [MainWindow.cpp](../src/MainWindow.cpp) |
-| Widget hierarchy, actions, menus, toolbars, enablement | [MainWindowUi.cpp](../src/MainWindowUi.cpp) |
-| Workspace services, browser integration, definition previews | [MainWindowWorkspace.cpp](../src/MainWindowWorkspace.cpp) |
-| Preview tabs, focus, asynchronous navigation reads, history | [MainWindowNavigation.cpp](../src/MainWindowNavigation.cpp) |
-| Hover links and explicit definition jumps | [MainWindowLinks.cpp](../src/MainWindowLinks.cpp) |
-| Search dialog, orchestration, replacement, results lifecycle | [MainWindowReferences.cpp](../src/MainWindowReferences.cpp) |
-| Preferences and per-panel options | [MainWindowSettings.cpp](../src/MainWindowSettings.cpp), [MainWindowPanels.cpp](../src/MainWindowPanels.cpp) |
-| Document revisions, snapshots, analysis, external reload | [SourceDocument.h](../src/SourceDocument.h), [SourceDocument.cpp](../src/SourceDocument.cpp) |
-| Text, selections, undo, styles, source-link margin | [CodeEditor.h](../src/CodeEditor.h), [CodeEditor.cpp](../src/CodeEditor.cpp) |
-| Parsing, language selection, compiler recovery | [SourceAnalysis.cpp](../src/SourceAnalysis.cpp), [LanguageRegistry.cpp](../src/LanguageRegistry.cpp), [CompilerSymbolRecovery.cpp](../src/CompilerSymbolRecovery.cpp) |
-| Index/service ownership | [WorkspaceServices.cpp](../src/WorkspaceServices.cpp) |
-| Index scheduling, watchers, cancellation | [WorkspaceIndex.cpp](../src/WorkspaceIndex.cpp) |
-| Discovery, transactions, queries | [WorkspaceScanner.cpp](../src/WorkspaceScanner.cpp), [WorkspaceIndexBuilder.cpp](../src/WorkspaceIndexBuilder.cpp), [WorkspaceSymbolQuery.cpp](../src/WorkspaceSymbolQuery.cpp) |
-| SQLite and path identity | [SymbolIndexStore.cpp](../src/SymbolIndexStore.cpp), [WorkspacePaths.cpp](../src/WorkspacePaths.cpp) |
-| Browser rows and syntax fallback | [SymbolBrowser.cpp](../src/SymbolBrowser.cpp), [DefinitionResolver.cpp](../src/DefinitionResolver.cpp) |
-| LSP, compilation database, coordinate conversion | [LanguageServerClient.cpp](../src/LanguageServerClient.cpp), [CompilationDatabase.cpp](../src/CompilationDatabase.cpp), [SourceCoordinates.cpp](../src/SourceCoordinates.cpp) |
-| Typed search options, matching, semantic result resolution | [SearchOptions.h](../src/SearchOptions.h), [ReferenceQuery.cpp](../src/ReferenceQuery.cpp), [ReferenceSearch.cpp](../src/ReferenceSearch.cpp) |
-| Candidate postings, history validation/export, text caret | [ReferenceCandidateIndex.cpp](../src/ReferenceCandidateIndex.cpp), [ReferenceHistory.cpp](../src/ReferenceHistory.cpp), [ReferenceResultsView.cpp](../src/ReferenceResultsView.cpp) |
-| Preferences, window/session state, workspace options | [AppSettings.cpp](../src/AppSettings.cpp), [ApplicationStateStore.cpp](../src/ApplicationStateStore.cpp), [WorkspaceOptionsStore.cpp](../src/WorkspaceOptionsStore.cpp) |
-| File safety, shared limits, appearance | [FileIO.cpp](../src/FileIO.cpp), [RuntimeLimits.h](../src/RuntimeLimits.h), [UiAppearance.cpp](../src/UiAppearance.cpp) |
+| Startup and command-line paths | [main.cpp](../src/ui/main.cpp) |
+| Window, document UI, outline, context, open/save/close | [MainWindow.cpp](../src/ui/MainWindow.cpp) |
+| Widget hierarchy, actions, menus, toolbars, enablement | [MainWindowUi.cpp](../src/ui/MainWindowUi.cpp) |
+| Workspace services, browser integration, definition previews | [MainWindowWorkspace.cpp](../src/ui/MainWindowWorkspace.cpp) |
+| Preview tabs, focus, asynchronous navigation reads, history | [MainWindowNavigation.cpp](../src/ui/MainWindowNavigation.cpp) |
+| Hover links and explicit definition jumps | [MainWindowLinks.cpp](../src/ui/MainWindowLinks.cpp) |
+| Search dialog, orchestration, replacement, results lifecycle | [MainWindowReferences.cpp](../src/ui/MainWindowReferences.cpp) |
+| Preferences and per-panel options | [MainWindowSettings.cpp](../src/ui/MainWindowSettings.cpp), [MainWindowPanels.cpp](../src/ui/MainWindowPanels.cpp) |
+| Document revisions, snapshots, analysis, external reload | [SourceDocument.h](../src/ui/SourceDocument.h), [SourceDocument.cpp](../src/ui/SourceDocument.cpp) |
+| Text, selections, undo, styles, source-link margin | [CodeEditor.h](../src/ui/CodeEditor.h), [CodeEditor.cpp](../src/ui/CodeEditor.cpp) |
+| Parsing, language selection, compiler recovery | [SourceAnalysis.cpp](../src/core/SourceAnalysis.cpp), [LanguageRegistry.cpp](../src/core/LanguageRegistry.cpp), [CompilerSymbolRecovery.cpp](../src/core/CompilerSymbolRecovery.cpp) |
+| Index/service ownership | [WorkspaceServices.cpp](../src/core/WorkspaceServices.cpp) |
+| Index scheduling, watchers, cancellation | [WorkspaceIndex.cpp](../src/core/WorkspaceIndex.cpp) |
+| Discovery, transactions, queries | [WorkspaceScanner.cpp](../src/core/WorkspaceScanner.cpp), [WorkspaceIndexBuilder.cpp](../src/core/WorkspaceIndexBuilder.cpp), [WorkspaceSymbolQuery.cpp](../src/core/WorkspaceSymbolQuery.cpp) |
+| SQLite and path identity | [SymbolIndexStore.cpp](../src/core/SymbolIndexStore.cpp), [WorkspacePaths.cpp](../src/core/WorkspacePaths.cpp) |
+| Browser rows and syntax fallback | [SymbolBrowser.cpp](../src/ui/SymbolBrowser.cpp), [DefinitionResolver.cpp](../src/core/DefinitionResolver.cpp) |
+| LSP, compilation database, coordinate conversion | [LanguageServerClient.cpp](../src/core/LanguageServerClient.cpp), [CompilationDatabase.cpp](../src/core/CompilationDatabase.cpp), [SourceCoordinates.cpp](../src/core/SourceCoordinates.cpp) |
+| Typed search options, matching, semantic result resolution | [SearchOptions.h](../src/core/SearchOptions.h), [ReferenceQuery.cpp](../src/core/ReferenceQuery.cpp), [ReferenceSearch.cpp](../src/core/ReferenceSearch.cpp) |
+| Candidate postings, history validation/export, text caret | [ReferenceCandidateIndex.cpp](../src/core/ReferenceCandidateIndex.cpp), [ReferenceHistory.cpp](../src/core/ReferenceHistory.cpp), [ReferenceResultsView.cpp](../src/ui/ReferenceResultsView.cpp) |
+| Preferences, window/session state, workspace options | [AppSettings.cpp](../src/ui/AppSettings.cpp), [ApplicationStateStore.cpp](../src/core/ApplicationStateStore.cpp), [WorkspaceOptionsStore.cpp](../src/core/WorkspaceOptionsStore.cpp) |
+| File safety, shared limits, appearance | [FileIO.cpp](../src/core/FileIO.cpp), [RuntimeLimits.h](../src/core/RuntimeLimits.h), [UiAppearance.cpp](../src/ui/UiAppearance.cpp) |
 
 MainWindow aliases `SourceDocument` as `Document`. Its important state is:
 
@@ -236,10 +238,11 @@ or context snapshot is not automatically the same version of that text.
 
 ### Responsibility and naming rules
 
-- Keep UI focus, selection, and request generations in MainWindow; document
-  lifecycle and accepted analysis in SourceDocument.
-- [SourceTypes.h](../src/SourceTypes.h) and [IndexTypes.h](../src/IndexTypes.h) hold
-  shared result data; [SourceCoordinates.h](../src/SourceCoordinates.h) defines LSP
+- Keep UI focus, selection, and presentation generations in MainWindow.
+  DocumentAnalysis owns revisions, cached snapshots and accepted analysis;
+  SourceDocument binds it to the editor and applies external reloads.
+- [SourceTypes.h](../src/core/SourceTypes.h) and [IndexTypes.h](../src/core/IndexTypes.h) hold
+  shared result data; [SourceCoordinates.h](../src/core/SourceCoordinates.h) defines LSP
   locations and explicit coordinate conversion.
 - Keep language identity typed as `LanguageId`.
 - Use purpose-specific names and named item roles such as `SymbolItemRole`.
@@ -247,6 +250,56 @@ or context snapshot is not automatically the same version of that text.
   identities unless a deliberate contract change requires otherwise.
 - Reuse existing facades and helpers; do not add a generic plugin/controller
   framework to split a single responsibility.
+
+### Headless core boundary
+
+Sources follow the build boundaries: `src/core/` contains headless services and
+shared types, `src/ui/` contains Qt presentation plus the GUI and launcher entry
+points, and `src/cli/` contains the headless CLI entry point. Core and UI targets
+export only their own include directories; the UI also inherits core headers.
+
+`codecairn_core` contains public data types and nonvisual functionality. It links
+Qt Core/Concurrent, grammars, Tree-sitter, libclang, SQLite, and RE2, but not Qt
+Gui/Widgets, Scintilla, appearance settings, or GUI resources. There is no separate
+domain/backend library. `codecairn_ui_qt` contains the existing Qt presentation,
+and both the GUI and `codecairn-cli` use the core.
+
+- [ProjectSession.cpp](../src/core/ProjectSession.cpp) prepares validated projects and
+  compilation settings before the UI commits a project switch after its prompts.
+  WorkspaceServices owns the committed project, index/language-service startup,
+  options reload and shutdown. Preparation does not replace the active project;
+  frontends commit only after save/discard/cancel decisions succeed.
+- [ProjectDiscovery.cpp](../src/core/ProjectDiscovery.cpp) implements shared project
+  inclusion/exclusion and cancellable file discovery. The dialog owns view
+  updates and observes snapshot-based scan results.
+- [DocumentAnalysis.cpp](../src/core/DocumentAnalysis.cpp) accepts supplied bytes
+  headlessly. SourceDocument overrides synchronous snapshot acquisition so
+  Scintilla remains the live editing authority, without a second per-keystroke
+  mutable text buffer.
+- [NavigationTarget.cpp](../src/core/NavigationTarget.cpp) resolves and validates
+  byte/LSP ranges and hashes. [NavigationService.cpp](../src/core/NavigationService.cpp)
+  owns per-channel semantic/syntax lookup policy, context self-target filtering,
+  stale-snapshot rejection, bounded syntax-request coalescing and asynchronous
+  target reads. Explicit semantic-only requests never fall back to syntax.
+  Reads capture live snapshot bytes on the owning thread before dispatch.
+  The GUI and CLI use this service; the UI alone applies focus, tabs and selections.
+- [ReferenceSession.cpp](../src/core/ReferenceSession.cpp) owns search dispatch,
+  semantic synchronization, page jobs, cancellation, generations, and cross-page
+  source identities. Its optional snapshot provider runs on the owning thread,
+  never a worker, and returns bytes rather than an editor pointer.
+  Shared ReferenceInputs resolve project/current/selected-file scopes and file
+  patterns; captureDocumentOverlays applies project membership and analysis
+  freshness rules to headless document handles. The UI only collects the selected
+  paths and editor-modified flags.
+- ReferenceHistoryModel owns append/replacement limits, staging and rollback on
+  persistence failure. Presentation labels, source links, close/quit interaction
+  and confirmation prompts remain frontend responsibilities.
+
+Core services require a running Qt event loop and are called on their owning
+thread. Keep requests/results implicitly shared and in-process: no JSON
+serialization between the GUI and core. Queued work must not outlive its owner.
+Call `configureStateDirectory()` only during startup, before any services or
+worker jobs; it changes the process-wide core storage root, not GUI preferences.
 
 ## UI and interaction model
 
@@ -410,7 +463,7 @@ Ranges:                                end-exclusive [start, end)
 An accented character can use two UTF-8 bytes; an emoji can use two UTF-16 code
 units. Neither visible-character counts nor QString indexes are source byte
 offsets. Use `lspPosition()` and `sourceByteOffset()` in
-[SourceCoordinates.cpp](../src/SourceCoordinates.cpp); invalid boundaries are errors.
+[SourceCoordinates.cpp](../src/core/SourceCoordinates.cpp); invalid boundaries are errors.
 Styling must preserve bytes, BOM, selections, undo, and dirty state.
 
 ### Indexing and symbol queries
@@ -550,7 +603,7 @@ function names. Bump ParserVersion when saved extraction meaning changes.
 6. Retain panel focus for browsing or focus/pin on activation.
 
 Editing a preview pins it. A dirty editor is never silently reused.
-[NavigationHistory.h](../src/NavigationHistory.h) defines locations with byte or
+[NavigationHistory.h](../src/core/NavigationHistory.h) defines locations with byte or
 LSP ranges, expected hashes, scroll state, and reference-line selection.
 
 Automatic context follows `updateContext()` -> `resolveDefinition()` ->
@@ -582,7 +635,7 @@ Context snapshots must match live source before server lookup.
 
 ### Reference searches and results
 
-Read [MainWindowReferences.cpp](../src/MainWindowReferences.cpp) as a complete
+Read [MainWindowReferences.cpp](../src/ui/MainWindowReferences.cpp) as a complete
 feature walkthrough:
 
 1. `lookupReferences()` captures the active/context/browser symbol and shows
@@ -651,7 +704,7 @@ before document and Qt state can be destroyed.
 
 ### Source-file safety
 
-[FileIO.cpp](../src/FileIO.cpp) accepts validated UTF-8, strips/remembers an optional
+[FileIO.cpp](../src/core/FileIO.cpp) accepts validated UTF-8, strips/remembers an optional
 BOM, rejects binary/invalid encodings, and enforces the 4 MiB source limit.
 CodeEditor detects CRLF on load. Saving uses QSaveFile atomic replacement and
 checks external changes. Appearance changes must not rewrite source, alter undo,
@@ -864,8 +917,9 @@ be removed. There is no legacy import, fallback store, or automatic cleanup.
 
 ### Configure, build, test, install
 
-[CMakeLists.txt](../CMakeLists.txt) builds `codecairn_core`, reused by the application,
-behavior/parity tests, and benchmarks. Application C++ uses C++20; Scintilla is
+[CMakeLists.txt](../CMakeLists.txt) builds the headless `codecairn_core`, the
+`codecairn_ui_qt` presentation library, GUI/CLI executables, tests, and benchmarks.
+Application C++ uses C++20; Scintilla is
 built separately with C++17. Generated grammars compile directly; ordinary builds
 do not run a Tree-sitter generator or qmake.
 
@@ -882,6 +936,24 @@ Configuration generates build rules; building compiles/links; tests exercise
 them; installation stages a distribution. These are separate operations.
 Keep generated files in a build directory and follow the README's platform
 compiler/prefix requirements.
+
+For a core/CLI-only build, use a separate build directory:
+
+```sh
+cmake -S . -B build/headless -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+    -DCODECAIRN_BUILD_GUI=OFF -DCODECAIRN_BUNDLE_RUNTIME=OFF
+cmake --build build/headless --parallel
+ctest --test-dir build/headless --output-on-failure
+```
+
+This configuration does not find Qt Gui/Widgets/Core5Compat or fetch/build
+Scintilla. It registers core, document-analysis, CLI, analysis/index parity,
+application-state, reference-candidate, and language tests. Core tests reject inherited GUI
+compile definitions. CI builds the GUI and CLI and runs all functional suites
+from `build/release`; the separate headless configuration is optional for local
+development, not an additional CI build. Headless-only installs
+use installed system runtime dependencies; standalone runtime bundling remains
+part of the GUI packaging path.
 
 For local macOS development with dependencies built for a newer OS, configure
 with a matching target, for example `-DCMAKE_OSX_DEPLOYMENT_TARGET=27.0`.
@@ -1151,6 +1223,10 @@ Build first. Registration/environment are in
 
 | Suite | Main coverage |
 |---|---|
+| `core` | Headless project/discovery rules, navigation validation, search pagination/cancellation and transactional history |
+| `document_analysis` | Supplied/editor-bound snapshots, stale analysis, compilation changes, dirty-buffer decisions and shutdown |
+| `cli` | Real subprocess analysis/index/query/search, isolated state, JSON/errors, pagination and clangd definitions/references |
+| `workflows` | Paired legacy/shared asynchronous reference dispatch and navigation-read median/p95 fixtures |
 | `prototype` | Editor, file I/O, styles, outline, layout, screenshot |
 | `workspace` | Index/overlays, cancellation, watches, browser state, real clangd |
 | `configuration` | Settings validation, atomic writes, conflicts, live application |
@@ -1168,6 +1244,17 @@ Build first. Registration/environment are in
 | `analysis_parity` | Exact styles and canonical metadata for 23 baseline fixtures |
 | `benchmarks` | Repeatable lookup/query/rendering/buffer fixtures |
 | `large_indexing` | Isolated 1k/25k/100k catalogs, progressive availability, cold/warm timing |
+
+Language sample projects live in [tests/fixtures/languages](../tests/fixtures/languages).
+They are test inputs, not application resources or installed examples.
+
+Tests are grouped by dependency: `tests/core/` contains headless suites linked
+only to `codecairn_core`, `tests/ui/` contains Qt presentation/integration and
+launcher tests, `tests/cli/` contains CLI subprocess tests, and `tests/benchmarks/`
+contains performance fixtures. Shared helpers remain at the test root; test
+data, resource manifests and the launcher fixture executable source live under
+`tests/fixtures/`. One `tests/CMakeLists.txt` registers all suites, with unchanged
+CTest names. The headless configuration includes language tests as well.
 
 `symbol_scaling` normally creates 100,000 synthetic symbols and exercises full
 row counts, far-end scrolling, exact lookup, refresh coalescing, filtering, and
@@ -1237,15 +1324,21 @@ Windows atomic-save fixtures wait for startup readers before replacement.
 
 ### Refactoring contracts and performance
 
+Core/UI extraction passed local functional and headless suites. An initial
+100k cold-index slowdown did not reproduce in follow-up comparisons; shared-host
+measurements do not certify zero performance impact. Native Windows/Linux and
+controlled release-performance acceptance remain outstanding. Native macOS
+interaction tests retain three failures also present in the original build.
+
 Preserve bytes/BOM/line endings, dirty/undo state, pinning, focus/history,
 browser state, error visibility, provenance, and persistence contracts.
 Category counts/children retain their relationship to query/kind/pagination
 filters; the browser is not limited by internal lookup caps. Overlay merge
 ordering and declaration-versus-definition preference are also contracts.
 
-[AnalysisParityTests.cpp](../tests/AnalysisParityTests.cpp) checks exact style hex
+[AnalysisParityTests.cpp](../tests/core/AnalysisParityTests.cpp) checks exact style hex
 and canonical SHA-256 fingerprints for 23 fixtures, including ranges, parents,
-ordering, and provenance. [IndexParityTests.cpp](../tests/IndexParityTests.cpp)
+ordering, and provenance. [IndexParityTests.cpp](../tests/core/IndexParityTests.cpp)
 checks storage/query analogues and mid-write rollback. Do not regenerate expected
 values merely to conceal behavior changes.
 
@@ -1333,8 +1426,8 @@ The compiler audit uses at most four workers. Large audits can set
 
 Start with the [user-facing logging contract](USER_GUIDE.md#logs-and-crash-reports)
 for locations, levels, retention, privacy, and failure behavior.
-[Diagnostics.cpp](../src/Diagnostics.cpp) owns the Qt message handler and rotating
-JSONL writer. [main.cpp](../src/main.cpp) starts it after Qt/CLI initialization;
+[Diagnostics.cpp](../src/core/Diagnostics.cpp) owns the Qt message handler and rotating
+JSONL writer. [main.cpp](../src/ui/main.cpp) starts it after Qt/CLI initialization;
 the Diagnostics object outlives MainWindow and QApplication so teardown messages
 are captured before `finish(exitCode)` writes normal completion.
 
@@ -1557,7 +1650,7 @@ Open code, make an unsaved edit/selection, modify the profile, and reload it.
 Check source and context styles while preserving bytes, selection, dirty state,
 and undo. Trace JSON -> parseSettings -> AppSettings -> applyConfiguration ->
 CodeEditor. See `reloadUpdatesBothViewsWithoutEditing()` in
-[ConfigurationTests.cpp](../tests/ConfigurationTests.cpp).
+[ConfigurationTests.cpp](../tests/ui/ConfigurationTests.cpp).
 
 **2. Add a small UI action.** As an exercise, add Clear Outline Filter through
 the existing action helper. Reuse `clearPanelFilter(outlineFilter_)` so transient
@@ -1594,8 +1687,8 @@ preserved. Use clang-format 23.1.3 for reproducibility:
 Format only changed implementation files. For example:
 
 ```sh
-clang-format -i --style=file src/AppSettings.cpp src/AppSettings.h
-clang-format --dry-run --Werror --style=file src/AppSettings.cpp src/AppSettings.h
+clang-format -i --style=file src/ui/AppSettings.cpp src/ui/AppSettings.h
+clang-format --dry-run --Werror --style=file src/ui/AppSettings.cpp src/ui/AppSettings.h
 ```
 
 [.clang-format-ignore](../.clang-format-ignore) excludes generated dependencies,
@@ -1624,7 +1717,7 @@ separate formatter/linter build target. Use original/licensed icons and fixtures
 - Index rebuilds never delete source; generated workspace data is per-user.
 - Keep dependency/build outputs and unrelated files out of commits.
 
-Shared limits are in [RuntimeLimits.h](../src/RuntimeLimits.h): two global workers,
+Shared limits are in [RuntimeLimits.h](../src/core/RuntimeLimits.h): two global workers,
 300-row defaults for internal symbol queries (not the browser), 100 definition
 candidates, 200 navigation entries, and 10,000 reference matches per page.
 Other bounds include 4 MiB source files, 32 MiB LSP messages, and 64 MiB

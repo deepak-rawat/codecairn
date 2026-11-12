@@ -29,6 +29,83 @@ to PATH is optional and manual. Portable downloads still store preferences and
 caches in normal per-user locations. Package-manager installations rely on
 their installed dependencies and must not be moved as standalone applications.
 
+### Headless command line
+
+`codecairn-cli` runs without widgets or a display. It uses the same analysis,
+index, navigation-resolution and reference-search code as the GUI.
+The existing `cairn` command still launches the GUI.
+
+Run the development executable as `./build/codecairn-cli` on Linux/macOS, or
+`./build/bin/codecairn-cli.exe` on Windows. The bundled macOS executable is in
+`codecairn.app/Contents/MacOS`; other installations place it in `bin`.
+
+```sh
+codecairn-cli analyze /path/to/source.cpp --json
+codecairn-cli index --root /path/to/project --json
+codecairn-cli symbols --root /path/to/project --query parse --json
+codecairn-cli definition --file /path/to/source.cpp --byte-offset 120 --json
+codecairn-cli references --root /path/to/project --query parse --method literal --json
+codecairn-cli analyze /path/to/source.cpp --overlay /path/to/source.cpp=/path/to/buffer.txt
+```
+
+- Use `--project /path/to/project.cairn` instead of `--root` for a managed project.
+  Run `index` before querying saved workspace symbols; indexing reuses unchanged
+  files unless `--force` is supplied.
+- `definition` returns syntax-index candidates by default. Add `--semantic` for
+  compiler-aware definitions. Semantic references also require `--semantic`,
+  `--file`, and a zero-based UTF-8 `--byte-offset` selecting the intended symbol.
+  An omitted reference query is taken from that symbol. Missing providers produce
+  errors, never a text fallback.
+- Reference methods are `literal`, `regex`, `keywords`, `occurrences`, and
+  `references` (whole-identifier text matching unless `--semantic` is supplied).
+  `--include-comments`, `--include-strings`, `--skip-inactive`, and
+  `--file-patterns` control filtering. Supplying `--file` limits references to
+  that file (including plain text); otherwise they use the same supported-source
+  discovery and membership rules as the workspace index.
+- For `symbols` and `references`, `--limit` (1-10,000, default 300) and `--offset`
+  select a page. Syntax definitions accept `--offset` with a fixed 100-candidate
+  query limit; semantic definitions accept neither paging option.
+  Definitions take their identifier from `--byte-offset`, not `--query`.
+  JSON reports
+  `more` and the next reference offset. A separate CLI invocation is a new
+  search, not continuation of a previously frozen snapshot; do not assume offsets
+  remain valid after editing sources. The GUI's multi-page session retains
+  cross-page freshness checks.
+- Explicit options that do not apply to a command are errors, checked before
+  preparing project or index state. `--force` applies only to `index`; search
+  methods and content filters apply only to `references`. Reference
+  `--byte-offset` requires `--semantic`; an explicit semantic `--method` must be
+  `references`. For `index` and `symbols`, `--file` can infer a workspace root
+  when neither `--root` nor `--project` is supplied, but does not restrict scope.
+- Repeat `--overlay PATH=FILE` to supply explicit unsaved source snapshots for
+  analysis, symbols, definitions, or references. `PATH` is the source identity;
+  `FILE` contains its replacement UTF-8 text (an optional UTF-8 BOM is accepted
+  and excluded from byte offsets and hashes). Paths are normalized; duplicate
+  source identities and invalid encodings are errors. Snapshots can represent
+  files not yet saved to disk. Project membership and filename filters still
+  apply, and `--file` still limits reference results to that file.
+  `analyze` accepts only its own source overlay. Persistent `index` rejects
+  overlays: unsaved snapshots never replace saved index contents.
+- `--json` writes compact JSON with `schemaVersion: 1`, `command`, and `status`
+  plus command-specific data. Partial reference pages have status `partial`;
+  a successful zero-match query is not an error. Without it, output contains
+  concise summaries, symbol or match locations with UTF-8 byte ranges,
+  provenance, and paging hints. Diagnostics and warnings go to stderr.
+- Exit statuses are 0 for successful pages (including partial/zero matches),
+  1 for operation errors, 2 for invalid arguments, 124 for timeout, and 130 for
+  Ctrl+C cancellation (also Ctrl+Break on Windows).
+  `--timeout` is in milliseconds (default 120,000).
+  Cooperative shutdown waits for owned workers to finish.
+
+The CLI uses a separate `CodeCairnCLI` state location by default and does not
+load/save GUI preferences or sessions. For repeatable isolated usage, supply
+`--state-dir /absolute/path/to/temporary-state` on every invocation. It writes
+indexes and generated compilation metadata there, not into source directories.
+It does not offer source editing, timestamp touching, or automatic database
+recreation. Existing project definitions are read, not modified.
+Overlay input files and source files are never modified, and overlays neither
+read unsaved GUI buffers nor change GUI preferences or sessions.
+
 ## Opening and managing a workspace
 
 Open a folder through **Project > Open Folder**, or open a source file. Opening

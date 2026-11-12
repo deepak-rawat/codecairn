@@ -4,6 +4,7 @@ file(
     LIST_DIRECTORIES FALSE
     "${prefix}/bin/codecairn"
     "${prefix}/bin/cairn"
+    "${prefix}/bin/codecairn-cli"
     "${prefix}/bin/clangd"
     "${prefix}/lib/*.so*"
     "${prefix}/plugins/*.so*"
@@ -55,6 +56,7 @@ if("@CODECAIRN_RELEASE@")
         EXECUTABLES
         "@codecairn_linux_application@"
         "@codecairn_linux_launcher@"
+        "@codecairn_linux_cli@"
         "@CODECAIRN_CLANGD@"
         MODULES
         ${plugins}

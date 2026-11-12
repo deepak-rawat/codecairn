@@ -1,6 +1,5 @@
 #pragma once
 
-#include "AppSettings.h"
 #include "WorkspacePaths.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -13,8 +12,8 @@ public:
     TestStorage() {
         QStandardPaths::setTestModeEnabled(true);
         QCoreApplication::setOrganizationName({});
-        QCoreApplication::setApplicationName(
-            "CodeCairnTests-" + QUuid::createUuid().toString(QUuid::WithoutBraces));
+        QCoreApplication::setApplicationName("CodeCairnTests-" +
+                                             QUuid::createUuid().toString(QUuid::WithoutBraces));
         stateDirectory_ = defaultStateDirectory();
         settingsDirectory_ = QFileInfo(defaultSettingsPath()).absolutePath();
         const auto identity = QCoreApplication::applicationName();

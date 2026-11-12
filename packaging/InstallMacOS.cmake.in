@@ -3,6 +3,7 @@ set(clangd "@CODECAIRN_CLANGD@")
 set(arguments
     "${app}"
     "-executable=${app}/Contents/MacOS/cairn"
+    "-executable=${app}/Contents/MacOS/codecairn-cli"
     -always-overwrite
     -no-plugins
 )
@@ -31,7 +32,12 @@ foreach(include_dir IN LISTS includes)
     file(COPY "${include_dir}" DESTINATION "${app}/Contents/lib/clang/${version}")
 endforeach()
 if(clangd AND EXISTS "${clangd}")
-    set(executables "${app}/Contents/MacOS/codecairn" "${app}/Contents/MacOS/cairn" "${clangd}")
+    set(executables
+        "${app}/Contents/MacOS/codecairn"
+        "${app}/Contents/MacOS/cairn"
+        "${app}/Contents/MacOS/codecairn-cli"
+        "${clangd}"
+    )
     file(
         GET_RUNTIME_DEPENDENCIES
         EXECUTABLES

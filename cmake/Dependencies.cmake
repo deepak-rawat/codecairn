@@ -74,14 +74,10 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
     endif()
 endif()
 
-find_package(
-    Qt6 6.5 REQUIRED
-    COMPONENTS Core
-               Gui
-               Widgets
-               Core5Compat
-               Concurrent
-)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Concurrent)
+if(CODECAIRN_BUILD_GUI)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Widgets Core5Compat)
+endif()
 find_package(SQLite3 REQUIRED)
 find_package(re2 CONFIG QUIET)
 if(NOT TARGET re2::re2)
@@ -199,32 +195,34 @@ endfunction()
 include("${CMAKE_CURRENT_LIST_DIR}/SourceArchives.cmake")
 
 # Build the upstream Qt wrapper directly; QScintilla is a different integration.
-file(
-    GLOB
-    scintilla_core
-    CONFIGURE_DEPENDS
-    "${scintilla_SOURCE_DIR}/src/*.cxx"
-)
-set(scintilla_qt_sources "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase")
-add_library(
-    scintilla_qt STATIC
-    ${scintilla_core}
-    "${scintilla_qt_sources}/PlatQt.cpp"
-    "${scintilla_qt_sources}/ScintillaQt.cpp"
-    "${scintilla_qt_sources}/ScintillaEditBase.cpp"
-    "${scintilla_qt_sources}/ScintillaQt.h"
-    "${scintilla_qt_sources}/ScintillaEditBase.h"
-)
-target_include_directories(
-    scintilla_qt SYSTEM PUBLIC "${scintilla_SOURCE_DIR}/include" "${scintilla_SOURCE_DIR}/src"
-                               "${scintilla_qt_sources}"
-)
-target_compile_definitions(scintilla_qt PUBLIC SCINTILLA_QT=1 EXPORT_IMPORT_API=)
-target_link_libraries(
-    scintilla_qt
-    PUBLIC Qt6::Widgets
-    PRIVATE Qt6::Core5Compat
-)
-set_target_properties(scintilla_qt PROPERTIES CXX_STANDARD 17)
+if(CODECAIRN_BUILD_GUI)
+    file(
+        GLOB
+        scintilla_core
+        CONFIGURE_DEPENDS
+        "${scintilla_SOURCE_DIR}/src/*.cxx"
+    )
+    set(scintilla_qt_sources "${scintilla_SOURCE_DIR}/qt/ScintillaEditBase")
+    add_library(
+        scintilla_qt STATIC
+        ${scintilla_core}
+        "${scintilla_qt_sources}/PlatQt.cpp"
+        "${scintilla_qt_sources}/ScintillaQt.cpp"
+        "${scintilla_qt_sources}/ScintillaEditBase.cpp"
+        "${scintilla_qt_sources}/ScintillaQt.h"
+        "${scintilla_qt_sources}/ScintillaEditBase.h"
+    )
+    target_include_directories(
+        scintilla_qt SYSTEM PUBLIC "${scintilla_SOURCE_DIR}/include" "${scintilla_SOURCE_DIR}/src"
+                                   "${scintilla_qt_sources}"
+    )
+    target_compile_definitions(scintilla_qt PUBLIC SCINTILLA_QT=1 EXPORT_IMPORT_API=)
+    target_link_libraries(
+        scintilla_qt
+        PUBLIC Qt6::Widgets
+        PRIVATE Qt6::Core5Compat
+    )
+    set_target_properties(scintilla_qt PROPERTIES CXX_STANDARD 17)
+endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/LanguageGrammars.cmake")
