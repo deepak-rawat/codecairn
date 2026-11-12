@@ -77,7 +77,7 @@ jobs:
             args+=("-DCMAKE_PREFIX_PATH=$QT_ROOT_DIR;$RUNNER_TEMP/codecairn-linux-deps")
           fi
           cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCODECAIRN_RELEASE=ON -DCODECAIRN_BUNDLE_RUNTIME=ON \
+            -DCODECAIRN_BUILD_GUI=ON -DCODECAIRN_RELEASE=ON -DCODECAIRN_BUNDLE_RUNTIME=ON \
             -DBUILD_TESTING=ON -DCODECAIRN_BUILD_BENCHMARKS=OFF "${args[@]}"
       - name: Build and test
         run: |
@@ -139,7 +139,7 @@ jobs:
           set -euo pipefail
           cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ \
-            -DCODECAIRN_RELEASE=ON -DCODECAIRN_BUNDLE_RUNTIME=ON \
+            -DCODECAIRN_BUILD_GUI=ON -DCODECAIRN_RELEASE=ON -DCODECAIRN_BUNDLE_RUNTIME=ON \
             -DBUILD_TESTING=ON -DCODECAIRN_BUILD_BENCHMARKS=OFF
           cmake --build build/release --parallel
           ctest --test-dir build/release --output-on-failure
