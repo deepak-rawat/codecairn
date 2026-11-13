@@ -4,10 +4,10 @@
 #include <codecairn/CompilationDatabase.h>
 #include "CompilerSymbolRecovery.h"
 #include <codecairn/FileIO.h>
-#include <codecairn/LanguageServerClient.h>
+#include "LanguageServerClient.h"
 #include <codecairn/ReferenceSearch.h>
 #include <codecairn/SourceAnalysis.h>
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 #include <codecairn/WorkspaceOptionsStore.h>
 #include "TestStorage.h"
 #include <QCoreApplication>

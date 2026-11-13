@@ -6,21 +6,6 @@
 #include <QLineEdit>
 #include <QStatusBar>
 
-void MainWindow::connectLanguageService(LanguageServerClient *service) {
-    if (service == cppLanguageService_)
-        return;
-    connect(service, &LanguageServerClient::status, this,
-            [this](const QString &message) { statusBar()->showMessage(message, 8000); });
-    connect(service, &LanguageServerClient::ready, this, [this] {
-        if (contextFollowsEditor_)
-            contextTimer_->start();
-    });
-}
-
-LanguageServerClient *MainWindow::languageService(const QString &path, const QByteArray &source) {
-    return workspaceServices_->languageService(projectPath_, path, source);
-}
-
 void MainWindow::requestHover(CodeEditor *editor, int position) {
     if (position < 0 && hoverEditor_ && hoverEditor_ != editor)
         return;
@@ -47,7 +32,7 @@ void MainWindow::lookupLink(CodeEditor *editor, int position, bool activate) {
         (context && (contextPath_.isEmpty() || contextHistoryIndex_ < 0)))
         return;
     const auto bytes = context ? contextHistory_[contextHistoryIndex_].bytes : snapshot(document);
-    const auto path = context ? contextPath_ : document->path;
+    const auto path = context ? contextPath_ : document->path();
     const auto name = sourceIdentifier(bytes, position);
     if (name.isEmpty()) {
         if (activate)
@@ -56,17 +41,17 @@ void MainWindow::lookupLink(CodeEditor *editor, int position, bool activate) {
     }
     const auto token = ++linkGeneration_;
     const auto hash = context ? QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex()
-                              : document->snapshotHash;
-    int version = context ? 0 : static_cast<int>(document->revision);
+                              : document->snapshotHash();
+    int version = context ? 0 : static_cast<int>(document->revision());
     if (context) {
         if (auto *live = findDocument(path)) {
             snapshot(live);
-            if (live->snapshotHash != hash) {
+            if (live->snapshotHash() != hash) {
                 if (activate)
                     reportError("Context is an older snapshot. Refresh it before following links.");
                 return;
             }
-            version = static_cast<int>(live->revision);
+            version = static_cast<int>(live->revision());
         } else {
             const auto disk = readSourceFile(path);
             if (!disk.error.isEmpty() ||
@@ -91,22 +76,17 @@ void MainWindow::lookupLink(CodeEditor *editor, int position, bool activate) {
         hoverHash_ = hash;
         hoverName_ = name;
     }
-    DefinitionRequest request;
-    request.root = projectPath_;
-    request.projectFile = projectFile_;
-    request.path = path;
-    request.source = bytes;
-    request.version = version;
-    request.position = position;
-    request.identifier = name;
-    request.overlays = liveOverlays();
-    for (const auto &doc : documents_)
-        request.versions.insert(doc->path, static_cast<int>(doc->revision));
-    navigationService_->lookup(request, token, activate ? "navigation" : "hover");
+    codecairn::DefinitionQuery query;
+    query.at = {{path, bytes, hash, static_cast<quint64>(version)}, position};
+    auto &request = activate ? jumpRequest_ : hoverRequest_;
+    auto &generation = activate ? jumpRequestGeneration_ : hoverRequestGeneration_;
+    project_->cancel(request);
+    generation = token;
+    request = project_->findDefinitions(query);
 }
 
 void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
-                                        const DefinitionResult &result) {
+                                        const codecairn::DefinitionPage &result) {
     if (channel == "context") {
         displayContextDefinitions(token, result);
         return;
@@ -121,19 +101,24 @@ void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
     const auto hash = activate ? jumpHash_ : hoverHash_;
     if (auto *document = findDocument(path)) {
         snapshot(document);
-        if (document->snapshotHash != hash) {
+        if (document->snapshotHash() != hash) {
             if (activate)
                 reportError("Source changed during lookup; select the symbol again.");
             return;
         }
     }
     if (!result.error.isEmpty()) {
-        if (activate || !result.candidates.error.isEmpty())
+        if (activate || !result.semantic)
             reportError(result.error);
         return;
     }
     if (!result.semantic) {
-        const auto &candidates = result.candidates;
+        DefinitionCandidates candidates;
+        candidates.total = result.total;
+        candidates.complete = result.complete;
+        for (const auto &definition : result.definitions)
+            if (definition.symbol)
+                candidates.targets.append(*definition.symbol);
         if (!activate) {
             editor->setLinkAvailable(hoverPosition_, !candidates.targets.isEmpty());
             return;
@@ -163,7 +148,7 @@ void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
                    true);
         return;
     }
-    const auto &targets = result.locations;
+    const auto &targets = result.definitions;
     if (targets.isEmpty())
         return;
     if (!activate) {
@@ -174,7 +159,7 @@ void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
     if (targets.size() > 1) {
         QStringList names;
         for (const auto &target : targets)
-            names << target.path + ':' + QString::number(target.line + 1);
+            names << target.location.path + ':' + QString::number(target.location.line + 1);
         bool accepted = false;
         const auto chosen = QInputDialog::getItem(this, "Choose definition", "Semantic definitions",
                                                   names, 0, false, &accepted);
@@ -184,7 +169,7 @@ void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
         if (choice < 0)
             return;
     }
-    navigateDefinition(targets[choice]);
+    navigateTo(targets[choice].location, true, true);
 }
 
 void MainWindow::navigateDefinition(const LspLocation &target) {

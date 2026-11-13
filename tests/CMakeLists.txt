@@ -202,11 +202,19 @@ foreach(
     refactoring_tests
     diagnostics_tests
     symbol_scaling_tests
+    reference_tests
+    codecairn_tests
+    configuration_tests
+    interaction_tests
+    startup_tests
 )
     target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src/core/internal")
 endforeach()
 if(CODECAIRN_BUILD_BENCHMARKS)
     codecairn_test(indexing_benchmarks benchmarks/IndexingBenchmarks.cpp large_indexing)
+    target_include_directories(
+        indexing_benchmarks PRIVATE "${PROJECT_SOURCE_DIR}/src/core/internal"
+    )
     set_tests_properties(
         large_indexing
         PROPERTIES LABELS

@@ -557,7 +557,7 @@ void MainWindow::buildUi() {
     rebuildAll_ = action(projectMenu, "rebuildAll", "Rebuild Files and Symbols", "refresh", {},
                          [this] { refreshWorkspace(IndexRefresh::RebuildFilesAndSymbols); });
     cancelIndex_ = action(projectMenu, "cancelIndex", "Cancel Background Indexing", "collapse", {},
-                          [this] { workspaceIndex_->cancel(); });
+                          [this] { project_->cancelIndexing(); });
     rebuildSymbols_->setEnabled(false);
     rebuildAll_->setEnabled(false);
     cancelIndex_->setEnabled(false);
@@ -574,7 +574,7 @@ void MainWindow::buildUi() {
                if (!directory.isEmpty()) {
                    const auto previous = compilationDirectory_;
                    compilationDirectory_ = directory;
-                   if (!writeWorkspaceOptions(workspaceIndex_->excludes())) {
+                   if (!writeWorkspaceOptions(project_->excludedDirectories())) {
                        compilationDirectory_ = previous;
                        return;
                    }
@@ -591,7 +591,7 @@ void MainWindow::buildUi() {
             this, "Workspace exclusions",
             "Comma-separated directory names to skip at any depth.\n"
             "Remove build from this list if it contains source you want indexed.",
-            QLineEdit::Normal, workspaceIndex_->excludes().join(", "), &accepted);
+            QLineEdit::Normal, project_->excludedDirectories().join(", "), &accepted);
         if (accepted) {
             QStringList excludes;
             for (const auto &name : names.split(',', Qt::SkipEmptyParts))

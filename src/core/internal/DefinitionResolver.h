@@ -13,6 +13,7 @@ public:
     explicit DefinitionResolver(QObject *parent = nullptr);
     ~DefinitionResolver() override;
     void request(const QString &root, const SymbolQuery &query, quint64 token);
+    void discard();
 
 signals:
     void candidatesReady(quint64 token, const DefinitionCandidates &candidates);
@@ -29,4 +30,5 @@ private:
     quint64 runningToken_ = 0;
     int runningOffset_ = 0;
     bool busy_ = false;
+    bool discarded_ = false;
 };

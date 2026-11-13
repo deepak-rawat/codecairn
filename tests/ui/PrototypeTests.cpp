@@ -1,6 +1,7 @@
 #include "CodeEditor.h"
 #include <codecairn/FileIO.h>
 #include "MainWindow.h"
+#include "LanguageServerClient.h"
 #include <codecairn/SourceAnalysis.h>
 #include "UiAppearance.h"
 #include "TestFixtures.h"
@@ -31,6 +32,7 @@
 #include <QTest>
 #include <QTreeWidget>
 
+#include "WorkspaceIndex.h"
 class PrototypeTests : public QObject {
     Q_OBJECT
     TestStorage storage_;

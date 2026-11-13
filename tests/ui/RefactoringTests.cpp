@@ -1,6 +1,8 @@
 #include "DefinitionResolver.h"
 #include "CodeEditor.h"
+#include <codecairn/Engine.h>
 #include <codecairn/FileIO.h>
+#include <codecairn/Project.h>
 #include "SourceDocument.h"
 #include "SymbolBrowser.h"
 #include <codecairn/WorkspaceOptionsStore.h>
@@ -44,6 +46,7 @@ private slots:
     void definitionPreferencePreservesCompleteness();
     void definitionRequestsCoalesceWithoutMixingTokens();
     void newDocumentDoesNotClaimCompletedAnalysis();
+    void sameProjectContextChangeReanalyzesCurrentRevision();
     void symbolBrowserPreservesAllRowsAndSelection();
     void textReferenceOverlayLookupPreservesFirstMatch();
     void cleanReloadUpdatesSavedSnapshotAndAnalysis();
@@ -51,38 +54,47 @@ private slots:
 };
 
 void RefactoringTests::snapshotsAndSavedHashesHaveSeparateLifetimes() {
-    SourceDocument document("sample.py", "def before(): pass\n", true, 10);
+    codecairn::Engine engine;
+    const auto source = engine.createDocument("sample.py", "def before(): pass\n", true);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
     const auto original = document.snapshotBytes();
-    const auto originalHash = document.snapshotHash;
+    const auto originalHash = document.snapshotHash();
     QCOMPARE(document.savedContentHash(), originalHash);
     document.editor->loadBytes("def after(): pass\n");
-    ++document.revision;
+    document.source()->contentChanged();
     QVERIFY(document.snapshotBytes() != original);
-    QVERIFY(document.snapshotHash != originalHash);
-    QCOMPARE(document.savedBytes, original);
+    QVERIFY(document.snapshotHash() != originalHash);
+    QCOMPARE(document.savedBytes(), original);
     QCOMPARE(document.savedContentHash(), originalHash);
     document.setSavedContents(document.snapshotBytes(), false);
-    QCOMPARE(document.savedContentHash(), document.snapshotHash);
-    QVERIFY(!document.hasUtf8Bom);
+    QCOMPARE(document.savedContentHash(), document.snapshotHash());
+    QVERIFY(!document.hasUtf8Bom());
 }
 
 void RefactoringTests::latestDocumentAnalysisWins() {
-    SourceDocument document("sample.py", "def before(): pass\n", false, 10);
+    codecairn::Engine engine;
+    const auto source = engine.createDocument("sample.py", "def before(): pass\n", false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
     QSignalSpy completed(&document, &SourceDocument::analysisCompleted);
     document.startAnalysis();
     document.editor->loadBytes("def after(): pass\n");
-    ++document.revision;
+    document.source()->contentChanged();
     document.startAnalysis();
     QTRY_COMPARE_WITH_TIMEOUT(completed.count(), 1, 10000);
-    QCOMPARE(document.analyzedRevision, document.revision);
+    QCOMPARE(document.analyzedRevision, document.revision());
     QCOMPARE(document.analysis.symbols.size(), 1);
     QCOMPARE(document.analysis.symbols.first().name, QString("after"));
 }
 
 void RefactoringTests::stoppingAnalysisDisconnectsCompletion() {
-    SourceDocument document("sample.py", "def sample(): pass\n", false, 10);
+    codecairn::Engine engine;
+    const auto source = engine.createDocument("sample.py", "def sample(): pass\n", false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
     QSignalSpy completed(&document, &SourceDocument::analysisCompleted);
     document.startAnalysis();
@@ -159,17 +171,54 @@ void RefactoringTests::definitionPreferencePreservesCompleteness() {
 }
 
 void RefactoringTests::newDocumentDoesNotClaimCompletedAnalysis() {
-    SourceDocument document("pending.c", "int pending;\n", false, 10);
+    codecairn::Engine engine;
+    const auto source = engine.createDocument("pending.c", "int pending;\n", false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
-    QVERIFY(document.analyzedRevision != document.revision);
+    QVERIFY(document.analyzedRevision != document.revision());
     QSignalSpy completed(&document, &SourceDocument::analysisCompleted);
     document.startAnalysis();
     QTRY_COMPARE_WITH_TIMEOUT(completed.size(), 1, 10000);
-    QCOMPARE(document.analyzedRevision, document.revision);
-    document.setCompilationDirectory(QDir::tempPath());
-    QVERIFY(document.analyzedRevision != document.revision);
+    QCOMPARE(document.analyzedRevision, document.revision());
+    document.setProject(engine.createProject());
+    QVERIFY(document.analyzedRevision != document.revision());
     QTRY_COMPARE_WITH_TIMEOUT(completed.size(), 2, 10000);
-    QCOMPARE(document.analyzedRevision, document.revision);
+    QCOMPARE(document.analyzedRevision, document.revision());
+}
+
+void RefactoringTests::sameProjectContextChangeReanalyzesCurrentRevision() {
+    codecairn::Engine engine;
+    QTemporaryDir first;
+    QTemporaryDir second;
+    QVERIFY(first.isValid());
+    QVERIFY(second.isValid());
+    const codecairn::ProjectOptions manual{codecairn::IndexStartup::Manual,
+                                           codecairn::LanguageStartup::Manual};
+    auto *project = engine.createProject();
+    QVERIFY(project->open(prepareProject(first.path()), manual));
+    const QByteArray bytes = "def sample(): pass\n";
+    const auto source = engine.createDocument(first.filePath("sample.py"), bytes, false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
+    std::unique_ptr<CodeEditor> editor(document.editor);
+    document.setProject(project);
+    QSignalSpy completed(&document, &SourceDocument::analysisCompleted);
+    document.startAnalysis();
+    QTRY_COMPARE_WITH_TIMEOUT(completed.size(), 1, 10000);
+    QCOMPARE(document.analyzedRevision, quint64(0));
+    document.startAnalysis();
+    QVERIFY(document.isAnalysisRunning());
+    QVERIFY(project->open(prepareProject(second.path()), manual));
+    QVERIFY(!document.isAnalysisRunning());
+    QVERIFY(document.analyzedRevision != document.revision());
+    QCOMPARE(document.revision(), quint64(0));
+    QCOMPARE(editor->bytes(), bytes);
+    QCOMPARE(document.snapshotBytes(), bytes);
+    QTRY_COMPARE_WITH_TIMEOUT(completed.size(), 2, 10000);
+    QCOMPARE(document.analyzedRevision, quint64(0));
+    QCOMPARE(document.analysis.symbols.size(), 1);
+    QCOMPARE(document.analysis.symbols.first().name, QString("sample"));
 }
 
 void RefactoringTests::definitionRequestsCoalesceWithoutMixingTokens() {
@@ -249,13 +298,16 @@ void RefactoringTests::textReferenceOverlayLookupPreservesFirstMatch() {
 }
 
 void RefactoringTests::cleanReloadUpdatesSavedSnapshotAndAnalysis() {
+    codecairn::Engine engine;
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const auto path = directory.filePath("source.py");
     const QByteArray original = "def before(): pass\n";
     const QByteArray replacement = "def after(): pass\n";
     QVERIFY(writeSourceFile(path, original, false).isEmpty());
-    SourceDocument document(path, original, false, 10);
+    const auto source = engine.createDocument(path, original, false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
     document.snapshotBytes();
     QSignalSpy reloaded(&document, &SourceDocument::diskReloaded);
@@ -265,23 +317,26 @@ void RefactoringTests::cleanReloadUpdatesSavedSnapshotAndAnalysis() {
     document.reconcileDiskHash(hash);
     QTRY_COMPARE_WITH_TIMEOUT(reloaded.count(), 1, 10000);
     QTRY_COMPARE_WITH_TIMEOUT(completed.count(), 1, 10000);
-    QCOMPARE(document.savedBytes, replacement);
+    QCOMPARE(document.savedBytes(), replacement);
     QCOMPARE(document.savedContentHash(), hash);
     QCOMPARE(document.snapshotBytes(), replacement);
-    QCOMPARE(document.snapshotHash, hash);
-    QVERIFY(document.hasUtf8Bom);
+    QCOMPARE(document.snapshotHash(), hash);
+    QVERIFY(document.hasUtf8Bom());
     QVERIFY(!editor->isModified());
     QCOMPARE(document.analysis.symbols.first().name, QString("after"));
 }
 
 void RefactoringTests::reloadDoesNotOverwriteNewEdits() {
+    codecairn::Engine engine;
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const auto path = directory.filePath("source.py");
     const QByteArray original = "def before(): pass\n";
     const QByteArray replacement = "def after(): pass\n";
     QVERIFY(writeSourceFile(path, replacement, false).isEmpty());
-    SourceDocument document(path, original, false, 10);
+    const auto source = engine.createDocument(path, original, false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
     QSignalSpy reloaded(&document, &SourceDocument::diskReloaded);
     QSignalSpy notices(&document, &SourceDocument::statusMessage);
@@ -289,12 +344,12 @@ void RefactoringTests::reloadDoesNotOverwriteNewEdits() {
     document.reconcileDiskHash(hash);
     editor->sends(SCI_APPENDTEXT, 7, "# edit\n");
     QVERIFY(editor->isModified());
-    QCOMPARE(document.revision, 1);
+    QCOMPARE(document.revision(), quint64(1));
     document.stopBackgroundWork();
     QCoreApplication::processEvents();
     QCOMPARE(reloaded.count(), 0);
     QCOMPARE(editor->bytes(), original + "# edit\n");
-    QCOMPARE(document.savedBytes, original);
+    QCOMPARE(document.savedBytes(), original);
     document.reconcileDiskHash(hash);
     QCOMPARE(notices.count(), 1);
     document.reconcileDiskHash(hash);

@@ -2,7 +2,7 @@
 #include "ReferenceCandidateIndex.h"
 #include "SymbolIndexStore.h"
 #include "TestStorage.h"
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 
 #include <QDateTime>
 #include <QCryptographicHash>

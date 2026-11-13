@@ -21,93 +21,103 @@
 #include <algorithm>
 
 void MainWindow::initializeWorkspace() {
-    coreSession_ = new CoreSession(this);
-    workspaceServices_ = &coreSession_->projects();
-    navigationService_ = &coreSession_->navigation();
-    referenceSession_ = &coreSession_->references();
-    coreSession_->setSnapshotProvider([this](const QString &path) -> std::optional<QByteArray> {
-        if (auto *document = findDocument(path))
-            return snapshot(document);
-        return {};
-    });
-    connect(navigationService_, &NavigationService::definitionReady, this,
-            &MainWindow::handleDefinitionResult);
-    connect(referenceSession_, &ReferenceSession::pageReady, this,
-            [this](quint64 token, const ReferenceResults &results, bool semantic) {
-                if (token == referenceToken_ && referenceResultsPage_)
-                    displayReferenceHits(results, semantic);
+    engine_ = new codecairn::Engine(this);
+    project_ = engine_->createProject();
+    connect(project_, &codecairn::Project::definitionsReady, this,
+            [this](codecairn::RequestId request, const codecairn::DefinitionPage &page) {
+                if (request == contextRequest_)
+                    handleDefinitionResult(contextRequestGeneration_, "context", page);
+                else if (request == jumpRequest_)
+                    handleDefinitionResult(jumpRequestGeneration_, "navigation", page);
+                else if (request == hoverRequest_)
+                    handleDefinitionResult(hoverRequestGeneration_, "hover", page);
             });
-    workspaceIndex_ = workspaceServices_->index();
-    workspaceIndex_->setRefreshIntervalMinutes(configuration_.behavior.workspaceRefreshMinutes);
-    cppLanguageService_ = workspaceServices_->cppService();
-    connect(workspaceServices_, &WorkspaceServices::serviceCreated, this,
-            &MainWindow::connectLanguageService);
+    const auto displaySearch = [this](codecairn::RequestId request,
+                                      const codecairn::SearchPage &page, bool semantic) {
+        if (request != referenceJob_ || !referenceResultsPage_)
+            return;
+        referenceCursor_ = page.next;
+        ReferenceResults results;
+        results.hits = page.hits;
+        results.warnings = page.warnings;
+        results.error = page.error;
+        results.cancelled = page.cancelled;
+        results.truncated = static_cast<bool>(page.next);
+        results.filesSearched = page.filesSearched;
+        displayReferenceHits(results, semantic);
+    };
+    connect(project_, &codecairn::Project::referencesReady, this,
+            [displaySearch](codecairn::RequestId id, const codecairn::SearchPage &page) {
+                displaySearch(id, page, true);
+            });
+    connect(project_, &codecairn::Project::textMatchesReady, this,
+            [displaySearch](codecairn::RequestId id, const codecairn::SearchPage &page) {
+                displaySearch(id, page, false);
+            });
+    project_->setRefreshIntervalMinutes(configuration_.behavior.workspaceRefreshMinutes);
     symbolQueryTimer_ = new QTimer(this);
     symbolQueryTimer_->setInterval(configuration_.behavior.searchDebounceMs);
     symbolQueryTimer_->setSingleShot(true);
     connect(symbolQueryTimer_, &QTimer::timeout, this, &MainWindow::updateOpenSymbols);
-    connect(workspaceIndex_, &WorkspaceIndex::symbolsReady, this, &MainWindow::displaySymbols);
-    connect(workspaceIndex_, &WorkspaceIndex::failed, this, [this](const QString &message) {
+    connect(project_, &codecairn::Project::symbolsReady, this,
+            [this](codecairn::RequestId, const SymbolPage &page) { displaySymbols(page); });
+    connect(project_, &codecairn::Project::failed, this, [this](const QString &message) {
         reportError(message);
         projectState_->setText(message);
         symbolScope_->setText("Index error - see status");
         offerIndexRecreation(message);
     });
-    connect(workspaceIndex_, &WorkspaceIndex::catalogReady, this, [this](const QStringList &files) {
+    connect(project_, &codecairn::Project::catalogReady, this, [this](const QStringList &files) {
         populateFiles(files);
         projectState_->setText(QString("%1 files; indexing symbols...").arg(files.size()));
         updateOpenSymbols();
     });
-    connect(workspaceIndex_, &WorkspaceIndex::batchReady, this, [this] {
-        if (!workspaceIndex_->busy()) {
+    connect(project_, &codecairn::Project::indexBatchReady, this, [this] {
+        if (!project_->indexing()) {
             symbolModel_->invalidatePages();
             categoryModel_->invalidatePages();
         }
         if (!symbolQueryTimer_->isActive())
             symbolQueryTimer_->start(qMax(1500, configuration_.behavior.searchDebounceMs));
     });
-    connect(workspaceIndex_, &WorkspaceIndex::status, this,
+    connect(project_, &codecairn::Project::status, this,
             [this](const QString &message) { statusBar()->showMessage(message, 5000); });
-    connect(workspaceIndex_, &WorkspaceIndex::busyChanged, this, [this](bool busy) {
+    connect(project_, &codecairn::Project::indexingChanged, this, [this](bool busy) {
         cancelIndex_->setEnabled(busy);
         refreshFiles_->setEnabled(!projectPath_.isEmpty());
         rebuildSymbols_->setEnabled(!projectPath_.isEmpty());
         rebuildAll_->setEnabled(!projectPath_.isEmpty());
     });
-    connect(workspaceIndex_, &WorkspaceIndex::ready, this, [this](const IndexResult &result) {
-        populateFiles(result.files);
-        const auto text =
-            QString("%1 files; %2 parsed, %3 cached%4")
-                .arg(result.files.size())
-                .arg(result.parsed)
-                .arg(result.reused)
-                .arg(result.warnings.isEmpty()
-                         ? ""
-                         : QString("; %1 indexing warnings").arg(result.warnings.size()));
-        projectState_->setText(text);
-        const auto details = result.warnings.isEmpty() ? text : result.warnings.join('\n');
-        fileList_->setToolTip(largeFileCatalog_.isEmpty() ? details
-                                                          : fileList_->toolTip() + '\n' + details);
-        if (!result.automatic || result.parsed > 0 || result.warnings != indexWarnings_) {
-            statusBar()->showMessage(text, 8000);
-            for (const auto &warning : result.warnings)
-                qWarning().noquote() << warning;
-        }
-        indexWarnings_ = result.warnings;
-        reconcileOpenDocuments(result);
-        if (result.changed) {
-            symbolModel_->invalidatePages();
-            categoryModel_->invalidatePages();
-            updateOpenSymbols();
-        }
-        emit indexReady();
-    });
-    connect(cppLanguageService_, &LanguageServerClient::status, this,
-            [this](const QString &message) {
-                statusBar()->showMessage(message, 8000);
-                contextTitle_->setToolTip(message);
+    connect(project_, &codecairn::Project::indexReady, this,
+            [this](codecairn::RequestId, const IndexResult &result) {
+                populateFiles(result.files);
+                const auto text =
+                    QString("%1 files; %2 parsed, %3 cached%4")
+                        .arg(result.files.size())
+                        .arg(result.parsed)
+                        .arg(result.reused)
+                        .arg(result.warnings.isEmpty()
+                                 ? ""
+                                 : QString("; %1 indexing warnings").arg(result.warnings.size()));
+                projectState_->setText(text);
+                const auto details = result.warnings.isEmpty() ? text : result.warnings.join('\n');
+                fileList_->setToolTip(
+                    largeFileCatalog_.isEmpty() ? details : fileList_->toolTip() + '\n' + details);
+                if (!result.automatic || result.parsed > 0 || result.warnings != indexWarnings_) {
+                    statusBar()->showMessage(text, 8000);
+                    for (const auto &warning : result.warnings)
+                        qWarning().noquote() << warning;
+                }
+                indexWarnings_ = result.warnings;
+                reconcileOpenDocuments(result);
+                if (result.changed) {
+                    symbolModel_->invalidatePages();
+                    categoryModel_->invalidatePages();
+                    updateOpenSymbols();
+                }
+                emit indexReady();
             });
-    connect(cppLanguageService_, &LanguageServerClient::ready, this, [this] {
+    connect(project_, &codecairn::Project::languageReady, this, [this] {
         if (contextFollowsEditor_)
             contextTimer_->start();
     });
@@ -157,11 +167,20 @@ void MainWindow::displayDefinitionCandidates(quint64 token,
 }
 
 QVector<SymbolOverlay> MainWindow::liveOverlays() const {
-    QVector<OpenSource> open;
-    open.reserve(documents_.size());
-    for (const auto &doc : documents_)
-        open.append({doc.get(), doc->editor->isModified()});
-    return captureDocumentOverlays(open, projectPath_, projectOptions_);
+    QVector<SymbolOverlay> overlays;
+    overlays.reserve(documents_.size());
+    for (const auto &doc : documents_) {
+        if (!projectPath_.isEmpty() && !projectContains(doc->path()))
+            continue;
+        if (doc->analyzedRevision != doc->revision() && !doc->editor->isModified())
+            continue;
+        const auto source = doc->source()->snapshot();
+        overlays.append(
+            {source.path, source.bytes,
+             doc->analyzedRevision == source.revision ? doc->analysis : SourceAnalysis{},
+             source.hash});
+    }
+    return overlays;
 }
 
 void MainWindow::displaySymbols(const SymbolPage &page) {
@@ -177,7 +196,7 @@ void MainWindow::displaySymbols(const SymbolPage &page) {
         symbolScope_->setText("Search error");
         symbolScope_->setToolTip(page.error);
         reportError(page.error);
-        if (!workspaceIndex_->busy())
+        if (!project_->indexing())
             offerIndexRecreation(page.error);
         return;
     }
@@ -212,7 +231,7 @@ void MainWindow::displaySymbols(const SymbolPage &page) {
     query.text = symbolFilter_->text();
     query.category = category_;
     query.overlays = liveOverlays();
-    query.allowPendingSchema = workspaceIndex_->busy();
+    query.allowPendingSchema = project_->indexing();
     if (virtualSymbolMode_)
         symbolModel_->setCatalog(projectPath_, query, page);
     else
@@ -376,7 +395,7 @@ void MainWindow::previewTarget(const IndexedSymbol &target, const QString &prove
             updateOpenSymbols();
             return;
         }
-        contextPath_ = doc->path;
+        contextPath_ = doc->path();
         showContext(target.symbol.name + " - " + provenance, bytes, doc->analysis,
                     target.symbol.start, target.symbol.end, provenance == "Reference");
         if (std::exchange(openAfterPreview_, false))
@@ -407,9 +426,9 @@ void MainWindow::resolveDefinition(const QString &path, const QByteArray &source
     openAfterPreview_ = false;
     if (lookupName_.isEmpty() || path.startsWith(":/")) {
         if (auto *doc = findDocument(path)) {
-            contextPath_ = doc->path;
+            contextPath_ = doc->path();
             showContext(QFileInfo(path).fileName(), source,
-                        doc->analyzedRevision == doc->revision ? doc->analysis : SourceAnalysis{},
+                        doc->analyzedRevision == doc->revision() ? doc->analysis : SourceAnalysis{},
                         position, position);
         }
         return;
@@ -418,26 +437,15 @@ void MainWindow::resolveDefinition(const QString &path, const QByteArray &source
     contextOpen_->setEnabled(false);
     contextPreviewEditor_->loadBytes({});
     contextTitle_->setText("Resolving " + lookupName_ + "...");
-    DefinitionRequest request;
-    request.root = projectPath_;
-    request.projectFile = projectFile_;
-    request.path = path;
-    request.source = source;
-    request.version = version;
-    request.position = position;
-    request.identifier = lookupName_;
-    request.identifierStart = selection.start;
-    request.identifierEnd = selection.end;
-    request.overlays = liveOverlays();
-    for (const auto &doc : documents_)
-        request.versions.insert(doc->path, static_cast<int>(doc->revision));
-    if (auto *doc = findDocument(path); doc && doc->revision == doc->analyzedRevision)
-        request.analysis = doc->analysis;
-    request.context = true;
-    navigationService_->lookup(request, token, "context");
+    codecairn::DefinitionQuery query;
+    query.at = {{path, source, sourceContentHash(source), static_cast<quint64>(version)}, position};
+    query.origin = codecairn::DefinitionOrigin::ExcludeUnresolvedSelf;
+    project_->cancel(contextRequest_);
+    contextRequestGeneration_ = token;
+    contextRequest_ = project_->findDefinitions(query);
 }
 
-void MainWindow::displayContextDefinitions(quint64 token, const DefinitionResult &result) {
+void MainWindow::displayContextDefinitions(quint64 token, const codecairn::DefinitionPage &result) {
     if (token != contextGeneration_ || pinContextAction_->isChecked())
         return;
     if (!result.warning.isEmpty())
@@ -448,11 +456,23 @@ void MainWindow::displayContextDefinitions(quint64 token, const DefinitionResult
         return;
     }
     if (!result.semantic) {
-        displayDefinitionCandidates(token, result.candidates);
+        DefinitionCandidates candidates;
+        candidates.total = result.total;
+        candidates.complete = result.complete;
+        candidates.error = result.error;
+        for (const auto &definition : result.definitions)
+            if (definition.symbol)
+                candidates.targets.append(*definition.symbol);
+        displayDefinitionCandidates(token, candidates);
         return;
     }
     lookupProvider_ = result.provider;
-    const auto &definitions = result.locations;
+    QVector<LspLocation> definitions;
+    for (const auto &definition : result.definitions) {
+        const auto &location = definition.location;
+        definitions.append({location.path, location.line, location.character, location.endLine,
+                            location.endCharacter});
+    }
     if (definitions.size() == 1) {
         semanticPreview(definitions.first());
     } else if (!definitions.isEmpty()) {
@@ -491,7 +511,7 @@ void MainWindow::semanticPreview(const LspLocation &target) {
             contextTitle_->setText("Definition range changed; retry lookup.");
             return;
         }
-        if (doc->revision == doc->analyzedRevision) {
+        if (doc->revision() == doc->analyzedRevision) {
             for (const auto &symbol : doc->analysis.symbols)
                 if (!symbol.outlineOnly && symbol.nameStart == start) {
                     if (symbol.kind == "Function" && !symbol.definition)
@@ -501,9 +521,9 @@ void MainWindow::semanticPreview(const LspLocation &target) {
                     break;
                 }
         }
-        contextPath_ = doc->path;
-        showContext(QFileInfo(doc->path).fileName() + " - " + provenance, bytes,
-                    doc->revision == doc->analyzedRevision ? doc->analysis : SourceAnalysis{},
+        contextPath_ = doc->path();
+        showContext(QFileInfo(doc->path()).fileName() + " - " + provenance, bytes,
+                    doc->revision() == doc->analyzedRevision ? doc->analysis : SourceAnalysis{},
                     start, end);
     } else {
         ++contextGeneration_;
@@ -519,16 +539,16 @@ void MainWindow::semanticPreview(const LspLocation &target) {
 void MainWindow::refreshWorkspace(IndexRefresh mode) {
     if (!projectPath_.isEmpty()) {
         indexRecoveryOffered_ = false;
-        workspaceIndex_->refresh(mode);
+        project_->refreshIndex(mode);
     }
 }
 
 void MainWindow::reconcileOpenDocuments(const IndexResult &result) {
     for (const auto &owned : documents_) {
         auto *doc = owned.get();
-        if (!pathInWorkspace(doc->path, projectPath_))
+        if (!pathInWorkspace(doc->path(), projectPath_))
             continue;
-        doc->reconcileDiskHash(result.sourceHashes.value(workspacePath(doc->path)));
+        doc->reconcileDiskHash(result.sourceHashes.value(workspacePath(doc->path())));
     }
 }
 
@@ -538,29 +558,23 @@ void MainWindow::restartLanguageService() {
     ++contextGeneration_;
     ++navigationGeneration_;
     ++linkGeneration_;
-    workspaceServices_->restartLanguageServices(projectPath_, compilationDirectory_, projectFile_);
-    navigationService_->cancelLookups();
-    navigationService_->cancelRead();
+    project_->restartLanguageServices();
+    engine_->cancel(sourceReadRequest_);
     synchronizeLanguageDocuments();
 }
 
 void MainWindow::synchronizeLanguageDocuments() {
     for (const auto &doc : documents_)
-        doc->setCompilationDirectory(projectContains(doc->path)
-                                         ? workspaceClangdDirectory(projectPath_, projectFile_)
-                                         : QString{});
-    for (const auto &doc : documents_)
-        if (auto *service = languageService(doc->path, snapshot(doc.get())))
-            service->syncDocument(doc->path, snapshot(doc.get()), static_cast<int>(doc->revision));
+        doc->setProject(project_);
 }
 
 void MainWindow::readWorkspaceOptions() {
-    const auto error = workspaceServices_->reloadProjectOptions();
-    if (!error.isEmpty()) {
-        reportError(error);
+    const auto loaded = project_->reloadOptions();
+    if (!loaded) {
+        reportError(loaded.error().message);
         return;
     }
-    projectOptions_ = workspaceServices_->project().options;
+    projectOptions_ = project_->info().configuration;
     compilationDirectory_ = projectOptions_.compilationDirectory;
 }
 
@@ -592,9 +606,9 @@ bool MainWindow::saveProjectSession() {
     for (int i = 0; i < documentsTabs_->count(); ++i) {
         for (const auto &doc : documents_) {
             if (doc->editor != documentsTabs_->widget(i) ||
-                !pathInWorkspace(doc->path, projectPath_))
+                !pathInWorkspace(doc->path(), projectPath_))
                 continue;
-            session.files.append({doc->path,
+            session.files.append({doc->path(),
                                   static_cast<int>(doc->editor->send(SCI_GETSELECTIONSTART)),
                                   static_cast<int>(doc->editor->send(SCI_GETSELECTIONEND)),
                                   static_cast<int>(doc->editor->send(SCI_GETFIRSTVISIBLELINE)),
@@ -603,7 +617,7 @@ bool MainWindow::saveProjectSession() {
     }
     const auto *active = currentDocument();
     session.activeFile =
-        active && pathInWorkspace(active->path, projectPath_) ? active->path : QString{};
+        active && pathInWorkspace(active->path(), projectPath_) ? active->path() : QString{};
     const auto error = stateStore_.saveSession(projectPath_, session, projectFile_);
     if (error.isEmpty())
         return true;
@@ -677,9 +691,8 @@ bool MainWindow::closeProject() {
     }
     if (referencesDialog_)
         referencesDialog_->close();
-    navigationService_->cancelLookups();
-    navigationService_->cancelRead();
-    coreSession_->closeProject();
+    engine_->cancel(sourceReadRequest_);
+    project_->close();
     while (!documents_.empty())
         closeTab(documentsTabs_->indexOf(documents_.back()->editor), false);
     if (referenceResultsPage_)
@@ -702,7 +715,7 @@ bool MainWindow::closeProject() {
     ++navigationGeneration_;
     pendingOpen_.reset();
     pendingPreviewPath_.clear();
-    workspaceIndex_->invalidateSearch();
+    project_->cancelSymbolQuery();
     contextTimer_->stop();
     symbolQueryTimer_->stop();
     fileList_->clear();

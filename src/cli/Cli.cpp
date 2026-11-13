@@ -1,11 +1,9 @@
-#include <codecairn/DocumentAnalysis.h>
-#include <codecairn/CoreSession.h>
+#include <codecairn/Engine.h>
 #include <codecairn/FileIO.h>
-#include <codecairn/NavigationService.h>
+#include <codecairn/Project.h>
 #include <codecairn/ProjectSession.h>
 #include <codecairn/ProjectDiscovery.h>
-#include <codecairn/ReferenceSession.h>
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
@@ -112,7 +110,7 @@ QJsonObject indexedJson(const IndexedSymbol &entry) {
     return result;
 }
 
-QJsonObject locationJson(const NavigationLocation &location) {
+QJsonObject locationJson(const codecairn::SourceLocation &location) {
     return {{"path", location.path},
             {"start", location.start},
             {"end", location.end},
@@ -372,6 +370,18 @@ int main(int argc, char **argv) {
         const auto found = overlaySources.constFind(workspacePath(path));
         return found == overlaySources.cend() ? readSourceFile(path) : *found;
     };
+    codecairn::Engine engine;
+    const auto documentForPath = [&](const QString &path, const FileContents &source) {
+        auto *document = engine.document(path);
+        if (!document) {
+            const auto created = engine.createDocument(path, {}, source.utf8Bom);
+            if (!created)
+                return created;
+            document = created.value();
+        }
+        document->updateContents(source.bytes);
+        return codecairn::Result<codecairn::Document *>::success(document);
+    };
     if (command == "analyze") {
         if (filePath.isEmpty())
             return fail("analyze requires a source file.");
@@ -381,28 +391,39 @@ int main(int argc, char **argv) {
         const auto source = sourceForPath(filePath);
         if (!source.error.isEmpty())
             return fail(source.error, 1);
-        CoreSession core;
-        auto &document = *core.createDocument(filePath, source.bytes, source.utf8Bom);
+        const auto created = documentForPath(filePath, source);
+        if (!created)
+            return fail(created.error().message, 1);
+        const auto snapshot = created.value()->snapshot();
         QEventLoop loop;
-        QObject::connect(&document, &DocumentAnalysis::analysisCompleted, &loop, &QEventLoop::quit);
-        QObject::connect(&document, &DocumentAnalysis::analysisRejected, &loop, &QEventLoop::quit);
-        document.startAnalysis();
-        if (document.isAnalysisRunning())
-            operation.wait(loop, [&] { document.stopBackgroundWork(); });
+        codecairn::RequestId request;
+        codecairn::AnalysisResult analyzed;
+        bool finished = false;
+        QObject::connect(&engine, &codecairn::Engine::analysisReady, &loop,
+                         [&](codecairn::RequestId id, const codecairn::AnalysisResult &reply) {
+                             if (id == request) {
+                                 analyzed = reply;
+                                 finished = true;
+                                 loop.quit();
+                             }
+                         });
+        request = engine.analyze(snapshot);
+        if (!finished)
+            operation.wait(loop, [&] { engine.cancel(request); });
         if (operation.stopCode())
             return stopped();
-        if (!document.analysis.error.isEmpty())
-            return fail(document.analysis.error, 1);
+        if (!analyzed.analysis.error.isEmpty())
+            return fail(analyzed.analysis.error, 1);
         QJsonArray symbols;
-        for (const auto &symbol : document.analysis.symbols)
+        for (const auto &symbol : analyzed.analysis.symbols)
             symbols.append(symbolJson(symbol));
         result = {{"path", filePath},
-                  {"hash", QString::fromLatin1(document.snapshotHash)},
-                  {"supported", document.analysis.supported},
-                  {"syntaxErrors", document.analysis.syntaxErrors},
-                  {"compilerEnriched", document.analysis.compilerEnriched},
+                  {"hash", QString::fromLatin1(analyzed.source.hash)},
+                  {"supported", analyzed.analysis.supported},
+                  {"syntaxErrors", analyzed.analysis.syntaxErrors},
+                  {"compilerEnriched", analyzed.analysis.compilerEnriched},
                   {"symbols", symbols},
-                  {"warnings", QJsonArray::fromStringList(document.analysis.diagnostics)}};
+                  {"warnings", QJsonArray::fromStringList(analyzed.analysis.diagnostics)}};
         return output(result, command, json, 0);
     }
     QString root = parser.value("root");
@@ -418,34 +439,48 @@ int main(int argc, char **argv) {
         root = QFileInfo(filePath).absolutePath();
     if (root.isEmpty())
         return fail("This command requires --root, --project, or --file.");
-    const auto project = prepareProject(root, projectFile);
-    if (!project.error.isEmpty())
-        return fail(project.error, 1);
-    root = project.root;
-    QVector<SymbolOverlay> overlays;
+    const auto prepared = prepareProject(root, projectFile);
+    if (!prepared.error.isEmpty())
+        return fail(prepared.error, 1);
+    root = prepared.root;
     for (auto source = overlaySources.cbegin(); source != overlaySources.cend(); ++source) {
-        overlays.append({source.key(), source->bytes,
-                         analyzeSource(source->bytes, source.key(), SourceAnalysisMode::Index),
-                         sourceContentHash(source->bytes)});
+        const auto created = documentForPath(source.key(), *source);
+        if (!created)
+            return fail(created.error().message, 1);
         if (operation.stopCode())
             return stopped();
     }
-    CoreSession core;
-    auto &services = core.projects();
-    core.setSnapshotProvider([&](const QString &path) -> std::optional<QByteArray> {
-        const auto source = overlaySources.constFind(workspacePath(path));
-        if (source != overlaySources.cend())
-            return source->bytes;
-        return {};
-    });
     const bool semantic = parser.isSet("semantic");
-    const ProjectOpenOptions startup{IndexStartup::Manual, semantic ? LanguageStartup::Automatic
-                                                                    : LanguageStartup::Manual};
-    if (const auto error = services.commitProject(project, startup); !error.isEmpty())
-        return fail(error, 1);
+    const codecairn::ProjectOptions startup{codecairn::IndexStartup::Manual,
+                                            semantic ? codecairn::LanguageStartup::Automatic
+                                                     : codecairn::LanguageStartup::Manual};
+    const auto opened = engine.openProject(prepared, startup);
+    if (!opened)
+        return fail(opened.error().message, 1);
+    auto &project = *opened.value();
+    const auto analyzeDocument = [&](codecairn::Document *document) {
+        QEventLoop loop;
+        codecairn::RequestId request;
+        bool finished = false;
+        QObject::connect(&project, &codecairn::Project::analysisReady, &loop,
+                         [&](codecairn::RequestId id, const codecairn::AnalysisResult &) {
+                             if (id == request) {
+                                 finished = true;
+                                 loop.quit();
+                             }
+                         });
+        request = project.analyze(document->snapshot(), codecairn::AnalysisDetail::Symbols);
+        if (!finished)
+            operation.wait(loop, [&] { project.cancel(request); });
+    };
+    for (auto source = overlaySources.cbegin(); source != overlaySources.cend(); ++source) {
+        analyzeDocument(engine.document(source.key()));
+        if (operation.stopCode())
+            return stopped();
+    }
     if (command == "index") {
         const auto excludes =
-            project.options.excludedDirectories.value_or(defaultWorkspaceExcludes());
+            project.info().configuration.excludedDirectories.value_or(defaultWorkspaceExcludes());
         const auto indexed = operation.result(
             QtConcurrent::run([&] {
                 const auto mode = parser.isSet("force") ? IndexRefresh::RebuildFilesAndSymbols
@@ -466,16 +501,26 @@ int main(int argc, char **argv) {
         return output(result, command, json, indexed.cancelled ? 130 : 0);
     }
     if (command == "symbols") {
-        SymbolQuery query;
-        query.projectFile = projectFile;
+        codecairn::SymbolQuery query;
         query.text = parser.value("query");
         query.offset = offset;
-        query.limit = limit;
-        query.cancel = cancel;
+        query.pageSize = limit;
         query.includeCategories = false;
-        query.overlays = overlays;
-        const auto page = operation.result(
-            QtConcurrent::run([&] { return queryWorkspaceSymbols(root, query); }), cancel);
+        QEventLoop loop;
+        codecairn::RequestId request;
+        SymbolPage page;
+        bool finished = false;
+        QObject::connect(&project, &codecairn::Project::symbolsReady, &loop,
+                         [&](codecairn::RequestId id, const SymbolPage &reply) {
+                             if (id == request) {
+                                 page = reply;
+                                 finished = true;
+                                 loop.quit();
+                             }
+                         });
+        request = project.findSymbols(query);
+        if (!finished)
+            operation.wait(loop, [&] { project.cancel(request); });
         if (operation.stopCode())
             return stopped();
         if (!page.error.isEmpty())
@@ -490,7 +535,7 @@ int main(int argc, char **argv) {
                   {"provenance", "syntax-index candidates, not compiler verified"}};
         return output(result, command, json, 0);
     }
-    std::optional<SemanticReferenceOrigin> origin;
+    std::optional<codecairn::SourcePosition> origin;
     if (semantic || command == "definition") {
         if (filePath.isEmpty() || !parser.isSet("byte-offset"))
             return fail("Definition and semantic queries require --file and --byte-offset.");
@@ -501,99 +546,89 @@ int main(int argc, char **argv) {
             return fail(source.error, 1);
         if (!valid || position < 0 || position >= source.bytes.size())
             return fail("Invalid --byte-offset for this source.");
-        origin = SemanticReferenceOrigin{filePath, source.bytes, 0, position, true, {}};
+        const auto created = documentForPath(filePath, source);
+        if (!created)
+            return fail(created.error().message, 1);
+        if (command == "definition" && !overlaySources.contains(filePath)) {
+            analyzeDocument(created.value());
+            if (operation.stopCode())
+                return stopped();
+        }
+        origin = codecairn::SourcePosition{created.value()->snapshot(), position};
     }
     if (command == "definition") {
-        const auto identifier = sourceIdentifier(origin->source, origin->position);
+        const auto identifier = sourceIdentifier(origin->snapshot.bytes, origin->byteOffset);
         if (identifier.isEmpty())
             return fail("The byte offset must select an identifier.");
-        DefinitionRequest definition;
-        definition.root = root;
-        definition.projectFile = projectFile;
-        definition.path = filePath;
-        definition.source = origin->source;
-        definition.position = origin->position;
+        codecairn::DefinitionQuery definition;
+        definition.at = *origin;
         definition.offset = offset;
-        definition.identifier = identifier;
-        definition.analysis = analyzeSource(origin->source, filePath, SourceAnalysisMode::Index);
-        definition.overlays = overlays;
-        if (!overlaySources.contains(filePath))
-            definition.overlays.append({filePath, definition.source, definition.analysis,
-                                        sourceContentHash(definition.source)});
-        definition.policy =
-            semantic ? DefinitionPolicy::SemanticOnly : DefinitionPolicy::SyntaxOnly;
-        auto &navigation = core.navigation();
+        definition.resolution = semantic ? codecairn::DefinitionResolution::SemanticOnly
+                                         : codecairn::DefinitionResolution::SyntaxOnly;
         QEventLoop loop;
-        DefinitionResult definitions;
+        codecairn::RequestId request;
+        codecairn::DefinitionPage definitions;
         bool finished = false;
-        QObject::connect(&navigation, &NavigationService::definitionReady, &loop,
-                         [&](quint64 token, const QString &channel, const DefinitionResult &reply) {
-                             if (token == 1 && channel == "navigation") {
+        QObject::connect(&project, &codecairn::Project::definitionsReady, &loop,
+                         [&](codecairn::RequestId id, const codecairn::DefinitionPage &reply) {
+                             if (id == request) {
                                  definitions = reply;
                                  finished = true;
                                  loop.quit();
                              }
                          });
-        navigation.lookup(definition, 1, "navigation");
+        request = project.findDefinitions(definition);
         if (!finished)
-            operation.wait(loop, [&] { navigation.cancelLookup("navigation"); });
+            operation.wait(loop, [&] { project.cancel(request); });
         if (operation.stopCode())
             return stopped();
         if (!definitions.error.isEmpty())
             return fail(definitions.error, 1);
-        const auto readTarget = [&](const NavigationLocation &location,
+        const auto readTarget = [&](const codecairn::SourceLocation &location,
                                     const std::optional<IndexedSymbol> &indexed = {}) {
             QEventLoop readLoop;
-            NavigationRead read;
+            codecairn::RequestId readRequest;
+            codecairn::SourceRead read;
             bool readFinished = false;
             const auto connection =
-                QObject::connect(&navigation, &NavigationService::readReady, &readLoop,
-                                 [&](quint64 token, const NavigationRead &reply) {
-                                     if (token == 2) {
+                QObject::connect(&engine, &codecairn::Engine::sourceReady, &readLoop,
+                                 [&](codecairn::RequestId id, const codecairn::SourceRead &reply) {
+                                     if (id == readRequest) {
                                          read = reply;
                                          readFinished = true;
                                          readLoop.quit();
                                      }
                                  });
-            navigation.read(location, 2, indexed);
+            readRequest = engine.readSource(location, indexed);
             if (!readFinished)
-                operation.wait(readLoop, [&] { navigation.cancelRead(); });
+                operation.wait(readLoop, [&] { engine.cancel(readRequest); });
             QObject::disconnect(connection);
             return read;
         };
         if (!semantic) {
             QJsonArray symbols;
-            for (const auto &target : definitions.candidates.targets) {
-                NavigationLocation location;
-                location.path = target.path;
-                location.start = target.symbol.nameStart;
-                location.end = target.symbol.nameEnd;
-                location.expectedHash = target.hash;
-                const auto read = readTarget(location, target);
+            for (const auto &target : definitions.definitions) {
+                const auto read = readTarget(target.location, target.symbol);
                 if (operation.stopCode())
                     return stopped();
                 if (!read.file.error.isEmpty())
                     return fail(read.file.error, 1);
                 if (!read.range.error.isEmpty())
                     return fail(read.range.error, 1);
-                symbols.append(indexedJson(target));
+                if (target.symbol)
+                    symbols.append(indexedJson(*target.symbol));
             }
             return output({{"symbols", symbols},
-                           {"total", definitions.candidates.total},
+                           {"total", definitions.total},
                            {"offset", offset},
-                           {"more", !definitions.candidates.complete},
+                           {"more", !definitions.complete},
                            {"provenance", "syntax-index candidates, not compiler verified"}},
                           command, json, 0);
         }
         QJsonArray locations;
-        for (const auto &target : definitions.locations) {
-            NavigationLocation location;
-            location.path = target.path;
-            location.line = target.line;
-            location.character = target.character;
-            location.endLine = target.endLine;
-            location.endCharacter = target.endCharacter;
-            const auto read = readTarget(location);
+        for (const auto &target : definitions.definitions) {
+            auto location = target.location;
+            const auto read = readTarget(location, target.symbol);
             if (operation.stopCode())
                 return stopped();
             if (!read.file.error.isEmpty())
@@ -607,41 +642,20 @@ int main(int argc, char **argv) {
         }
         return output({{"locations", locations}, {"provenance", "semantic"}}, command, json, 0);
     }
-    ReferenceSearchRequest request;
-    request.workspaceRoot = root;
-    request.projectFile = projectFile;
-    request.overlays = overlays;
-    request.query = parser.value("query");
-    request.offset = offset;
-    request.limit = limit;
-    request.options.smartMatching = semantic;
-    request.options.comments =
-        parser.isSet("include-comments") ? CommentSearch::Include : CommentSearch::Exclude;
-    request.options.strings = parser.isSet("include-strings");
-    request.options.skipInactive = parser.isSet("skip-inactive");
+    auto queryText = parser.value("query");
     const auto method = parser.value("method");
-    if (semantic || method == "references")
-        request.options.method = SearchMethod::References;
-    else if (method == "literal") {
-        request.options.method = SearchMethod::Literal;
-        request.options.wholeWords = false;
-    } else if (method == "regex")
-        request.options.method = SearchMethod::RegularExpression;
-    else if (method == "keywords")
-        request.options.method = SearchMethod::KeywordExpression;
-    else if (method == "occurrences")
-        request.options.method = SearchMethod::Occurrences;
-    else
-        return fail("Unknown --method.");
-    if (origin && request.query.isEmpty())
-        request.query = sourceIdentifier(origin->source, origin->position);
-    if (origin && request.query != sourceIdentifier(origin->source, origin->position))
+    if (origin && queryText.isEmpty())
+        queryText = sourceIdentifier(origin->snapshot.bytes, origin->byteOffset);
+    if (origin && queryText != sourceIdentifier(origin->snapshot.bytes, origin->byteOffset))
         return fail("Semantic query must match the selected source identifier.");
-    QStringList paths;
-    if (!filePath.isEmpty())
-        paths.append(filePath);
-    else {
-        auto options = project.options;
+    codecairn::SearchFiles files;
+    files.patterns = parser.value("file-patterns");
+    if (!filePath.isEmpty()) {
+        files.scope = codecairn::SearchScope::CurrentFile;
+        files.currentFile = filePath;
+    } else {
+        files.scope = codecairn::SearchScope::SelectedFiles;
+        auto options = project.info().configuration;
         if (!options.managed)
             options.includedPaths = {"."};
         const auto progress = std::make_shared<ProjectScanProgress>();
@@ -656,30 +670,55 @@ int main(int argc, char **argv) {
         if (!scan.errors.isEmpty())
             return fail(scan.errors.join('\n'), 1);
         for (const auto &relative : scan.files)
-            paths.append(QDir(root).filePath(relative));
+            files.selectedFiles.append(QDir(root).filePath(relative));
+        for (auto source = overlaySources.cbegin(); source != overlaySources.cend(); ++source)
+            if (project.contains(source.key()) && !files.selectedFiles.contains(source.key()))
+                files.selectedFiles.append(source.key());
     }
-    ReferenceInputs inputs;
-    inputs.scope = filePath.isEmpty() ? ReferenceScope::Project : ReferenceScope::CurrentFile;
-    inputs.currentFile = filePath;
-    inputs.catalog = paths;
-    inputs.overlays = overlays;
-    inputs.root = root;
-    inputs.options = project.options;
-    inputs.filePatterns = parser.value("file-patterns");
-    request.paths = resolveReferenceScope(inputs);
-    auto &session = core.references();
     QEventLoop loop;
-    ReferenceResults matches;
+    codecairn::RequestId request;
+    codecairn::SearchPage matches;
     bool finished = false;
-    QObject::connect(&session, &ReferenceSession::pageReady, &loop,
-                     [&](quint64, const ReferenceResults &page, bool) {
-                         matches = page;
-                         finished = true;
-                         loop.quit();
-                     });
-    session.start(request, 1, origin);
+    const auto receive = [&](codecairn::RequestId id, const codecairn::SearchPage &page) {
+        if (id == request) {
+            matches = page;
+            finished = true;
+            loop.quit();
+        }
+    };
+    const auto comments =
+        parser.isSet("include-comments") ? CommentSearch::Include : CommentSearch::Exclude;
+    if (semantic) {
+        QObject::connect(&project, &codecairn::Project::referencesReady, &loop, receive);
+        codecairn::ReferenceQuery query;
+        query.symbol = *origin;
+        query.files = files;
+        query.resolution = codecairn::ReferenceResolution::Semantic;
+        query.comments = comments;
+        query.strings = parser.isSet("include-strings");
+        query.skipInactive = parser.isSet("skip-inactive");
+        query.offset = offset;
+        query.pageSize = limit;
+        request = project.findReferences(query);
+    } else {
+        QObject::connect(&project, &codecairn::Project::textMatchesReady, &loop, receive);
+        codecairn::TextQuery query;
+        query.text = queryText;
+        query.files = files;
+        query.method = method == "literal"    ? codecairn::TextMatch::Literal
+                       : method == "regex"    ? codecairn::TextMatch::RegularExpression
+                       : method == "keywords" ? codecairn::TextMatch::KeywordExpression
+                                              : codecairn::TextMatch::WholeIdentifier;
+        query.wholeWords = method != "literal";
+        query.comments = comments;
+        query.strings = parser.isSet("include-strings");
+        query.skipInactive = parser.isSet("skip-inactive");
+        query.offset = offset;
+        query.pageSize = limit;
+        request = project.searchText(query);
+    }
     if (!finished)
-        operation.wait(loop, [&] { session.cancel(); });
+        operation.wait(loop, [&] { project.cancel(request); });
     if (operation.stopCode())
         return stopped();
     if (!matches.error.isEmpty())
@@ -696,12 +735,12 @@ int main(int argc, char **argv) {
         {"hits", hits},
         {"offset", offset},
         {"nextOffset", offset + matches.hits.size()},
-        {"more", matches.truncated},
+        {"more", static_cast<bool>(matches.next)},
         {"cancelled", matches.cancelled},
         {"filesSearched", matches.filesSearched},
         {"warnings", QJsonArray::fromStringList(matches.warnings)},
         {"provenance", semantic ? "semantic; provider coverage applies" : "text, not semantic"}};
-    if (matches.truncated)
+    if (matches.next)
         result.insert("status", "partial");
     return output(result, command, json, matches.cancelled ? 130 : 0);
 }

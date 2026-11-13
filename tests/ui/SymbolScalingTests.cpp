@@ -1,10 +1,10 @@
 #include "MainWindow.h"
 #include <codecairn/Diagnostics.h>
-#include <codecairn/LanguageServerClient.h>
+#include "LanguageServerClient.h"
 #include "SymbolCatalogModel.h"
 #include "SymbolIndexStore.h"
 #include "TestStorage.h"
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 #include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QElapsedTimer>
@@ -22,6 +22,7 @@
 #include <QTreeWidget>
 #include <sqlite3.h>
 
+#include "WorkspaceIndex.h"
 using namespace WorkspaceIndexDetail;
 
 class SymbolScalingTests : public QObject {

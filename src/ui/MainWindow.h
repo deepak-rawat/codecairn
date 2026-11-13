@@ -1,17 +1,13 @@
 #pragma once
 
 #include "CodeEditor.h"
-#include <codecairn/WorkspaceIndex.h>
-#include <codecairn/LanguageServerClient.h>
+#include <codecairn/Project.h>
 #include <codecairn/NavigationHistory.h>
-#include <codecairn/NavigationService.h>
-#include <codecairn/CoreSession.h>
+#include <codecairn/Engine.h>
 #include <codecairn/FileIO.h>
 #include <codecairn/ReferenceSearch.h>
 #include "ReferenceItemRoles.h"
-#include <codecairn/ReferenceSession.h>
 #include "SourceDocument.h"
-#include <codecairn/WorkspaceServices.h>
 #include <codecairn/ApplicationStateStore.h>
 #include <codecairn/WorkspaceOptionsStore.h>
 #include <QMainWindow>
@@ -126,16 +122,15 @@ private:
     const QByteArray &snapshot(Document *document) const;
     void requestHover(CodeEditor *editor, int position);
     void jumpToDefinition(CodeEditor *editor, int position);
-    LanguageServerClient *languageService(const QString &path, const QByteArray &source);
-    void connectLanguageService(LanguageServerClient *service);
     void handleDefinitionResult(quint64 token, const QString &channel,
-                                const DefinitionResult &result);
+                                const codecairn::DefinitionPage &result);
     void navigateDefinition(const LspLocation &target);
     void lookupLink(CodeEditor *editor, int position, bool activate);
-    WorkspaceServices *workspaceServices_;
-    CoreSession *coreSession_;
-    ReferenceSession *referenceSession_;
-    NavigationService *navigationService_;
+    codecairn::Engine *engine_;
+    codecairn::RequestId contextRequest_, hoverRequest_, jumpRequest_, sourceReadRequest_;
+    quint64 contextRequestGeneration_ = 0, hoverRequestGeneration_ = 0, jumpRequestGeneration_ = 0;
+    codecairn::RequestId referenceJob_;
+    codecairn::SearchCursor referenceCursor_;
     quint64 linkGeneration_ = 0;
     QByteArray hoverHash_;
     QString hoverPath_;
@@ -209,7 +204,7 @@ private:
     void previewTarget(const IndexedSymbol &target, const QString &provenance);
     void resolveDefinition(const QString &path, const QByteArray &source, int version,
                            int position);
-    void displayContextDefinitions(quint64 token, const DefinitionResult &result);
+    void displayContextDefinitions(quint64 token, const codecairn::DefinitionPage &result);
     void displayDefinitionCandidates(quint64 token, const DefinitionCandidates &candidates);
     void chooseDefinition(int index);
     void semanticPreview(const LspLocation &target);
@@ -319,8 +314,7 @@ private:
     QAction *cancelIndex_;
     QLabel *symbolScope_;
     QComboBox *definitionChoices_;
-    WorkspaceIndex *workspaceIndex_;
-    LanguageServerClient *cppLanguageService_;
+    codecairn::Project *project_;
     SymbolPage symbolPage_;
     std::optional<IndexedSymbol> selectedProjectSymbol_;
     QStringList indexWarnings_;

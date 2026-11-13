@@ -22,6 +22,7 @@
 #include <QTest>
 #include <QTreeWidget>
 
+#include "WorkspaceIndex.h"
 namespace {
 void writeJson(const QString &path, const QByteArray &bytes) {
     QFile file(path);

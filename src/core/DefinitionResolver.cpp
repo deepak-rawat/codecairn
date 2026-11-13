@@ -1,5 +1,5 @@
 #include "DefinitionResolver.h"
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 #include <QtConcurrentRun>
 #include <algorithm>
 #include <utility>
@@ -21,10 +21,21 @@ DefinitionCandidates definitionCandidates(const SymbolPage &page, int offset) {
 DefinitionResolver::DefinitionResolver(QObject *parent) : QObject(parent), watcher_(this) {
     connect(&watcher_, &QFutureWatcher<SymbolPage>::finished, this, [this] {
         busy_ = false;
+        if (discarded_) {
+            deleteLater();
+            return;
+        }
         emit candidatesReady(runningToken_,
                              definitionCandidates(watcher_.result(), runningOffset_));
         startPending();
     });
+}
+
+void DefinitionResolver::discard() {
+    pending_.reset();
+    discarded_ = true;
+    if (!busy_)
+        deleteLater();
 }
 
 DefinitionResolver::~DefinitionResolver() {
@@ -45,8 +56,14 @@ void DefinitionResolver::startPending() {
     busy_ = true;
     runningToken_ = request.token;
     runningOffset_ = request.query.offset;
-    watcher_.setFuture(
-        QtConcurrent::run([root = std::move(request.root), query = std::move(request.query)] {
-            return queryWorkspaceSymbols(root, query);
-        }));
+    watcher_.setFuture(QtConcurrent::run([root = std::move(request.root),
+                                          query = std::move(request.query)]() mutable {
+        for (auto &overlay : query.overlays)
+            if (!overlay.analysis.supported && overlay.analysis.error.isEmpty() &&
+                overlay.analysis.symbols.isEmpty())
+                overlay.analysis = analyzeSource(
+                    overlay.source, overlay.path, SourceAnalysisMode::Index,
+                    root.isEmpty() ? QString{} : workspaceClangdDirectory(root, query.projectFile));
+        return queryWorkspaceSymbols(root, query);
+    }));
 }

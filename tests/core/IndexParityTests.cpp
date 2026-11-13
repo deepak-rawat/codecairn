@@ -1,4 +1,4 @@
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 #include "SymbolIndexStore.h"
 #include "TestStorage.h"
 #include <codecairn/FileIO.h>

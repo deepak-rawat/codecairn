@@ -3,7 +3,7 @@
 #include "CodeEditor.h"
 #include <codecairn/FileIO.h>
 #include "MainWindow.h"
-#include <codecairn/LanguageServerClient.h>
+#include "LanguageServerClient.h"
 #include <codecairn/ReferenceSearch.h>
 #include "NavigationTree.h"
 #include "ReferenceResultsView.h"
@@ -43,6 +43,7 @@
 #include <QMenu>
 #include <QTabBar>
 
+#include "WorkspaceIndex.h"
 namespace {
 void setReferenceMethod(QDialog *dialog, SearchMethod method) {
     auto *combo = dialog->findChild<QComboBox *>("referenceMethod");

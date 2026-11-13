@@ -23,9 +23,10 @@ const QByteArray &MainWindow::snapshot(Document *document) const {
 }
 
 void MainWindow::initializeNavigation() {
-    connect(navigationService_, &NavigationService::readReady, this,
-            [this](quint64 token, const NavigationRead &result) {
-                if (!pendingOpen_ || token != navigationGeneration_)
+    connect(engine_, &codecairn::Engine::sourceReady, this,
+            [this](codecairn::RequestId requestId, const codecairn::SourceRead &result) {
+                if (!pendingOpen_ || requestId != sourceReadRequest_ ||
+                    pendingOpen_->generation != navigationGeneration_)
                     return;
                 const auto request = *std::exchange(pendingOpen_, {});
                 if (!result.file.error.isEmpty())
@@ -34,7 +35,7 @@ void MainWindow::initializeNavigation() {
                 else if (!result.range.error.isEmpty()) {
                     reportError(result.range.error);
                     if (result.range.stale)
-                        workspaceIndex_->refresh();
+                        project_->refreshIndex();
                 } else
                     commitNavigation(result.location, result.file, request.pin, request.focus,
                                      request.record, request.origin, request.focusWidget,
@@ -91,14 +92,13 @@ void MainWindow::initializeNavigation() {
         if (hoverEditor_ && hoverPosition_ >= 0)
             lookupLink(hoverEditor_, hoverPosition_, false);
     });
-    connectLanguageService(cppLanguageService_);
 }
 
 NavigationLocation MainWindow::currentLocation() const {
     const auto *doc = currentDocument();
     if (!doc)
         return {};
-    return {doc->path,
+    return {doc->path(),
             static_cast<int>(doc->editor->send(SCI_GETSELECTIONSTART)),
             static_cast<int>(doc->editor->send(SCI_GETSELECTIONEND)),
             static_cast<int>(doc->editor->send(SCI_GETFIRSTVISIBLELINE)),
@@ -121,16 +121,16 @@ void MainWindow::navigateTo(const NavigationLocation &location, bool pin, bool f
     const auto origin = currentLocation();
     QPointer<QWidget> previousFocus = QApplication::focusWidget();
     ++navigationGeneration_;
-    navigationService_->cancelRead();
+    engine_->cancel(sourceReadRequest_);
     pendingOpen_.reset();
     if (auto *document = findDocument(location.path)) {
-        commitNavigation(location, {snapshot(document), {}, document->hasUtf8Bom}, pin, focus,
+        commitNavigation(location, {snapshot(document), {}, document->hasUtf8Bom()}, pin, focus,
                          record, origin, previousFocus, indexedTarget);
         return;
     }
     pendingOpen_ = OpenRequest{location, origin, previousFocus,         pin,
                                focus,    record, navigationGeneration_, indexedTarget};
-    navigationService_->read(location, navigationGeneration_, indexedTarget);
+    sourceReadRequest_ = engine_->readSource(location, indexedTarget);
 }
 
 void MainWindow::commitNavigation(const NavigationLocation &location, const FileContents &file,
@@ -145,7 +145,7 @@ void MainWindow::commitNavigation(const NavigationLocation &location, const File
     if (!resolved.error.isEmpty()) {
         reportError(resolved.error);
         if (resolved.stale)
-            workspaceIndex_->refresh();
+            project_->refreshIndex();
         return;
     }
     const int requestedStart = resolved.start;
@@ -182,7 +182,7 @@ void MainWindow::commitNavigation(const NavigationLocation &location, const File
         document->editor->send(SCI_SETFIRSTVISIBLELINE, location.firstVisibleLine);
     if (record)
         navigationHistory_.record(origin,
-                                  {document->path, start, end, location.firstVisibleLine, {}});
+                                  {document->path(), start, end, location.firstVisibleLine, {}});
     historyBack_->setEnabled(navigationHistory_.canBack());
     historyForward_->setEnabled(navigationHistory_.canForward());
     if (focus)
@@ -192,7 +192,7 @@ void MainWindow::commitNavigation(const NavigationLocation &location, const File
     if (indexedTarget && !pinContextAction_->isChecked()) {
         contextTimer_->stop();
         contextFollowsEditor_ = false;
-        contextPath_ = document->path;
+        contextPath_ = document->path();
         const auto &symbol = indexedTarget->symbol;
         showContext(symbol.name + " - Project index", file.bytes, document->analysis, symbol.start,
                     symbol.end);
@@ -201,8 +201,8 @@ void MainWindow::commitNavigation(const NavigationLocation &location, const File
     if (location.wholeLine && !pinContextAction_->isChecked()) {
         contextTimer_->stop();
         contextFollowsEditor_ = false;
-        contextPath_ = document->path;
-        showContext(QFileInfo(document->path).fileName() + " - Reference", file.bytes,
+        contextPath_ = document->path();
+        showContext(QFileInfo(document->path()).fileName() + " - Reference", file.bytes,
                     document->analysis, start, end, true);
     }
 }
@@ -229,13 +229,13 @@ void MainWindow::navigateOutline(bool pin) {
     if (!doc || !item)
         return;
     const int index = item->data(0, Qt::UserRole).toInt();
-    if (doc->revision != doc->analyzedRevision || index < 0 ||
+    if (doc->revision() != doc->analyzedRevision || index < 0 ||
         index >= doc->analysis.symbols.size()) {
         reportError("Symbols are updating; retry after analysis finishes.");
         return;
     }
     const auto &symbol = doc->analysis.symbols[index];
-    navigateTo({doc->path, symbol.nameStart, symbol.nameEnd, -1, {}}, pin, pin);
+    navigateTo({doc->path(), symbol.nameStart, symbol.nameEnd, -1, {}}, pin, pin);
     previewSymbol(index);
     if (pin)
         clearPanelFilter(outlineFilter_);

@@ -50,21 +50,23 @@ endif()
 
 add_library(
     codecairn_core STATIC
-    src/core/include/codecairn/CoreSession.h
-    src/core/CoreSession.cpp
+    src/core/include/codecairn/Engine.h
+    src/core/include/codecairn/Project.h
+    src/core/include/codecairn/Document.h
+    src/core/Engine.cpp
+    src/core/Project.cpp
+    src/core/Document.cpp
     src/core/internal/DefinitionResolver.h
-    src/core/include/codecairn/DocumentAnalysis.h
-    src/core/include/codecairn/WorkspaceIndex.h
-    src/core/include/codecairn/WorkspaceServices.h
-    src/core/include/codecairn/LanguageServerClient.h
-    src/core/include/codecairn/NavigationService.h
-    src/core/include/codecairn/ReferenceSession.h
+    src/core/internal/WorkspaceIndex.h
+    src/core/internal/WorkspaceServices.h
+    src/core/internal/LanguageServerClient.h
+    src/core/internal/NavigationService.h
+    src/core/internal/ReferenceSession.h
     src/core/Diagnostics.cpp
     src/core/ApplicationStateStore.cpp
     src/core/SourceAnalysis.cpp
     src/core/LanguageRegistry.cpp
     src/core/CompilerSymbolRecovery.cpp
-    src/core/DocumentAnalysis.cpp
     src/core/WorkspaceOptionsStore.cpp
     src/core/WorkspaceServices.cpp
     src/core/DefinitionResolver.cpp

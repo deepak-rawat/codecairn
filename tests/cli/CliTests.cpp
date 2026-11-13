@@ -1,4 +1,5 @@
 #include <codecairn/FileIO.h>
+#include <codecairn/WorkspacePaths.h>
 
 #include <QDir>
 #include <QFileInfo>
@@ -296,6 +297,84 @@ private slots:
         QCOMPARE(reply.code, 1);
         reply = run({"index", "--root", directory.path(), "--overlay", overlay}, state);
         QCOMPARE(reply.code, 2);
+    }
+
+    void manualProjectSearchIncludesUnsavedFilesAndFilters() {
+        QTemporaryDir directory;
+        const auto root = directory.filePath("project");
+        const auto state = directory.filePath("state");
+        QVERIFY(QDir().mkpath(root));
+        const auto path = QDir(root).filePath("source.py");
+        const auto unsavedPath = QDir(root).filePath("unsaved.py");
+        const auto buffer = directory.filePath("buffer.txt");
+        QVERIFY(writeSourceFile(path, "def target():\n    pass\n", false).isEmpty());
+        QVERIFY(writeSourceFile(buffer, "target()\n", false).isEmpty());
+        const auto overlay = unsavedPath + '=' + buffer;
+        auto reply =
+            run({"references", "--root", root, "--query", "target", "--overlay", overlay}, state);
+        QCOMPARE(reply.code, 0);
+        QCOMPARE(reply.json["hits"].toArray().size(), 2);
+        QCOMPARE(reply.json["filesSearched"].toInt(), 2);
+        reply = run({"references", "--root", root, "--query", "target", "--overlay", overlay,
+                     "--file-patterns", "unsaved.py"},
+                    state);
+        QCOMPARE(reply.code, 0);
+        QCOMPARE(reply.json["hits"].toArray().size(), 1);
+        QCOMPARE(reply.json["hits"].toArray()[0].toObject()["path"].toString(),
+                 workspacePath(unsavedPath));
+        QCOMPARE(reply.json["filesSearched"].toInt(), 1);
+        QVERIFY(!QFileInfo::exists(unsavedPath));
+        QVERIFY(writeSourceFile(buffer, {}, false).isEmpty());
+        reply =
+            run({"references", "--file", unsavedPath, "--query", "target", "--overlay", overlay},
+                state);
+        QCOMPARE(reply.code, 0);
+        QVERIFY(reply.json["hits"].toArray().isEmpty());
+        QCOMPARE(reply.json["filesSearched"].toInt(), 1);
+    }
+
+    void textMethodsKeepTheirMatchingAndPaging() {
+        QTemporaryDir directory;
+        const auto path = directory.filePath("source.txt");
+        const auto state = directory.filePath("state");
+        QVERIFY(writeSourceFile(path, "target targetExtra target\n", false).isEmpty());
+        auto reply = run({"references", "--file", path, "--query", "target"}, state);
+        QCOMPARE(reply.code, 0);
+        QCOMPARE(reply.json["hits"].toArray().size(), 3);
+        for (const auto &method : QStringList{"occurrences", "references"}) {
+            reply = run({"references", "--file", path, "--query", "target", "--method", method,
+                         "--limit", "1"},
+                        state);
+            QCOMPARE(reply.code, 0);
+            QCOMPARE(reply.json["hits"].toArray().size(), 1);
+            QCOMPARE(reply.json["nextOffset"].toInt(), 1);
+            QVERIFY(reply.json["more"].toBool());
+            reply = run({"references", "--file", path, "--query", "target", "--method", method,
+                         "--offset", "1", "--limit", "1"},
+                        state);
+            QCOMPARE(reply.code, 0);
+            QCOMPARE(reply.json["hits"].toArray().size(), 1);
+            QCOMPARE(reply.json["hits"].toArray()[0].toObject()["start"].toInt(), 19);
+            QCOMPARE(reply.json["nextOffset"].toInt(), 2);
+            QVERIFY(!reply.json["more"].toBool());
+        }
+    }
+
+    void missingSemanticProviderNeverFallsBackToText() {
+        QTemporaryDir directory;
+        const auto path = directory.filePath("source.txt");
+        const auto state = directory.filePath("state");
+        QVERIFY(writeSourceFile(path, "target target\n", false).isEmpty());
+        for (const auto &command : QStringList{"definition", "references"}) {
+            const auto reply =
+                run({command, "--file", path, "--byte-offset", "0", "--semantic"}, state);
+            QCOMPARE(reply.code, 1);
+            QCOMPARE(reply.json["status"].toString(), "error");
+            QVERIFY(!reply.json["error"].toString().isEmpty());
+            QVERIFY(!reply.json.contains("hits"));
+            QVERIFY(!reply.json.contains("locations"));
+            QVERIFY(!reply.json.contains("symbols"));
+        }
     }
 
     void interruptCancelsOwnedWork() {

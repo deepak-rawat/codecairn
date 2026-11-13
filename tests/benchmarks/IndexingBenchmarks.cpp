@@ -1,12 +1,13 @@
 #include <codecairn/FileIO.h>
 #include "TestStorage.h"
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 
 #include <QElapsedTimer>
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include "WorkspaceIndex.h"
 #ifdef Q_OS_UNIX
 #include <sys/resource.h>
 #endif

@@ -75,7 +75,7 @@ implementation line by line.
 | 4 | [SourceAnalysis.h](../src/core/include/codecairn/SourceAnalysis.h), [SourceTypes.h](../src/core/include/codecairn/SourceTypes.h) | Styles, symbols, coordinates, and provenance |
 | 5 | [MainWindowNavigation.cpp](../src/ui/MainWindowNavigation.cpp) | Preview, activation, focus, and safe targets |
 | 6 | [MainWindowReferences.cpp](../src/ui/MainWindowReferences.cpp), [ReferenceTests.cpp](../tests/ui/ReferenceTests.cpp) | Trace a complete asynchronous feature |
-| 7 | [WorkspaceIndex.h](../src/core/include/codecairn/WorkspaceIndex.h), [MainWindowWorkspace.cpp](../src/ui/MainWindowWorkspace.cpp) | Saved symbols versus live overlays |
+| 7 | [Project.h](../src/core/include/codecairn/Project.h), [MainWindowWorkspace.cpp](../src/ui/MainWindowWorkspace.cpp) | Project queries and live document snapshots |
 | 8 | Parser, compiler, and language-server implementations | Study internals as a change requires |
 
 Before changing behavior, be able to answer: which widget starts it, who owns
@@ -141,9 +141,11 @@ widget/action IDs as contracts rather than cosmetic names.
 | `QSignalBlocker` | Suppresses callbacks during programmatic view updates |
 | `QFutureWatcher<T>` | Delivers asynchronous completion to the owning side |
 
-The tab hierarchy owns editor widgets. SourceDocument owns its analysis/reload
-watchers and debounce timer; MainWindow owns document records and coordinates
-their widgets. Closing a source tab stops its work before deleting its editor.
+The tab hierarchy owns editor widgets. SourceDocument owns presentation state,
+its reload watcher and debounce timer; Engine owns source Documents and analysis
+workers. MainWindow coordinates the bindings. Closing a source tab cancels its
+analysis, unbinds the byte provider and releases the Engine document before
+deleting the editor.
 
 A nested event loop does not freeze the rest of the application. Results menus
 use parent-owned heap menus with `popup()` and deferred deletion, not a stack
@@ -157,10 +159,11 @@ before using widgets or applying changes.
 flowchart TD
     UI["MainWindow: UI coordination and generations"] --> DOC["SourceDocument: revision and snapshots"]
     DOC --> EDIT["CodeEditor: Scintilla adapter"]
-    DOC --> ANALYSIS["DocumentAnalysis: headless revision/snapshot jobs"]
-    ANALYSIS --> PARSE["SourceAnalysis and LanguageRegistry"]
+    DOC --> TEXT["Document: shared revision/snapshots"]
+    UI --> ENGINE["Engine: documents, source reads and job ownership"]
+    ENGINE --> SERVICES["Project: membership and analysis context"]
+    SERVICES --> PARSE["SourceAnalysis and LanguageRegistry"]
     PARSE --> COMP["CompilerSymbolRecovery: libclang"]
-    UI --> SERVICES["WorkspaceServices"]
     SERVICES --> INDEX["WorkspaceIndex: scheduling"]
     INDEX --> BUILD["WorkspaceScanner and WorkspaceIndexBuilder"]
     INDEX --> QUERY["WorkspaceSymbolQuery"]
@@ -170,7 +173,7 @@ flowchart TD
     SERVICES --> LSP["LanguageServerClient: QProcess and LSP"]
     LSP --> SERVER["clangd or optional server"]
     UI --> BROWSER["SymbolBrowser and DefinitionResolver"]
-    UI --> REFS["ReferenceSession and ReferenceHistoryModel"]
+    SERVICES --> REFS["Reference/text queries and private search jobs"]
     REFS --> DB
     UI --> RESULTS["ReferenceResultsView: Qt presentation"]
     UI --> STATE["ApplicationStateStore and WorkspaceOptionsStore"]
@@ -208,6 +211,7 @@ separate controllers.
 | Text, selections, undo, styles, source-link margin | [CodeEditor.h](../src/ui/CodeEditor.h), [CodeEditor.cpp](../src/ui/CodeEditor.cpp) |
 | Parsing, language selection, compiler recovery | [SourceAnalysis.cpp](../src/core/SourceAnalysis.cpp), [LanguageRegistry.cpp](../src/core/LanguageRegistry.cpp), [CompilerSymbolRecovery.cpp](../src/core/CompilerSymbolRecovery.cpp) |
 | Index/service ownership | [WorkspaceServices.cpp](../src/core/WorkspaceServices.cpp) |
+| Public domain ownership and project queries | [Engine.cpp](../src/core/Engine.cpp), [Project.cpp](../src/core/Project.cpp), [Document.cpp](../src/core/Document.cpp) |
 | Index scheduling, watchers, cancellation | [WorkspaceIndex.cpp](../src/core/WorkspaceIndex.cpp) |
 | Discovery, transactions, queries | [WorkspaceScanner.cpp](../src/core/WorkspaceScanner.cpp), [WorkspaceIndexBuilder.cpp](../src/core/WorkspaceIndexBuilder.cpp), [WorkspaceSymbolQuery.cpp](../src/core/WorkspaceSymbolQuery.cpp) |
 | SQLite and path identity | [SymbolIndexStore.cpp](../src/core/SymbolIndexStore.cpp), [WorkspacePaths.cpp](../src/core/WorkspacePaths.cpp) |
@@ -239,8 +243,9 @@ or context snapshot is not automatically the same version of that text.
 ### Responsibility and naming rules
 
 - Keep UI focus, selection, and presentation generations in MainWindow.
-  DocumentAnalysis owns revisions, cached snapshots and accepted analysis;
-  SourceDocument binds it to the editor and applies external reloads.
+  Document owns revisions and cached snapshots. Each Project owns its analysis
+  context; SourceDocument binds shared text to the editor, caches accepted
+  presentation results and applies external reloads.
 - [SourceTypes.h](../src/core/include/codecairn/SourceTypes.h) and [IndexTypes.h](../src/core/include/codecairn/IndexTypes.h) hold
   shared result data; [SourceCoordinates.h](../src/core/include/codecairn/SourceCoordinates.h) defines LSP
   locations and explicit coordinate conversion.
@@ -257,7 +262,7 @@ Sources follow the build boundaries: `src/core/` contains headless services and
 shared types, `src/ui/` contains Qt presentation plus the GUI and launcher entry
 points, and `src/cli/` contains the headless CLI entry point. Supported core
 headers live in `src/core/include/codecairn/` and are included as
-`<codecairn/CoreSession.h>`. Only `src/core/include/` is exported. Engine/storage
+`<codecairn/Engine.h>`. Only `src/core/include/` is exported. Engine/storage
 implementation headers live in `src/core/internal/`; only the core and explicitly
 selected white-box tests can include them. The UI also inherits public core headers.
 
@@ -269,31 +274,31 @@ and both the GUI and `codecairn-cli` use the core.
 
 - [ProjectSession.cpp](../src/core/ProjectSession.cpp) prepares validated projects and
   compilation settings before the UI commits a project switch after its prompts.
-  WorkspaceServices owns the committed project, index/language-service startup,
-  options reload and shutdown. Preparation does not replace the active project;
-  frontends commit only after save/discard/cancel decisions succeed.
+  [Project](../src/core/include/codecairn/Project.h) owns its configuration,
+  index and analysis context. Preparation does not replace the active project;
+  frontends open only after save/discard/cancel decisions succeed.
 - [ProjectDiscovery.cpp](../src/core/ProjectDiscovery.cpp) implements shared project
   inclusion/exclusion and cancellable file discovery. The dialog owns view
   updates and observes snapshot-based scan results.
-- [DocumentAnalysis.cpp](../src/core/DocumentAnalysis.cpp) accepts supplied bytes
-  headlessly. SourceDocument overrides synchronous snapshot acquisition so
-  Scintilla remains the live editing authority, without a second per-keystroke
-  mutable text buffer.
+- [Document.cpp](../src/core/Document.cpp) encapsulates source identity, revisions,
+  saved contents and lazy snapshots. SourceDocument binds Scintilla as its live
+  byte provider, without a second per-keystroke mutable buffer. Analysis results
+  belong to the requesting project, not to the shared document.
 - [NavigationTarget.cpp](../src/core/NavigationTarget.cpp) resolves and validates
   byte/LSP ranges and hashes. [NavigationService.cpp](../src/core/NavigationService.cpp)
   owns per-channel semantic/syntax lookup policy, context self-target filtering,
   stale-snapshot rejection, bounded syntax-request coalescing and asynchronous
   target reads. Explicit semantic-only requests never fall back to syntax.
   Reads capture live snapshot bytes on the owning thread before dispatch.
-  The GUI and CLI use this service; the UI alone applies focus, tabs and selections.
+  This service is private. Public Project definition queries return source
+  locations; Engine reads and validates them. The UI alone applies focus/tabs.
 - [ReferenceSession.cpp](../src/core/ReferenceSession.cpp) owns search dispatch,
   semantic synchronization, page jobs, cancellation, generations, and cross-page
   source identities. Its optional snapshot provider runs on the owning thread,
   never a worker, and returns bytes rather than an editor pointer.
-  Shared ReferenceInputs resolve project/current/selected-file scopes and file
-  patterns; captureDocumentOverlays applies project membership and analysis
-  freshness rules to headless document handles. The UI only collects the selected
-  paths and editor-modified flags.
+  It is private. Project captures relevant Engine documents automatically and
+  separates symbol references from text search. Frontends supply query/scope,
+  not overlays, language-server messages, versions or compilation directories.
 - ReferenceHistoryModel owns append/replacement limits, staging and rollback on
   persistence failure. Presentation labels, source links, close/quit interaction
   and confirmation prompts remain frontend responsibilities.
@@ -306,41 +311,55 @@ worker jobs; it changes the process-wide core storage root, not GUI preferences.
 
 ### Using the core API
 
-[CoreSession](../src/core/include/codecairn/CoreSession.h) is the recommended owner.
-Link to `codecairn_core`, construct a QCoreApplication (or use the GUI's existing
-QApplication), then construct one session on the event-loop thread. Construction
-does not scan a project, parse documents or launch a language server.
+[Engine](../src/core/include/codecairn/Engine.h),
+[Project](../src/core/include/codecairn/Project.h) and
+[Document](../src/core/include/codecairn/Document.h) are the public domain objects
+in namespace `codecairn`. Link to `codecairn_core` and use the owning thread's
+QCoreApplication/QApplication event loop. Construction does not scan or launch
+language servers. CoreSession is retired, not retained as another facade layer.
 
-| Facet | Operations | Completion |
+| Object | Responsibility | Main operations |
 |---|---|---|
-| `projects()` | `prepareProject`, `commitProject`, options reload, close | Preparation/commit return explicit errors; index/provider work is asynchronous |
-| `index()` | `refresh`, `search`, `cancel`, `invalidateSearch` | `catalogReady`, `batchReady`, `ready`, `symbolsReady`, `failed` |
-| Documents | `createDocument`, `setBytes`, `startAnalysis`, `closeDocument` | `analysisCompleted` or `analysisRejected` |
-| `navigation()` | `lookup`, `read`, cancellation | `definitionReady`, `readReady` with the caller's token/channel |
-| `references()` | `start`, `nextPage`, `cancel` | `pageReady` with the caller's token |
+| Engine | Runtime and identity/lifetime of projects and documents | `openProject`, `openDocument`, `createDocument`, `closeDocument`, `readSource` |
+| Project | Membership, compiler configuration and analysis/index/query context | `open`, `refreshIndex`, `findSymbols`, `findDefinitions`, `findReferences`, `searchText`, `analyze` |
+| Document | Project-independent current/saved bytes and revisions | `updateContents`, `snapshot`, `position`, `setSavedContents` |
 
-Use the named index modes for both `refresh()` and the advanced synchronous
-`buildWorkspaceIndex()` entry point:
+One open source path has one Document per Engine. Reopening or creating it again
+returns the existing document without replacing unsaved contents. Projects share
+its snapshots but keep their own analysis results and compilation configuration.
+A document may be outside all projects. Closing a project does not close or save
+documents. Engine destruction cancels work and releases everything it owns.
+
+For an ordinary caller, use `engine.openProject(ProjectSpec::folder(path), options)`
+or `ProjectSpec::managed(projectFile)` and check its Result<Project*>.
+The reusable `createProject()` / `Project::open()` path below lets a GUI connect
+progress handlers before opening, and prepare settings before prompting about
+unsaved files. ProjectInfo exposes identity/configuration, not implementation
+services. SymbolQuery has filter/page fields; source overlays, database identity
+and pending-schema handling are captured internally.
+
+Use the named index modes for `Project::refreshIndex()` and the advanced synchronous
+`buildWorkspaceIndex()` entry point in [Indexing.h](../src/core/include/codecairn/Indexing.h):
 
 - `DiscoverChanges`: rediscover files and reuse unchanged analysis.
 - `ReparseKnownFiles`: reparse the current catalog without discovering new files.
 - `RebuildFilesAndSymbols`: rediscover and reparse.
 - `CheckKnownFiles`: check/reuse known files without discovery or forced parsing.
 
-ProjectOpenOptions independently names index and language startup as `Automatic`
+ProjectOptions independently names index and language startup as `Automatic`
 or `Manual`. Manual mode does not start that work; switching projects stops old
 services rather than allowing them to remain attached to a different root.
-Prepare first, obtain any frontend save/discard/cancel decision, then commit.
-Invalid preparation/commit leaves the current project and its requests intact.
-Successful project switches and close cancel the session's navigation/reference
-requests before changing services. Recommitting the same project in manual mode
+Prepare first, obtain any frontend save/discard/cancel decision, then open.
+Invalid preparation/open leaves the current project and its requests intact.
+Successful project switches and close cancel project requests before changing
+services. Reopening the same project in manual mode
 does not invalidate existing requests.
 
 This complete example opens a project, waits for indexing, and queries symbols.
 Configuration/storage errors and asynchronous indexing/query errors remain visible:
 
 ```cpp
-#include <codecairn/CoreSession.h>
+#include <codecairn/Project.h>
 #include <QCoreApplication>
 #include <QDebug>
 
@@ -351,20 +370,21 @@ int main(int argc, char **argv) {
         qCritical() << "Expected a workspace directory";
         return 2;
     }
-    CoreSession core;
-    QObject::connect(&core.index(), &WorkspaceIndex::failed, &app,
+    codecairn::Engine engine;
+    auto *project = engine.createProject();
+    QObject::connect(project, &codecairn::Project::failed, &app,
                      [&](const QString &error) {
                          qCritical().noquote() << error;
                          app.exit(1);
                      });
-    QObject::connect(&core.index(), &WorkspaceIndex::ready, &app,
-                     [&](const IndexResult &) {
-                         SymbolQuery query;
+    QObject::connect(project, &codecairn::Project::indexReady, &app,
+                     [&](codecairn::RequestId, const IndexResult &) {
+                         codecairn::SymbolQuery query;
                          query.text = "parse";
-                         core.index().search(query);
+                         project->findSymbols(query);
                      });
-    QObject::connect(&core.index(), &WorkspaceIndex::symbolsReady, &app,
-                     [&](const SymbolPage &page) {
+    QObject::connect(project, &codecairn::Project::symbolsReady, &app,
+                     [&](codecairn::RequestId, const SymbolPage &page) {
                          if (!page.error.isEmpty()) {
                              qCritical().noquote() << page.error;
                              app.exit(1);
@@ -373,11 +393,12 @@ int main(int argc, char **argv) {
                              app.quit();
                          }
                      });
-    const auto project = prepareProject(app.arguments()[1]);
-    const ProjectOpenOptions startup{IndexStartup::Automatic, LanguageStartup::Manual};
-    const auto error = core.projects().commitProject(project, startup);
-    if (!error.isEmpty()) {
-        qCritical().noquote() << error;
+    const auto prepared = prepareProject(app.arguments()[1]);
+    const codecairn::ProjectOptions startup{
+        codecairn::IndexStartup::Automatic, codecairn::LanguageStartup::Manual};
+    const auto opened = project->open(prepared, startup);
+    if (!opened) {
+        qCritical().noquote() << opened.error().message;
         return 1;
     }
     return app.exec();
@@ -387,7 +408,7 @@ int main(int argc, char **argv) {
 This standalone reference example searches one file and consumes all pages:
 
 ```cpp
-#include <codecairn/CoreSession.h>
+#include <codecairn/Project.h>
 #include <QCoreApplication>
 #include <QDebug>
 #include <QTimer>
@@ -396,15 +417,14 @@ int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     if (app.arguments().size() != 2)
         return 2;
-    CoreSession core;
-    ReferenceSearchRequest request;
-    request.paths = {workspacePath(app.arguments()[1])};
-    request.query = "parse";
-    request.options.method = SearchMethod::Literal;
-    request.options.smartMatching = false;
-    quint64 token = 1;
-    QObject::connect(&core.references(), &ReferenceSession::pageReady, &app,
-                     [&](quint64, const ReferenceResults &page, bool) {
+    codecairn::Engine engine;
+    auto *project = engine.createProject();
+    codecairn::TextQuery query;
+    query.files.scope = codecairn::SearchScope::CurrentFile;
+    query.files.currentFile = workspacePath(app.arguments()[1]);
+    query.text = "parse";
+    QObject::connect(project, &codecairn::Project::textMatchesReady, &app,
+                     [&](codecairn::RequestId, const codecairn::SearchPage &page) {
                          if (!page.error.isEmpty()) {
                              qCritical().noquote() << page.error;
                              app.exit(1);
@@ -412,47 +432,66 @@ int main(int argc, char **argv) {
                              app.exit(130);
                          } else {
                              qInfo() << page.hits.size() << "matches on this page";
-                             if (page.truncated)
-                                 core.references().nextPage(++token);
+                             if (page.next)
+                                 project->continueSearch(page.next);
                              else
                                  app.quit();
                          }
                      });
-    QTimer::singleShot(0, &core, [&] { core.references().start(request, token); });
+    QTimer::singleShot(0, project, [&] { project->searchText(query); });
     return app.exec();
 }
 ```
 
-Use `core.references().cancel()` to abandon a search without deleting completed
-frontend results. The CLI and [CoreTests.cpp](../tests/core/CoreTests.cpp) show
+Every query returns an Engine-generated RequestId. Use `project->cancel(id)` to
+abandon project work, or `engine.cancel(id)` for source reads/standalone analysis.
+No caller-generated token or frontend-specific channel string is needed.
+SearchCursor is an opaque continuation of the captured search, not an offset to
+apply to unrelated results. It becomes invalid on source changes, cancellation,
+or project close. `findReferences` takes a SourcePosition and an explicit
+ReferenceResolution; `searchText` takes text and matching options. Semantic-only
+queries never fall back to syntax or text.
+
+For unsaved contents, open/create a Document then call `updateContents(bytes)`.
+Project queries capture its current snapshot automatically. `Engine::analyze()`
+analyzes standalone text; `Project::analyze()` uses that project's compilation
+settings. AnalysisResult contains the exact source revision it describes; a shared
+document never stores one project's semantic analysis as universally valid.
+AnalysisDetail selects `Symbols` or `StylesAndSymbols`, not a frontend-specific
+"editor" mode; symbol-only analysis avoids allocating style bytes.
+The CLI and [CoreTests.cpp](../tests/core/CoreTests.cpp) show
 executed end-to-end examples, including navigation requests and live documents.
 
 #### Lifetime, threading and result contracts
 
-- Session facets are borrowed references; do not delete/reparent them. Documents
-  created by the session are owned until `closeDocument()` or session destruction.
-  Never retain a document pointer after close. The GUI may retain its own
-  editor-bound SourceDocument lifetime and supply snapshots instead.
-  Closing a project does not discard owned documents; close them explicitly
-  after frontend save/discard decisions or let session destruction release them.
+- Returned project/document pointers are borrowed. Engine owns them; use its
+  close operations, not `delete` or QObject reparenting. `Project::close()` releases
+  its active context while retaining the reusable Project object. Engine's
+  `closeProject(pointer)` releases the object itself. GUI SourceDocument is only
+  a presentation binding; it does not own another source buffer.
 - All service calls, snapshot providers and result delivery run on the owning
   event-loop thread. Workers receive snapshots, never widgets or document pointers.
-  A custom snapshot provider replaces the default session-document lookup and
-  must not outlive its captured state. Use a QObject context on signal connections.
+  A Document byte provider is called synchronously and lazily, once per requested
+  revision; unbind it before its editor is destroyed. Use a QObject context on
+  signal connections.
 - Requests/results retain Qt implicit sharing. Do not copy source bytes manually,
   convert them through JSON, or introduce another worker hop to call these APIs.
   UTF-8 byte ranges and UTF-16 LSP coordinates keep their existing conversions.
-- Connect before starting: validation errors may complete synchronously. Check
-  the feature's `error` before accepting data. Zero matches is success.
-  `truncated` reference results require `nextPage`; symbol pages expose totals.
+- Connect before starting. Async operation results are delivered after the start
+  call returns, including deferred validation failures. Open/close operations
+  return Result<T> immediately; check it before calling value() or error().
+  Check result errors before accepting query data. Zero matches is success.
+  A nonempty next cursor means another search page; symbol pages expose totals.
   Semantic-only requests never silently become syntax/text results.
-- Navigation tokens identify requests within independent channels. Reference
-  tokens identify page requests within one search. Cancelling invalidates late
+- Request IDs distinguish concurrent definitions/searches and page requests.
+  Symbol browsing has one coalesced latest query per project, preserving bounded
+  refresh work. Cancelling invalidates late
   completions; no cancellation completion signal is promised. Already delivered
   frontend results remain frontend-owned.
-- `stopBackgroundWork()` is terminal for a document. Destruction cancels pending
-  services and joins owned jobs; it can wait for a noninterruptible parser.
-  Close the session before destroying QApplication and captured frontend state.
+- Destroy Engine before QApplication. It joins owned jobs and can wait for a
+  noninterruptible parser. Documents have encapsulated state and no independent
+  analysis worker or terminal "stop" mode. Each project's results carry their
+  own context and source identity.
 
 ## UI and interaction model
 
@@ -1477,9 +1516,51 @@ Windows atomic-save fixtures wait for startup readers before replacement.
 
 ### Refactoring contracts and performance
 
-The public API uses a thin CoreSession owner and namespaced public headers,
-without serialization, additional worker hops or new parsing/index algorithms.
-The API cleanup was compared with pre-change Debug executables on the same
+The domain API replaces CoreSession with Engine-owned documents and independent
+Project analysis contexts. It automatically captures relevant live snapshots and
+caches project membership only for open documents, keyed by source identity.
+Membership is released on document close and invalidated on
+project/configuration changes, exclusion changes and changed index results.
+This avoids repeated filesystem membership checks per query; no parser, SQL,
+reference-matching or worker-limit rewrite was included.
+
+Local Debug comparisons against revision `81accad` used original binaries and
+isolated fixtures on the same Apple Silicon host. Three serial paired rounds
+alternated execution order. All functional suites passed; domain tests include
+the same source analyzed under two different compilation databases, standalone
+and unsaved documents, same-identity reopening, project close, cancellation and
+cursor freshness. The workflow fixture uses equivalent roots, matching options,
+source bytes and cached analysis for both paths; snapshot capture is inside the
+new Project measurement.
+
+| Domain API comparison (median of 3 rounds) | Before | After |
+|---|---:|---:|
+| Text occurrences, 100 iterations/run | 3.90 ms | 3.94 ms |
+| Warm symbol query, 100 iterations/run | 1.04 ms | 1.04 ms |
+| Render 1,024 rows, 100 iterations/run | 12.92 ms | 13.07 ms |
+| Editor bytes, 100 iterations/run | 0.030 ms | 0.027 ms |
+| Cached document bytes, 100 iterations/run | 0.000020 ms | 0.000026 ms |
+| Reference dispatch, 40 samples/run | 11.462 ms | 10.644 ms |
+| Navigation read, 100 samples/run | 36.750 us | 37.125 us |
+| 1k cold index | 569 ms | 560 ms |
+| 25k cold index | 13,025 ms | 13,376 ms |
+| 25k warm reuse | 3,253 ms | 3,143 ms |
+
+Reference-dispatch median p95 values were 12.253/11.454 ms and navigation-read
+p95 values were 41.292/44.542 us (before/after). Cached byte access has about 6 ns
+additional measured Debug overhead; it does not copy source bytes or rehash.
+The 25k cold-index median was 2.7% higher, with overlapping ranges
+(12.980-13.331 s before, 12.944-13.438 s after). One candidate warm-index sample
+was a 5.185 s outlier. Median 25k process peak RSS was 138.0/138.6 MB, including
+fixture construction and earlier cases, not isolated retained service memory.
+These results show no consistent material slowdown across the measured
+workloads, not a proof of zero overhead or a real-project/platform certification.
+Shared-host load, disk/cache state and small-sample variation remain limitations;
+no general speedup is claimed.
+
+The earlier API cleanup used a thin CoreSession owner, now superseded by the
+domain-based Engine/Project/Document API. Its historical measurements below were
+compared with pre-change Debug executables on the same
 Apple Silicon host, using isolated fixtures and serial, alternating-order runs.
 All 22 functional suites passed; new core cases cover owned-document lifetime,
 live snapshots, cancellation on project switches, and named refresh behavior.

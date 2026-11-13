@@ -1,9 +1,8 @@
 #pragma once
 
 #include <codecairn/ReferenceSearch.h>
-#include <codecairn/WorkspaceServices.h>
+#include "WorkspaceServices.h"
 #include <codecairn/WorkspaceOptionsStore.h>
-#include <codecairn/DocumentAnalysis.h>
 
 #include <QFutureWatcher>
 #include <QPointer>
@@ -19,11 +18,6 @@ struct SemanticReferenceOrigin {
     QHash<QString, int> versions;
 };
 
-struct OpenSource {
-    DocumentAnalysis *document;
-    bool modified;
-};
-
 enum class ReferenceScope { Project, CurrentFile, SelectedFiles };
 
 struct ReferenceInputs {
@@ -37,9 +31,6 @@ struct ReferenceInputs {
     QString filePatterns;
 };
 
-QVector<SymbolOverlay> captureDocumentOverlays(const QVector<OpenSource> &documents,
-                                               const QString &root,
-                                               const WorkspaceOptions &options);
 QStringList resolveReferenceScope(const ReferenceInputs &inputs);
 
 QStringList referenceSearchPaths(const QStringList &catalog, const QVector<SymbolOverlay> &overlays,
@@ -56,6 +47,7 @@ public:
                const std::optional<SemanticReferenceOrigin> &origin = {});
     void nextPage(quint64 token);
     void cancel();
+    void retire();
 
 signals:
     void pageReady(quint64 token, const ReferenceResults &results, bool semantic);

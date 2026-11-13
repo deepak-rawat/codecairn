@@ -87,6 +87,8 @@ For headless analysis, indexing, symbols and references, use
 [`codecairn-cli`](docs/USER_GUIDE.md#headless-command-line).
 A [core/CLI-only build](docs/DEVELOPER_GUIDE.md#configure-build-test-install)
 uses Qt Core/Concurrent without Qt Widgets, Qt Gui or Scintilla.
+The [C++ core API](docs/DEVELOPER_GUIDE.md#using-the-core-api) exposes Engine,
+Project and Document objects shared by both frontends.
 
 ## Packages and releases
 

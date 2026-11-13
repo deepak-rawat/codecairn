@@ -1,5 +1,5 @@
-#include <codecairn/WorkspaceIndex.h>
-#include <codecairn/LanguageServerClient.h>
+#include <codecairn/Indexing.h>
+#include "LanguageServerClient.h"
 #include <codecairn/FileIO.h>
 #include "MainWindow.h"
 #include "TestStorage.h"
@@ -37,6 +37,7 @@
 #include <QTabWidget>
 #include <QtConcurrentRun>
 
+#include "WorkspaceIndex.h"
 namespace {
 IndexResult index(const QString &root, bool force = false, bool rescan = true) {
     const auto mode =

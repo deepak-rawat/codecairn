@@ -1,4 +1,4 @@
-#include <codecairn/WorkspaceIndex.h>
+#include "WorkspaceIndex.h"
 #include "WorkspaceScanner.h"
 #include <codecairn/Diagnostics.h>
 #include <codecairn/WorkspaceOptionsStore.h>
@@ -148,7 +148,7 @@ WorkspaceIndex::~WorkspaceIndex() {
     queryJob_.waitForFinished();
 }
 
-void WorkspaceIndex::open(const QString &root, const QString &projectFile) {
+void WorkspaceIndex::open(const QString &root, const QString &projectFile, OpenMode mode) {
     root_ = workspacePath(root);
     projectFile_ = projectFile;
     ++generation_;
@@ -166,8 +166,11 @@ void WorkspaceIndex::open(const QString &root, const QString &projectFile) {
         watcher_.removePaths(watcher_.directories());
     if (!watcher_.files().isEmpty())
         watcher_.removePaths(watcher_.files());
-    pollTimer_.start();
-    refresh();
+    pollTimer_.stop();
+    if (mode == OpenMode::IndexAndWatch) {
+        pollTimer_.start();
+        refresh();
+    }
 }
 
 void WorkspaceIndex::setExcludes(const QStringList &names) {

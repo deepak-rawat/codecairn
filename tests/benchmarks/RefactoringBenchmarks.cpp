@@ -1,6 +1,7 @@
 #include <codecairn/FileIO.h>
+#include <codecairn/Engine.h>
 #include "CodeEditor.h"
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 #include <codecairn/ReferenceSearch.h>
 #include "SourceDocument.h"
 #include "SymbolBrowser.h"
@@ -85,7 +86,10 @@ void RefactoringBenchmarks::symbolBrowserRendering() {
 }
 
 void RefactoringBenchmarks::editorByteRead() {
-    SourceDocument document("large.txt", QByteArray(1024 * 1024, 'x'), false, 10);
+    codecairn::Engine engine;
+    const auto source = engine.createDocument("large.txt", QByteArray(1024 * 1024, 'x'), false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
     QByteArray bytes;
     QBENCHMARK {
@@ -95,7 +99,10 @@ void RefactoringBenchmarks::editorByteRead() {
 }
 
 void RefactoringBenchmarks::cachedDocumentSnapshot() {
-    SourceDocument document("large.txt", QByteArray(1024 * 1024, 'x'), false, 10);
+    codecairn::Engine engine;
+    const auto source = engine.createDocument("large.txt", QByteArray(1024 * 1024, 'x'), false);
+    QVERIFY(source);
+    SourceDocument document(source.value(), &engine, 10);
     std::unique_ptr<CodeEditor> editor(document.editor);
     document.snapshotBytes();
     QByteArray bytes;

@@ -1,11 +1,12 @@
 #include <codecairn/FileIO.h>
-#include <codecairn/CoreSession.h>
-#include <codecairn/NavigationService.h>
-#include <codecairn/ReferenceSession.h>
+#include <codecairn/Engine.h>
+#include <codecairn/Project.h>
 #include "TestStorage.h"
 
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFutureWatcher>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
@@ -53,8 +54,26 @@ private slots:
     }
 
     void referenceDispatch() {
-        CoreSession core;
-        auto &session = core.references();
+        codecairn::Engine engine;
+        auto *project = engine.createProject();
+        QVERIFY(
+            project->open(prepareProject(directory_.path()),
+                          {codecairn::IndexStartup::Manual, codecairn::LanguageStartup::Manual}));
+        QSignalSpy analyzed(project, &codecairn::Project::analysisReady);
+        for (const auto &overlay : request_.overlays) {
+            const auto document = engine.createDocument(overlay.path, overlay.source);
+            QVERIFY(document);
+            project->analyze(document.value()->snapshot());
+        }
+        QTRY_COMPARE(analyzed.size(), request_.overlays.size());
+        codecairn::TextQuery query;
+        query.text = request_.query;
+        query.files.scope = codecairn::SearchScope::SelectedFiles;
+        query.files.selectedFiles = request_.paths;
+        query.pageSize = request_.limit;
+        query.wholeWords = request_.options.wholeWords;
+        query.comments = request_.options.comments;
+        query.strings = request_.options.strings;
         const auto run = [&](bool shared) {
             ReferenceResults result;
             QEventLoop loop;
@@ -64,18 +83,21 @@ private slots:
             timeout.start(30000);
             QElapsedTimer elapsed;
             QFutureWatcher<ReferenceResults> watcher;
-            const auto connection = connect(&session, &ReferenceSession::pageReady, &loop,
-                                            [&](quint64, const ReferenceResults &page, bool) {
-                                                result = page;
-                                                loop.quit();
-                                            });
+            const auto connection =
+                connect(project, &codecairn::Project::textMatchesReady, &loop,
+                        [&](codecairn::RequestId, const codecairn::SearchPage &page) {
+                            result.hits = page.hits;
+                            result.error = page.error;
+                            result.cancelled = page.cancelled;
+                            loop.quit();
+                        });
             connect(&watcher, &QFutureWatcher<ReferenceResults>::finished, &loop, [&] {
                 result = watcher.result();
                 loop.quit();
             });
             elapsed.start();
             if (shared)
-                session.start(request_, 1);
+                project->searchText(query);
             else
                 watcher.setFuture(QtConcurrent::run(searchReferences, request_,
                                                     std::make_shared<std::atomic_bool>(false)));
@@ -96,8 +118,7 @@ private slots:
     }
 
     void navigationRead() {
-        CoreSession core;
-        auto &navigation = core.navigation();
+        codecairn::Engine engine;
         const auto path = request_.paths.first();
         const auto bytes = request_.overlays.first().source;
         const NavigationLocation location{path, 4, 10, -1, sourceContentHash(bytes)};
@@ -107,14 +128,15 @@ private slots:
             timeout.setSingleShot(true);
             connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
             timeout.start(30000);
-            NavigationRead result;
+            codecairn::SourceRead result;
             QElapsedTimer elapsed;
             QFutureWatcher<FileContents> watcher;
-            const auto connection = connect(&navigation, &NavigationService::readReady, &loop,
-                                            [&](quint64, const NavigationRead &read) {
-                                                result = read;
-                                                loop.quit();
-                                            });
+            const auto connection =
+                connect(&engine, &codecairn::Engine::sourceReady, &loop,
+                        [&](codecairn::RequestId, const codecairn::SourceRead &read) {
+                            result = read;
+                            loop.quit();
+                        });
             connect(&watcher, &QFutureWatcher<FileContents>::finished, &loop, [&] {
                 result.file = watcher.result();
                 result.range = resolveNavigationTarget(location, result.file.bytes);
@@ -122,7 +144,7 @@ private slots:
             });
             elapsed.start();
             if (shared)
-                navigation.read(location, 1);
+                engine.readSource(location);
             else
                 watcher.setFuture(QtConcurrent::run([path] { return readSourceFile(path); }));
             loop.exec();

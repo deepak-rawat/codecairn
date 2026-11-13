@@ -1,6 +1,6 @@
 #include <codecairn/FileIO.h>
 #include "CompilerSymbolRecovery.h"
-#include <codecairn/WorkspaceIndex.h>
+#include <codecairn/Indexing.h>
 #include <codecairn/LanguageRegistry.h>
 #include <codecairn/NavigationHistory.h>
 #include <codecairn/ReferenceSearch.h>

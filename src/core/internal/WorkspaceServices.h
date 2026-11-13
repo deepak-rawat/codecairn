@@ -1,7 +1,7 @@
 #pragma once
 
-#include <codecairn/LanguageServerClient.h>
-#include <codecairn/WorkspaceIndex.h>
+#include "LanguageServerClient.h"
+#include "WorkspaceIndex.h"
 #include <codecairn/ProjectSession.h>
 #include <QHash>
 #include <QObject>
@@ -29,6 +29,7 @@ public:
     void restartLanguageServices(const QString &root, const QString &compilationDirectory,
                                  const QString &projectFile = {});
     void stopLanguageServices();
+    void closeDocument(const QString &path);
 
 signals:
     void projectAboutToChange();

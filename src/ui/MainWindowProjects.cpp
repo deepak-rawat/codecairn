@@ -50,15 +50,17 @@ void MainWindow::openWorkspace(const QString &root, const QString &projectFile) 
     }
     if (switching) {
         cancelReferenceSearch();
-        navigationService_->cancelLookups();
-        navigationService_->cancelRead();
+        project_->cancel(contextRequest_);
+        project_->cancel(hoverRequest_);
+        project_->cancel(jumpRequest_);
+        engine_->cancel(sourceReadRequest_);
     }
-    const ProjectOpenOptions startup{switching ? IndexStartup::Automatic : IndexStartup::Manual,
-                                     switching ? LanguageStartup::Automatic
-                                               : LanguageStartup::Manual};
-    const auto commitError = workspaceServices_->commitProject(prepared, startup);
-    if (!commitError.isEmpty()) {
-        reportError(commitError);
+    const codecairn::ProjectOptions startup{
+        switching ? codecairn::IndexStartup::Automatic : codecairn::IndexStartup::Manual,
+        switching ? codecairn::LanguageStartup::Automatic : codecairn::LanguageStartup::Manual};
+    const auto opened = project_->open(prepared, startup);
+    if (!opened) {
+        reportError(opened.error().message);
         return;
     }
     projectPath_ = rootPath;
@@ -73,8 +75,6 @@ void MainWindow::openWorkspace(const QString &root, const QString &projectFile) 
     if (switching) {
         ++navigationGeneration_;
         ++linkGeneration_;
-        navigationService_->cancelLookups();
-        navigationService_->cancelRead();
         cancelReferenceSearch();
         if (referencesDialog_)
             referencesDialog_->close();
@@ -98,7 +98,7 @@ void MainWindow::openWorkspace(const QString &root, const QString &projectFile) 
         restoreProjectSession();
     } else {
         readWorkspaceOptions();
-        workspaceIndex_->refresh();
+        project_->refreshIndex();
     }
     updateOpenSymbols();
 }
@@ -237,9 +237,9 @@ void MainWindow::offerIndexRecreation(const QString &error) {
         if (result != QMessageBox::Yes || root != projectPath_ || file != projectFile_)
             return;
         resetSymbolBrowser();
-        const auto failure = workspaceIndex_->recreateDatabase();
-        if (!failure.isEmpty())
-            reportError(failure);
+        const auto recreated = project_->recreateIndex();
+        if (!recreated)
+            reportError(recreated.error().message);
     });
     dialog->open();
 }

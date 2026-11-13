@@ -1,4 +1,4 @@
-#include <codecairn/LanguageServerClient.h>
+#include "LanguageServerClient.h"
 #include <codecairn/LanguageRegistry.h>
 #include <codecairn/WorkspacePaths.h>
 #include <codecairn/CompilationDatabase.h>

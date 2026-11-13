@@ -23,6 +23,7 @@
 #include <QHBoxLayout>
 #include <QMouseEvent>
 
+#include "WorkspaceIndex.h"
 namespace {
 QTreeWidgetItem *symbolItem(QTreeWidget *tree, const QString &name) {
     for (QTreeWidgetItemIterator it(tree); *it; ++it)

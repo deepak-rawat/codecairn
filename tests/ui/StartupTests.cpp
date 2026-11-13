@@ -27,6 +27,7 @@
 #include <QTreeView>
 #include <QtConcurrentRun>
 
+#include "WorkspaceIndex.h"
 class StartupTests : public QObject {
     Q_OBJECT
     TestStorage storage_;

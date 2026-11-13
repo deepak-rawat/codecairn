@@ -155,7 +155,9 @@ void outputDialog(QWidget *parent, const std::shared_ptr<SearchOutputOptions> &o
 }
 
 void MainWindow::cancelReferenceSearch() {
-    referenceSession_->cancel();
+    project_->cancel(referenceJob_);
+    referenceJob_ = {};
+    referenceCursor_ = {};
     const bool wasBusy =
         referenceSearchBusy_ || (replaceReferenceResults_ && !pendingReferenceGroups_.isEmpty());
     referenceSearchBusy_ = false;
@@ -479,7 +481,7 @@ void MainWindow::showReferenceResults(int index) {
 
 void MainWindow::updateReferenceMarkers() {
     for (const auto &doc : documents_) {
-        const auto identity = workspacePath(doc->path);
+        const auto identity = workspacePath(doc->path());
         QByteArray sourceHash;
         QSet<int> lines;
         for (const auto &hit : referenceHits_) {
@@ -594,7 +596,7 @@ void MainWindow::jumpReferenceLink() {
         return;
     const int position = static_cast<int>(doc->editor->send(SCI_GETSELECTIONSTART));
     const int line = static_cast<int>(doc->editor->send(SCI_LINEFROMPOSITION, position));
-    returnToReferenceResults(doc->path, line);
+    returnToReferenceResults(doc->path(), line);
 }
 
 void MainWindow::lookupSymbolReferences() {
@@ -629,12 +631,12 @@ void MainWindow::lookupSymbolReferences() {
         const auto *item = outline_->currentItem();
         if (doc && item && item->data(0, Qt::UserRole).isValid()) {
             const int index = item->data(0, Qt::UserRole).toInt();
-            if (doc->revision != doc->analyzedRevision || index < 0 ||
+            if (doc->revision() != doc->analyzedRevision || index < 0 ||
                 index >= doc->analysis.symbols.size()) {
                 reportError("Symbols are updating; retry after analysis finishes.");
                 return;
             }
-            lookupReferences(nullptr, false, doc->path, doc->analysis.symbols[index].nameStart);
+            lookupReferences(nullptr, false, doc->path(), doc->analysis.symbols[index].nameStart);
             return;
         }
     }
@@ -653,14 +655,14 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
     if (!path.isEmpty()) {
         auto *live = findDocument(path);
         const auto file =
-            live ? FileContents{snapshot(live), {}, live->hasUtf8Bom} : readSourceFile(path);
+            live ? FileContents{snapshot(live), {}, live->hasUtf8Bom()} : readSourceFile(path);
         if (!file.error.isEmpty()) {
             reportError(file.error);
             return;
         }
         bytes = file.bytes;
     } else if (editor && (doc || editor == contextPreviewEditor_)) {
-        path = editor == contextPreviewEditor_ ? contextPath_ : doc->path;
+        path = editor == contextPreviewEditor_ ? contextPath_ : doc->path();
         bytes = editor == contextPreviewEditor_ ? editor->bytes() : snapshot(doc);
         position = editor->lookupPosition();
     }
@@ -929,7 +931,7 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
         if (semantic) {
             auto *live = findDocument(path);
             const auto latest =
-                live ? FileContents{snapshot(live), {}, live->hasUtf8Bom} : readSourceFile(path);
+                live ? FileContents{snapshot(live), {}, live->hasUtf8Bom()} : readSourceFile(path);
             if (!latest.error.isEmpty() || latest.bytes != bytes) {
                 status->setText(
                     latest.error.isEmpty()
@@ -951,7 +953,7 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
             return;
         }
         cancelReferenceSearch();
-        const auto token = ++referenceToken_;
+        ++referenceToken_;
         referenceIdentifier_ = text;
         referenceOverlays_ = liveOverlays();
         if (auto *origin = findDocument(path);
@@ -959,24 +961,21 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
                                    [&](const auto &overlay) {
                                        return workspacePath(overlay.path) == workspacePath(path);
                                    }))
-            referenceOverlays_.append(
-                {path, snapshot(origin),
-                 origin->analyzedRevision == origin->revision ? origin->analysis : SourceAnalysis{},
-                 origin->snapshotHash});
+            referenceOverlays_.append({path, snapshot(origin),
+                                       origin->analyzedRevision == origin->revision()
+                                           ? origin->analysis
+                                           : SourceAnalysis{},
+                                       origin->snapshotHash()});
         referencesScope_ = scope->currentText();
-        ReferenceInputs inputs;
-        inputs.scope = scope->currentIndex() == 1   ? ReferenceScope::CurrentFile
-                       : scope->currentIndex() == 2 ? ReferenceScope::SelectedFiles
-                                                    : ReferenceScope::Project;
-        inputs.currentFile = path;
+        codecairn::SearchFiles searchFiles;
+        searchFiles.scope = scope->currentIndex() == 1   ? codecairn::SearchScope::CurrentFile
+                            : scope->currentIndex() == 2 ? codecairn::SearchScope::SelectedFiles
+                                                         : codecairn::SearchScope::ProjectFiles;
+        searchFiles.currentFile = path;
         for (const auto *item : fileList_->selectedItems())
-            inputs.selectedFiles.append(item->data(0, Qt::UserRole + 1).toString());
-        inputs.catalog = workspaceIndex_->files();
-        inputs.overlays = referenceOverlays_;
-        inputs.root = projectPath_;
-        inputs.options = projectOptions_;
-        inputs.filePatterns = options.filePatterns;
-        referencesFiles_ = resolveReferenceScope(inputs);
+            searchFiles.selectedFiles.append(item->data(0, Qt::UserRole + 1).toString());
+        searchFiles.patterns = options.filePatterns;
+        referencesFiles_ = project_->files(searchFiles);
         if (referencesFiles_.isEmpty()) {
             status->setText("No files in the selected scope and file types.");
             return;
@@ -1001,20 +1000,39 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
         referencesStatus_->setText("Searching for " + text + "...");
         dialog->hide();
         dialog->deleteLater();
-        std::optional<SemanticReferenceOrigin> origin;
         if (semantic) {
             auto *live = findDocument(path);
-            origin = SemanticReferenceOrigin{path,
-                                             bytes,
-                                             live ? static_cast<int>(live->revision) : 0,
-                                             position,
-                                             saved.declarations,
-                                             {}};
-            for (const auto &overlay : referenceOverlays_)
-                if (auto *document = findDocument(overlay.path))
-                    origin->versions.insert(overlay.path, static_cast<int>(document->revision));
+            codecairn::ReferenceQuery query;
+            query.symbol = {{path, bytes, sourceContentHash(bytes), live ? live->revision() : 0},
+                            position};
+            query.files = searchFiles;
+            query.includeDeclaration = saved.declarations;
+            query.skipInactive = options.skipInactive;
+            query.comments = options.comments;
+            query.strings = options.strings;
+            query.output = options.output;
+            referenceJob_ = project_->findReferences(query);
+        } else {
+            codecairn::TextQuery query;
+            query.text = text;
+            query.files = searchFiles;
+            query.method = options.method == SearchMethod::Literal ? codecairn::TextMatch::Literal
+                           : options.method == SearchMethod::RegularExpression
+                               ? codecairn::TextMatch::RegularExpression
+                           : options.method == SearchMethod::KeywordExpression
+                               ? codecairn::TextMatch::KeywordExpression
+                               : codecairn::TextMatch::WholeIdentifier;
+            query.caseSensitive = options.caseSensitive;
+            query.wholeWords = options.wholeWords;
+            query.comments = options.comments;
+            query.strings = options.strings;
+            query.skipInactive = options.skipInactive;
+            query.contextLines = options.contextLines;
+            query.variations = options.variations;
+            query.fragments = options.fragments;
+            query.output = options.output;
+            referenceJob_ = project_->searchText(query);
         }
-        referenceSession_->start(referenceRequest_, token, origin);
     });
     dialog->show();
     query->selectAll();
@@ -1024,12 +1042,12 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
 void MainWindow::continueReferenceSearch() {
     if (referenceSearchBusy_)
         return;
-    const auto token = ++referenceToken_;
+    ++referenceToken_;
     referenceSearchBusy_ = true;
     cancelReferenceAction_->setEnabled(true);
     moreReferencesAction_->setEnabled(false);
     referencesStatus_->setText("Searching for " + referenceIdentifier_ + "...");
-    referenceSession_->nextPage(token);
+    referenceJob_ = project_->continueSearch(referenceCursor_);
 }
 
 void MainWindow::displayReferenceHits(const ReferenceResults &results, bool semantic) {
@@ -1063,7 +1081,7 @@ void MainWindow::displayReferenceHits(const ReferenceResults &results, bool sema
     for (auto hit : results.hits) {
         if (auto *doc = findDocument(hit.location.path)) {
             snapshot(doc);
-            if (doc->snapshotHash != hit.location.expectedHash)
+            if (doc->snapshotHash() != hit.location.expectedHash)
                 hit.stale = true;
         }
         hit.linked = group.output.links;

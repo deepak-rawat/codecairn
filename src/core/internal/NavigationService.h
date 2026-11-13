@@ -1,7 +1,7 @@
 #pragma once
 
 #include <codecairn/NavigationTarget.h>
-#include <codecairn/WorkspaceServices.h>
+#include "WorkspaceServices.h"
 #include <QFutureWatcher>
 #include <QPointer>
 #include <functional>

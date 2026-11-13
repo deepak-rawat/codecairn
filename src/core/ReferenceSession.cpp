@@ -1,4 +1,4 @@
-#include <codecairn/ReferenceSession.h>
+#include "ReferenceSession.h"
 #include <codecairn/FileIO.h>
 #include <codecairn/Diagnostics.h>
 
@@ -6,24 +6,6 @@
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QtConcurrentRun>
-
-QVector<SymbolOverlay> captureDocumentOverlays(const QVector<OpenSource> &documents,
-                                               const QString &root,
-                                               const WorkspaceOptions &options) {
-    QVector<SymbolOverlay> overlays;
-    for (const auto &open : documents) {
-        auto *doc = open.document;
-        if (!root.isEmpty() && !projectIncludesPath(root, doc->path, options))
-            continue;
-        if (doc->analyzedRevision != doc->revision && !open.modified)
-            continue;
-        const auto &bytes = doc->snapshotBytes();
-        overlays.append({doc->path, bytes,
-                         doc->analyzedRevision == doc->revision ? doc->analysis : SourceAnalysis{},
-                         doc->snapshotHash});
-    }
-    return overlays;
-}
 
 QStringList resolveReferenceScope(const ReferenceInputs &inputs) {
     QStringList paths;
@@ -89,6 +71,19 @@ void ReferenceSession::cancel() {
     service_.clear();
     if (cancelled_)
         cancelled_->store(true);
+}
+
+void ReferenceSession::retire() {
+    cancel();
+    const auto releaseWhenIdle = [this] {
+        for (auto *watcher : findChildren<QFutureWatcherBase *>())
+            if (watcher->isRunning())
+                return;
+        deleteLater();
+    };
+    for (auto *watcher : findChildren<QFutureWatcherBase *>())
+        connect(watcher, &QFutureWatcherBase::finished, this, releaseWhenIdle);
+    releaseWhenIdle();
 }
 
 void ReferenceSession::fail(quint64 token, const QString &error) {

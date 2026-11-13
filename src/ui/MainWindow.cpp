@@ -170,20 +170,18 @@ MainWindow::~MainWindow() {
         disconnect(object, nullptr, this, nullptr);
     for (auto *timer : findChildren<QTimer *>())
         timer->stop();
-    referenceSession_->cancel();
-    workspaceIndex_->cancel();
-    workspaceIndex_->invalidateSearch();
+    project_->cancel(referenceJob_);
+    project_->cancelIndexing();
+    project_->cancelSymbolQuery();
     const auto watchers = findChildren<QFutureWatcherBase *>();
     for (auto *watcher : watchers)
         disconnect(watcher, nullptr, nullptr, nullptr);
-    workspaceServices_->stopLanguageServices();
     for (auto *watcher : watchers)
         watcher->waitForFinished();
-    delete coreSession_;
-    coreSession_ = nullptr;
-    workspaceServices_ = nullptr;
-    workspaceIndex_ = nullptr;
-    cppLanguageService_ = nullptr;
+    documents_.clear();
+    delete engine_;
+    engine_ = nullptr;
+    project_ = nullptr;
 }
 
 MainWindow::Document *MainWindow::currentDocument() const {
@@ -197,9 +195,9 @@ MainWindow::Document *MainWindow::findDocument(const QString &path) const {
     const auto key = pathIdentity(path);
     for (const auto &doc : documents_) {
 #ifdef Q_OS_WIN
-        if (doc->path.compare(key, Qt::CaseInsensitive) == 0)
+        if (doc->path().compare(key, Qt::CaseInsensitive) == 0)
 #else
-        if (doc->path == key)
+        if (doc->path() == key)
 #endif
             return doc.get();
     }
@@ -294,13 +292,18 @@ void MainWindow::openStartupPaths(const QStringList &paths, bool noProject) {
 
 void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool bom, bool focus,
                              bool preview, int index) {
-    auto document =
-        std::make_unique<Document>(path, bytes, bom, configuration_.behavior.parseDebounceMs, this);
+    const auto source = engine_->createDocument(path, bytes, bom);
+    if (!source) {
+        reportError(source.error().message);
+        return;
+    }
+    auto document = std::make_unique<Document>(source.value(), engine_,
+                                               configuration_.behavior.parseDebounceMs, this);
     auto *doc = document.get();
     doc->isPreview = preview;
     connect(doc->editor, &CodeEditor::rangeEdited, this,
             [this, doc](int position, int removed, int inserted, const QByteArray &beforeHash) {
-                trackReferenceEdit(doc->path, position, removed, inserted, beforeHash,
+                trackReferenceEdit(doc->path(), position, removed, inserted, beforeHash,
                                    doc->editor->bytes());
             });
     connect(doc->editor, &CodeEditor::contentEdited, this, [this, doc] {
@@ -342,7 +345,7 @@ void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool 
     connect(doc->editor, &CodeEditor::referencesRequested, this,
             [this, doc] { lookupReferences(doc->editor); });
     connect(doc->editor, &CodeEditor::referenceLineClicked, this,
-            [this, doc](int line) { returnToReferenceResults(doc->path, line); });
+            [this, doc](int line) { returnToReferenceResults(doc->path(), line); });
     connect(doc->editor, &CodeEditor::historyRequested, this, &MainWindow::navigateHistory);
     connect(doc->editor, &ScintillaEditBase::focusChanged, this, [this, doc](bool focused) {
         if (focused && doc == currentDocument()) {
@@ -370,13 +373,11 @@ void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool 
             reportError(doc->analysis.error);
         else
             doc->editor->applyStyles(doc->analysis.styles);
-        if (!contextFollowsEditor_ && contextPath_ == doc->path && doc->analysis.error.isEmpty() &&
-            contextPreviewEditor_->bytes() == snapshot(doc) &&
+        if (!contextFollowsEditor_ && contextPath_ == doc->path() &&
+            doc->analysis.error.isEmpty() && contextPreviewEditor_->bytes() == snapshot(doc) &&
             doc->analysis.styles.size() == contextPreviewEditor_->bytes().size())
             contextPreviewEditor_->applyStyles(doc->analysis.styles);
-        if (auto *service = languageService(doc->path, snapshot(doc)))
-            service->syncDocument(doc->path, snapshot(doc), static_cast<int>(doc->revision),
-                                  languageById(doc->analysis.language).lspId);
+        project_->synchronizeDocument(doc->source()->snapshot());
         if (doc == currentDocument()) {
             updateOutline();
             updateContext();
@@ -399,9 +400,7 @@ void MainWindow::addDocument(const QString &path, const QByteArray &bytes, bool 
 }
 
 void MainWindow::startAnalysis(Document *doc) {
-    doc->setCompilationDirectory(projectContains(doc->path)
-                                     ? workspaceClangdDirectory(projectPath_, projectFile_)
-                                     : QString{});
+    doc->setProject(project_);
     doc->startAnalysis();
 }
 
@@ -436,10 +435,10 @@ void MainWindow::updateOutline() {
         outlineState_->setText("Open a source file");
         return;
     }
-    outlineTitle_->setText(QFileInfo(doc->path).fileName() +
+    outlineTitle_->setText(QFileInfo(doc->path()).fileName() +
                            (doc->editor->isModified() ? " *" : ""));
-    if (doc->revision != doc->analyzedRevision || doc->isAnalysisRunning()) {
-        if (outlineDocument_ != doc->path)
+    if (doc->revision() != doc->analyzedRevision || doc->isAnalysisRunning()) {
+        if (outlineDocument_ != doc->path())
             outline_->clear();
         outlineState_->setText("Parsing unsaved buffer...");
         outline_->setToolTip(outlineState_->text());
@@ -451,7 +450,7 @@ void MainWindow::updateOutline() {
     }
     updatingOutline_ = true;
     outline_->clear();
-    outlineDocument_ = doc->path;
+    outlineDocument_ = doc->path();
     QVector<QTreeWidgetItem *> items;
     QHash<QString, int> duplicates;
     for (int i = 0; i < doc->analysis.symbols.size(); ++i) {
@@ -508,7 +507,7 @@ void MainWindow::syncOutlineToEditor(bool clearWhenOutside) {
     if (!doc || showingReferenceOutline_ || outline_->hasFocus() || outlineFilter_->hasFocus())
         return;
     doc->outlineSelectionPending = doc->outlineSelectionPending || clearWhenOutside;
-    if (outlineDocument_ != doc->path || doc->revision != doc->analyzedRevision ||
+    if (outlineDocument_ != doc->path() || doc->revision() != doc->analyzedRevision ||
         doc->isAnalysisRunning() || !doc->analysis.error.isEmpty())
         return;
     clearWhenOutside = doc->outlineSelectionPending;
@@ -661,16 +660,14 @@ void MainWindow::filterOutline() {
 }
 
 void MainWindow::updateOpenSymbols() {
-    SymbolQuery query;
-    query.projectFile = projectFile_;
+    codecairn::SymbolQuery query;
     query.text = symbolFilter_->text();
     query.category = category_;
-    query.overlays = liveOverlays();
-    query.limit = 4097;
+    query.pageSize = 4097;
     query.includeCategorySymbols = true;
-    query.categoryLimit = 4097;
+    query.categoryPageSize = 4097;
     query.anchor = selectedProjectSymbol_;
-    workspaceIndex_->search(query);
+    project_->findSymbols(query);
 }
 
 void MainWindow::filterSymbols() {
@@ -679,7 +676,7 @@ void MainWindow::filterSymbols() {
     symbolFilterPending_ = true;
     symbolScope_->setText("Searching...");
     symbolNavigationAfterFilter_.reset();
-    workspaceIndex_->invalidateSearch();
+    project_->cancelSymbolQuery();
     symbolQueryTimer_->start(configuration_.behavior.searchDebounceMs);
 }
 
@@ -693,26 +690,26 @@ void MainWindow::selectCategory(const QString &kind) {
 
 void MainWindow::previewSymbol(int index) {
     auto *doc = currentDocument();
-    if (pinContextAction_->isChecked() || !doc || doc->revision != doc->analyzedRevision ||
+    if (pinContextAction_->isChecked() || !doc || doc->revision() != doc->analyzedRevision ||
         index < 0 || index >= doc->analysis.symbols.size())
         return;
     contextTimer_->stop();
     contextFollowsEditor_ = false;
     const auto &symbol = doc->analysis.symbols[index];
-    if (symbol.kind == "Include" && !doc->path.startsWith(":/")) {
+    if (symbol.kind == "Include" && !doc->path().startsWith(":/")) {
         const auto source = doc->editor->bytes();
         const auto text = source.mid(symbol.start, symbol.end - symbol.start);
         auto delimiter = text.indexOf('"');
         if (delimiter < 0)
             delimiter = text.indexOf('<');
         if (delimiter >= 0) {
-            resolveDefinition(doc->path, source, static_cast<int>(doc->revision),
+            resolveDefinition(doc->path(), source, static_cast<int>(doc->revision()),
                               symbol.start + static_cast<int>(delimiter) + 1);
             return;
         }
     }
-    contextPath_ = doc->path;
-    showContext(symbol.name + "   " + symbol.kind + " in " + QFileInfo(doc->path).fileName() +
+    contextPath_ = doc->path();
+    showContext(symbol.name + "   " + symbol.kind + " in " + QFileInfo(doc->path()).fileName() +
                     " at line " + QString::number(symbol.line + 1),
                 doc->editor->bytes(), doc->analysis, symbol.start, symbol.end);
 }
@@ -735,13 +732,13 @@ void MainWindow::updateContext() {
         return;
     }
     const int position = doc->editor->lookupPosition();
-    if (doc->analyzedRevision == doc->revision) {
+    if (doc->analyzedRevision == doc->revision()) {
         if (configuration_.context.tracking == "enclosing") {
             for (int i = static_cast<int>(doc->analysis.symbols.size()) - 1; i >= 0; --i) {
                 const auto &symbol = doc->analysis.symbols[i];
                 if (symbol.kind == "Function" && symbol.start <= position &&
                     symbol.end >= position) {
-                    contextPath_ = doc->path;
+                    contextPath_ = doc->path();
                     showContext(symbol.name + " - enclosing function", snapshot(doc), doc->analysis,
                                 symbol.start, symbol.end);
                     return;
@@ -755,7 +752,7 @@ void MainWindow::updateContext() {
                 return;
         }
     }
-    resolveDefinition(doc->path, snapshot(doc), static_cast<int>(doc->revision), position);
+    resolveDefinition(doc->path(), snapshot(doc), static_cast<int>(doc->revision()), position);
 }
 
 void MainWindow::showContext(const QString &title, const QByteArray &bytes,
@@ -853,9 +850,9 @@ void MainWindow::previewFile(const QString &path) {
     openAfterPreview_ = false;
     definitionChoices_->hide();
     if (auto *doc = findDocument(path)) {
-        contextPath_ = doc->path;
+        contextPath_ = doc->path();
         showContext(QFileInfo(path).fileName() + " - live buffer", doc->editor->bytes(),
-                    doc->analyzedRevision == doc->revision ? doc->analysis : SourceAnalysis{}, 0,
+                    doc->analyzedRevision == doc->revision() ? doc->analysis : SourceAnalysis{}, 0,
                     0);
         return;
     }
@@ -942,7 +939,7 @@ void MainWindow::startDiskPreview() {
                     contextTitle_->setText(result.error);
                     reportError(result.error);
                     if (hasTarget)
-                        workspaceIndex_->refresh();
+                        project_->refreshIndex();
                 }
             }
             startDiskPreview();
@@ -1057,7 +1054,7 @@ bool MainWindow::saveCurrent(bool saveAs) {
     auto *doc = currentDocument();
     if (!doc)
         return false;
-    QString path = doc->path;
+    QString path = doc->path();
     if (saveAs || path.startsWith(":/")) {
         path = QFileDialog::getSaveFileName(this, "Save source file", QFileInfo(path).fileName());
         if (path.isEmpty())
@@ -1069,10 +1066,10 @@ bool MainWindow::saveCurrent(bool saveAs) {
             return false;
         }
     }
-    if (pathIdentity(path) == doc->path && !path.startsWith(":/")) {
+    if (pathIdentity(path) == doc->path() && !path.startsWith(":/")) {
         const auto current = readSourceFile(path);
-        if (!current.error.isEmpty() || current.bytes != doc->savedBytes ||
-            current.utf8Bom != doc->hasUtf8Bom) {
+        if (!current.error.isEmpty() || current.bytes != doc->savedBytes() ||
+            current.utf8Bom != doc->hasUtf8Bom()) {
             qWarning().noquote() << "file.save_conflict path=" << path
                                  << "reason=Disk contents changed or are unreadable.";
             if (QMessageBox::warning(
@@ -1084,23 +1081,24 @@ bool MainWindow::saveCurrent(bool saveAs) {
         }
     }
     const auto bytes = doc->editor->bytes();
-    const auto error = writeSourceFile(path, bytes, doc->hasUtf8Bom);
+    const auto error = writeSourceFile(path, bytes, doc->hasUtf8Bom());
     if (!error.isEmpty()) {
         QMessageBox::warning(this, "Cannot save file", error);
         return false;
     }
-    const bool pathChanged = doc->path != pathIdentity(path);
-    if (pathIdentity(path) != doc->path)
-        cppLanguageService_->closeDocument(doc->path);
-    doc->path = pathIdentity(path);
-    doc->setSavedContents(bytes, doc->hasUtf8Bom);
+    const bool pathChanged = doc->path() != pathIdentity(path);
+    const auto renamed = engine_->renameDocument(doc->source(), pathIdentity(path));
+    if (!renamed) {
+        reportError(renamed.error().message);
+        return false;
+    }
+    doc->setSavedContents(bytes, doc->hasUtf8Bom());
     doc->editor->markSaved();
     updateTab(doc);
     if (pathChanged) {
-        ++doc->revision;
         startAnalysis(doc);
     }
-    workspaceIndex_->refresh();
+    project_->refreshIndex();
     statusBar()->showMessage("Saved " + QDir::toNativeSeparators(path), 5000);
     return true;
 }
@@ -1108,19 +1106,19 @@ bool MainWindow::saveCurrent(bool saveAs) {
 void MainWindow::updateTab(Document *doc) {
     const int index = documentsTabs_->indexOf(doc->editor);
     if (index >= 0) {
-        documentsTabs_->setTabText(index, QFileInfo(doc->path).fileName() +
+        documentsTabs_->setTabText(index, QFileInfo(doc->path()).fileName() +
                                               (doc->editor->isModified() ? " *" : ""));
-        documentsTabs_->setTabToolTip(index, doc->path);
-        documentBar_->setTabText(index, QFileInfo(doc->path).fileName() +
+        documentsTabs_->setTabToolTip(index, doc->path());
+        documentBar_->setTabText(index, QFileInfo(doc->path()).fileName() +
                                             (doc->editor->isModified() ? " *" : ""));
         documentBar_->setTabToolTip(
             index,
-            doc->path + (doc->isPreview ? "\nPreview - double-click or edit to keep open" : ""));
+            doc->path() + (doc->isPreview ? "\nPreview - double-click or edit to keep open" : ""));
         documentBar_->setTabTextColor(index, doc->isPreview
                                                  ? configuration_.color("source.lineNumbers")
                                                  : configuration_.color("ui.tabForeground"));
         if (doc == currentDocument())
-            outlineTitle_->setText(QFileInfo(doc->path).fileName() +
+            outlineTitle_->setText(QFileInfo(doc->path()).fileName() +
                                    (doc->editor->isModified() ? " *" : ""));
     }
 }
@@ -1130,7 +1128,7 @@ bool MainWindow::confirmClose(Document *doc) {
         return true;
     documentsTabs_->setCurrentWidget(doc->editor);
     const auto answer = QMessageBox::question(
-        this, "Unsaved changes", "Save changes to " + QFileInfo(doc->path).fileName() + "?",
+        this, "Unsaved changes", "Save changes to " + QFileInfo(doc->path()).fileName() + "?",
         QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
     return answer == QMessageBox::Discard || (answer == QMessageBox::Save && saveCurrent());
 }
@@ -1179,7 +1177,6 @@ void MainWindow::closeTab(int index, bool confirm) {
     if (it == documents_.end() || (confirm && !confirmClose(it->get())))
         return;
     rememberOutline();
-    cppLanguageService_->closeDocument((*it)->path);
     disconnect(widget, nullptr, this, nullptr);
     (*it)->stopBackgroundWork();
     {
@@ -1193,7 +1190,11 @@ void MainWindow::closeTab(int index, bool confirm) {
     for (auto *watcher : watchers)
         watcher->waitForFinished();
     delete widget;
+    auto *source = (*it)->source();
     documents_.erase(it);
+    const auto closed = engine_->closeDocument(source);
+    if (!closed)
+        reportError(closed.error().message);
     documentBar_->setCurrentIndex(documentsTabs_->currentIndex());
     updateOpenSymbols();
     updateContext();

@@ -1,7 +1,6 @@
 #pragma once
 
-#include <codecairn/IndexTypes.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Indexing.h>
 #include <QFileSystemWatcher>
 #include <QElapsedTimer>
 #include <QFutureWatcher>
@@ -12,25 +11,14 @@
 #include <atomic>
 #include <memory>
 
-enum class IndexRefresh {
-    DiscoverChanges,
-    ReparseKnownFiles,
-    RebuildFilesAndSymbols,
-    CheckKnownFiles
-};
-
-IndexResult buildWorkspaceIndex(const QString &root, IndexRefresh mode, const QStringList &excludes,
-                                const std::shared_ptr<std::atomic_bool> &cancel,
-                                const std::shared_ptr<IndexProgress> &progress = {},
-                                const QString &projectFile = {});
-SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query);
-
 class WorkspaceIndex final : public QObject {
     Q_OBJECT
 public:
+    enum class OpenMode { IndexAndWatch, QueryOnly };
     explicit WorkspaceIndex(QObject *parent = nullptr);
     ~WorkspaceIndex() override;
-    void open(const QString &root, const QString &projectFile = {});
+    void open(const QString &root, const QString &projectFile = {},
+              OpenMode mode = OpenMode::IndexAndWatch);
     void close();
     void refresh(IndexRefresh mode = IndexRefresh::DiscoverChanges);
     void cancel();

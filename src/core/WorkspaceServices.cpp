@@ -1,4 +1,4 @@
-#include <codecairn/WorkspaceServices.h>
+#include "WorkspaceServices.h"
 #include <codecairn/LanguageRegistry.h>
 #include <codecairn/Diagnostics.h>
 #include <QFileInfo>
@@ -31,8 +31,11 @@ QString WorkspaceServices::commitProject(const PreparedProject &project,
             stopLanguageServices();
     }
     project_ = project;
-    if (options.indexing == IndexStartup::Automatic)
-        index_->open(project.root, project.projectFile);
+    if (switching || options.indexing == IndexStartup::Automatic)
+        index_->open(project.root, project.projectFile,
+                     options.indexing == IndexStartup::Automatic
+                         ? WorkspaceIndex::OpenMode::IndexAndWatch
+                         : WorkspaceIndex::OpenMode::QueryOnly);
     if (options.languages == LanguageStartup::Automatic)
         restartLanguageServices(project.root, project.options.compilationDirectory,
                                 project.projectFile);
@@ -90,4 +93,10 @@ void WorkspaceServices::stopLanguageServices() {
     cppService_->stop();
     for (auto *service : std::as_const(languageServices_))
         service->stop();
+}
+
+void WorkspaceServices::closeDocument(const QString &path) {
+    cppService_->closeDocument(path);
+    for (auto *service : std::as_const(languageServices_))
+        service->closeDocument(path);
 }

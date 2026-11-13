@@ -85,7 +85,7 @@ void MainWindow::applyConfiguration() {
     contextTimer_->setInterval(configuration_.behavior.contextDebounceMs);
     hoverTimer_->setInterval(configuration_.behavior.contextDebounceMs);
     symbolQueryTimer_->setInterval(configuration_.behavior.searchDebounceMs);
-    workspaceIndex_->setRefreshIntervalMinutes(configuration_.behavior.workspaceRefreshMinutes);
+    project_->setRefreshIntervalMinutes(configuration_.behavior.workspaceRefreshMinutes);
     syncConfigurationControls();
     applyPanelConfiguration();
     setUpdatesEnabled(true);

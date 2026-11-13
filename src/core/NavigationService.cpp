@@ -1,4 +1,4 @@
-#include <codecairn/NavigationService.h>
+#include "NavigationService.h"
 #include "DefinitionResolver.h"
 #include <codecairn/Diagnostics.h>
 
@@ -40,6 +40,8 @@ bool NavigationService::fresh(const DefinitionRequest &request) const {
 void NavigationService::cancelLookup(const QString &channel) {
     const auto previous = lookups_.take(channel);
     disconnect(previous.connection);
+    if (auto *resolver = resolvers_.take(channel))
+        resolver->discard();
     if (previous.service && !previous.request.context)
         previous.service->cancelLocations(channel);
 }
@@ -189,6 +191,8 @@ void NavigationService::complete(const QString &channel, quint64 generation,
     const auto lookup = *it;
     disconnect(lookup.connection);
     lookups_.remove(channel);
+    if (auto *resolver = resolvers_.take(channel))
+        resolver->discard();
     if (!fresh(lookup.request)) {
         result = {};
         result.error = "Source changed during lookup; select the symbol again.";
