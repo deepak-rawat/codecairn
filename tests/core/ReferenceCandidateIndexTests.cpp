@@ -18,23 +18,23 @@ namespace {
 class Fixture {
 public:
     Fixture() {
-        root = workspacePath(QDir::current().absoluteFilePath(
+        root = canonicalPath(QDir::current().absoluteFilePath(
             "reference-candidates-" + QUuid::createUuid().toString(QUuid::WithoutBraces)));
         if (!QDir().mkpath(root))
             qFatal("Cannot create reference candidate fixture");
     }
     ~Fixture() { QDir(root).removeRecursively(); }
-    QString path(const QString &name) const { return workspacePath(QDir(root).filePath(name)); }
+    QString path(const QString &name) const { return canonicalPath(QDir(root).filePath(name)); }
     void write(const QString &name, const QByteArray &bytes) const {
         QFile file(path(name));
         if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size())
             qFatal("Cannot write reference candidate fixture");
     }
-    IndexResult build(bool force = false) const {
-        const auto mode =
-            force ? IndexRefresh::RebuildFilesAndSymbols : IndexRefresh::DiscoverChanges;
-        return buildWorkspaceIndex(root, mode, defaultWorkspaceExcludes(),
-                                   std::make_shared<std::atomic_bool>(false));
+    codecairn::IndexResult build(bool force = false) const {
+        const auto mode = force ? codecairn::IndexUpdate::RebuildFilesAndSymbols
+                                : codecairn::IndexUpdate::DiscoverChanges;
+        return buildProjectIndex(root, mode, defaultExcludedDirectories(),
+                                 std::make_shared<std::atomic_bool>(false));
     }
     QString root;
 };
@@ -147,7 +147,7 @@ void ReferenceCandidateIndexTests::pathAliasesPreserveFilteringAndOrder() {
     const auto result = referenceCandidateFiles(alias, paths, "Needle", true);
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     QCOMPARE(result.files, (QStringList{paths[0], paths[2]}));
-    QVERIFY(result.sourceHashes.contains(workspacePath(paths[1])));
+    QVERIFY(result.sourceHashes.contains(canonicalPath(paths[1])));
 #endif
 }
 
@@ -159,7 +159,7 @@ void ReferenceCandidateIndexTests::freshnessUsesContentsNotMetadata() {
     const QStringList paths{fixture.path("a.cpp")};
     auto result = referenceCandidateFiles(fixture.root, paths, "Needle", true);
     QCOMPARE(result.files, QStringList{});
-    QCOMPARE(result.sourceHashes.value(workspacePath(paths[0])),
+    QCOMPARE(result.sourceHashes.value(canonicalPath(paths[0])),
              QCryptographicHash::hash("// absent\n", QCryptographicHash::Sha256).toHex());
     const auto originalTime = QFileInfo(paths[0]).lastModified();
     fixture.write("a.cpp", "// Needle\n");
@@ -170,7 +170,7 @@ void ReferenceCandidateIndexTests::freshnessUsesContentsNotMetadata() {
     QCOMPARE(QFileInfo(paths[0]).lastModified(), originalTime);
     result = referenceCandidateFiles(fixture.root, paths, "Needle", true);
     QCOMPARE(result.files, paths);
-    QCOMPARE(result.sourceHashes.value(workspacePath(paths[0])),
+    QCOMPARE(result.sourceHashes.value(canonicalPath(paths[0])),
              QCryptographicHash::hash("// Needle\n", QCryptographicHash::Sha256).toHex());
     fixture.write("new.cpp", "// Needle\n");
     const QStringList newPaths{paths[0], fixture.path("new.cpp")};
@@ -181,7 +181,7 @@ void ReferenceCandidateIndexTests::freshnessUsesContentsNotMetadata() {
     fixture.write("a.cpp", utf8);
     result = referenceCandidateFiles(fixture.root, paths, "Needle", true);
     QCOMPARE(result.files, paths);
-    QCOMPARE(result.sourceHashes.value(workspacePath(paths[0])),
+    QCOMPARE(result.sourceHashes.value(canonicalPath(paths[0])),
              QCryptographicHash::hash(utf8, QCryptographicHash::Sha256).toHex());
     fixture.write("a.cpp", QByteArray("\xff", 1));
     result = referenceCandidateFiles(fixture.root, paths, "Needle", true);
@@ -213,7 +213,7 @@ void ReferenceCandidateIndexTests::incrementalRefreshAndDeletion() {
     QVERIFY(QFile::remove(paths[0]));
     built = fixture.build();
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
-    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
+    ProjectIndexStore database(projectIndexPath(fixture.root), false);
     IndexStatement count(database,
                          "SELECT (SELECT count(*) FROM reference_occurrence_files WHERE path=?) + "
                          "(SELECT count(*) FROM reference_occurrences WHERE path=?)");
@@ -227,9 +227,9 @@ void ReferenceCandidateIndexTests::initialSchemaIsNotVisibleUntilCommit() {
     Fixture fixture;
     fixture.write("a.cpp", "int other;\n");
     const QStringList paths{fixture.path("a.cpp")};
-    QVERIFY(QDir().mkpath(QFileInfo(workspaceDatabase(fixture.root)).absolutePath()));
+    QVERIFY(QDir().mkpath(QFileInfo(projectIndexPath(fixture.root)).absolutePath()));
     {
-        ProjectIndexStore writer(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore writer(projectIndexPath(fixture.root), true);
         writer.exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;"
                     "CREATE TABLE files(path TEXT PRIMARY KEY);");
         const auto pending = referenceCandidateFiles(fixture.root, paths, "Needle", true);
@@ -261,7 +261,7 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     auto built = fixture.build();
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.exec("UPDATE reference_occurrence_files SET version=0;");
     }
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
@@ -270,7 +270,7 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     QVERIFY(built.reused > 0);
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, QStringList{});
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.exec("PRAGMA foreign_keys=ON; DELETE FROM reference_occurrence_files;");
     }
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
@@ -278,7 +278,7 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, QStringList{});
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.exec("DROP TABLE reference_occurrences; DROP TABLE reference_occurrence_files;");
     }
     auto result = referenceCandidateFiles(fixture.root, paths, "Needle", true);
@@ -286,7 +286,7 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     QCOMPARE(result.files, paths);
     built = fixture.build();
     QVERIFY(built.error.contains("no such table"));
-    QVERIFY(queryWorkspaceSymbols(fixture.root, {}).error.contains("no such table"));
+    QVERIFY(queryProjectSymbols(fixture.root, {}).error.contains("no such table"));
 }
 
 void ReferenceCandidateIndexTests::unsupportedAndUnreadableContent() {
@@ -315,7 +315,7 @@ void ReferenceCandidateIndexTests::unsupportedAndUnreadableContent() {
     const auto refreshed = fixture.build();
     QVERIFY2(refreshed.error.isEmpty(), qPrintable(refreshed.error));
     QCOMPARE(referenceCandidateFiles(fixture.root, empty, "Needle", true).files, empty);
-    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
+    ProjectIndexStore database(projectIndexPath(fixture.root), false);
     IndexStatement invalidated(database,
                                "SELECT count(*) FROM reference_occurrence_files WHERE path=?");
     invalidated.bind(1, empty[0]);
@@ -348,13 +348,14 @@ void ReferenceCandidateIndexTests::cancellationAndAtomicRefresh() {
     QVERIFY(result.cancelled);
     QCOMPARE(result.files, paths);
     fixture.write("a.cpp", "// Needle\n");
-    const auto cancelledBuild = buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges,
-                                                    defaultWorkspaceExcludes(), cancel);
+    const auto cancelledBuild =
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges,
+                          defaultExcludedDirectories(), cancel);
     QVERIFY(cancelledBuild.cancelled);
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
     cancel->store(false);
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.exec("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;");
         updateReferenceOccurrences(database, paths[0], "// Needle\n", "uncommitted", cancel);
         // A concurrent reader sees the old, complete snapshot, not half-written postings.
@@ -362,7 +363,7 @@ void ReferenceCandidateIndexTests::cancellationAndAtomicRefresh() {
         // Closing without COMMIT must roll back the postings and their completeness marker.
     }
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), false);
+        ProjectIndexStore database(projectIndexPath(fixture.root), false);
         IndexStatement posting(database, "SELECT count(*) FROM reference_occurrences "
                                          "WHERE identifier='Needle'");
         QVERIFY(posting.next());
@@ -375,13 +376,13 @@ void ReferenceCandidateIndexTests::symbolsCommitBeforeReferenceAcceleration() {
     fixture.write("a.cpp", "int Needle();\n");
     const QStringList paths{fixture.path("a.cpp")};
     const auto cancel = std::make_shared<std::atomic_bool>(false);
-    const auto progress = std::make_shared<IndexProgress>();
+    const auto progress = std::make_shared<codecairn::IndexProgress>();
     progress->batchReady = [&] {
-        const auto symbols = queryWorkspaceSymbols(fixture.root, {});
+        const auto symbols = queryProjectSymbols(fixture.root, {});
         QVERIFY2(symbols.error.isEmpty(), qPrintable(symbols.error));
         QCOMPARE(symbols.total, 1);
         QCOMPARE(symbols.symbols.first().symbol.name, "Needle");
-        ProjectIndexStore database(workspaceDatabase(fixture.root), false);
+        ProjectIndexStore database(projectIndexPath(fixture.root), false);
         IndexStatement count(database, "SELECT count(*) FROM reference_occurrence_files");
         QVERIFY(count.next());
         QCOMPARE(count.integer(0), 0);
@@ -389,8 +390,8 @@ void ReferenceCandidateIndexTests::symbolsCommitBeforeReferenceAcceleration() {
         QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
         cancel->store(true);
     };
-    const auto stopped = buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges,
-                                             defaultWorkspaceExcludes(), cancel, progress);
+    const auto stopped = buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges,
+                                           defaultExcludedDirectories(), cancel, progress);
     QVERIFY2(stopped.error.isEmpty(), qPrintable(stopped.error));
     QVERIFY(stopped.cancelled);
     QCOMPARE(stopped.parsed, 1);

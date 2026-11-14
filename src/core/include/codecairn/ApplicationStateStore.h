@@ -1,8 +1,8 @@
 #pragma once
 
-#include <codecairn/NavigationHistory.h>
+#include <codecairn/SourceLocation.h>
 #include <codecairn/ReferenceSearch.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QHash>
 #include <QJsonObject>
 #include <QString>
@@ -25,7 +25,7 @@ struct ApplicationState {
 };
 
 struct WorkspaceSession {
-    QVector<NavigationLocation> files;
+    QVector<codecairn::SourceLocation> files;
     QString activeFile;
     QVector<ReferenceGroup> references;
 };

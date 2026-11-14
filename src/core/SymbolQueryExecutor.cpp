@@ -2,7 +2,7 @@
 #include <codecairn/Diagnostics.h>
 #include <codecairn/FileIO.h>
 #include "ProjectIndexStore.h"
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -22,8 +22,8 @@ namespace {
 constexpr const char *ValidSymbol =
     "name IS NOT NULL AND name<>'' AND name_end>name_start AND end>start";
 
-IndexedSymbol readSymbol(IndexStatement &rows) {
-    IndexedSymbol entry;
+codecairn::IndexedSymbol readSymbol(IndexStatement &rows) {
+    codecairn::IndexedSymbol entry;
     entry.path = rows.text(0);
     entry.hash = rows.text(1).toLatin1();
     auto &s = entry.symbol;
@@ -43,14 +43,15 @@ IndexedSymbol readSymbol(IndexStatement &rows) {
     return entry;
 }
 
-bool ordered(const IndexedSymbol &a, const IndexedSymbol &b) {
+bool ordered(const codecairn::IndexedSymbol &a, const codecairn::IndexedSymbol &b) {
     return std::tie(a.symbol.name, a.path, a.symbol.start) <
            std::tie(b.symbol.name, b.path, b.symbol.start);
 }
 }
 
-SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) {
-    SymbolPage page;
+codecairn::SymbolPage queryProjectSymbols(const QString &root,
+                                          const codecairn::SymbolCatalogQuery &query) {
+    codecairn::SymbolPage page;
     page.anchor = query.anchor;
     const auto cancelled = [&] {
         return query.cancel && query.cancel->load();
@@ -63,7 +64,8 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
     elapsed.start();
     try {
         if (!root.isEmpty()) {
-            const auto options = WorkspaceOptionsStore::loadOptions(root, query.projectFile);
+            const auto options =
+                codecairn::ProjectConfigurationStore::loadOptions(root, query.projectFile);
             if (!options.error.isEmpty())
                 throw std::runtime_error(options.error.toStdString());
         }
@@ -95,7 +97,7 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                 return display.contains(fragment, Qt::CaseInsensitive);
             });
         };
-        auto matches = [&](const SourceSymbol &symbol) {
+        auto matches = [&](const codecairn::SourceSymbol &symbol) {
             return (query.category.isEmpty() || query.category == symbolCategory(symbol)) &&
                    (!functionsOnly || symbol.kind == "Function") &&
                    nameMatches(symbol.name, symbol.qualifiedName);
@@ -111,14 +113,14 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                 bytes ? QString::fromUtf8(reinterpret_cast<const char *>(bytes), size) : QString{};
             return nameMatches(display, {});
         };
-        QVector<IndexedSymbol> live;
+        QVector<codecairn::IndexedSymbol> live;
         QSet<QString> overridden;
         for (const auto &overlay : query.overlays) {
             if (cancelled()) {
                 page.cancelled = true;
                 return page;
             }
-            overridden.insert(workspacePath(overlay.path));
+            overridden.insert(canonicalPath(overlay.path));
             const auto hash =
                 overlay.hash.isEmpty() ? sourceContentHash(overlay.source) : overlay.hash;
             for (const auto &symbol : overlay.analysis.symbols)
@@ -131,7 +133,7 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
         const int limit = qMax(0, query.limit);
         const int categoryLimit =
             query.categoryLimit < 0 ? std::numeric_limits<int>::max() : query.categoryLimit;
-        const auto database = workspaceDatabase(root, query.projectFile);
+        const auto database = projectIndexPath(root, query.projectFile);
         std::unique_ptr<ProjectIndexStore> db;
         if (!root.isEmpty() && QFileInfo::exists(database)) {
             db = std::make_unique<ProjectIndexStore>(database, false);
@@ -219,7 +221,7 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                             return bytes ? QString::fromUtf8(reinterpret_cast<const char *>(bytes))
                                          : QString{};
                         };
-                        SourceSymbol symbol;
+                        codecairn::SourceSymbol symbol;
                         symbol.kind = value(values[0]);
                         symbol.category = value(values[1]);
                         symbol.definition = sqlite3_value_int(values[2]);
@@ -252,7 +254,7 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                                             " GROUP BY kind,category,definition")
                                                .constData());
                 while (counts.next()) {
-                    SourceSymbol symbol;
+                    codecairn::SourceSymbol symbol;
                     symbol.kind = counts.text(0);
                     symbol.category = counts.text(1);
                     symbol.definition = counts.integer(2);
@@ -278,7 +280,7 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                 "s.start,s.end,s.name_start,s.name_end,s.line,s.category,s.generated,s.provider "
                 "FROM (SELECT rowid AS symbol_row FROM ";
             const auto fetch = [&](const QByteArray &filter, int maximum, int skip,
-                                   QVector<IndexedSymbol> &output) {
+                                   QVector<codecairn::IndexedSymbol> &output) {
                 if (maximum == 0)
                     return;
                 const auto table =
@@ -309,7 +311,7 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                 fetch({}, categoryLimit, 0, page.categorySymbols);
             if (query.anchor) {
                 const auto &anchor = *query.anchor;
-                const auto same = [&](const IndexedSymbol &entry) {
+                const auto same = [&](const codecairn::IndexedSymbol &entry) {
                     return entry.path == anchor.path &&
                            entry.symbol.nameStart == anchor.symbol.nameStart &&
                            entry.symbol.name == anchor.symbol.name;
@@ -353,7 +355,7 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                 }
             }
         }
-        QVector<IndexedSymbol> matchingLive;
+        QVector<codecairn::IndexedSymbol> matchingLive;
         for (const auto &entry : live) {
             if (query.includeCategories)
                 ++page.categories[symbolCategory(entry.symbol)];
@@ -371,9 +373,9 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
                     entry.symbol.name == query.anchor->symbol.name)
                     page.anchorRow = static_cast<int>(i);
             }
-        const auto merge = [](QVector<IndexedSymbol> &disk,
-                              const QVector<IndexedSymbol> &overlays) {
-            QVector<IndexedSymbol> result;
+        const auto merge = [](QVector<codecairn::IndexedSymbol> &disk,
+                              const QVector<codecairn::IndexedSymbol> &overlays) {
+            QVector<codecairn::IndexedSymbol> result;
             result.reserve(disk.size() + overlays.size());
             std::merge(disk.cbegin(), disk.cend(), overlays.cbegin(), overlays.cend(),
                        std::back_inserter(result), [](const auto &a, const auto &b) {

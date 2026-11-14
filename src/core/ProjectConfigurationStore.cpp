@@ -1,6 +1,6 @@
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include <codecairn/Diagnostics.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -41,7 +41,7 @@ bool hasSymlinkComponent(const QString &path) {
     }
 }
 
-QString ruleError(const WorkspaceOptions &options) {
+QString ruleError(const codecairn::ProjectConfiguration &options) {
     for (const auto &rules : {options.includedPaths, options.excludedPaths})
         for (const auto &rule : rules)
             if (!validRule(rule))
@@ -61,7 +61,7 @@ QString relativeProjectPath(const QString &root, const QString &path) {
         if (part == "..")
             return {};
     const auto absolute = QDir::isAbsolutePath(path) ? path : QDir(root).filePath(path);
-    const auto canonicalRoot = workspacePath(root);
+    const auto canonicalRoot = canonicalPath(root);
     auto relative = QDir(QDir::cleanPath(root)).relativeFilePath(QDir::cleanPath(absolute));
     if (!validRule(relative))
         relative = QDir(canonicalRoot).relativeFilePath(QDir::cleanPath(absolute));
@@ -76,11 +76,12 @@ QString relativeProjectPath(const QString &root, const QString &path) {
     return relative;
 }
 
-bool excluded(const QString &relative, const QString &root, const WorkspaceOptions &options) {
+bool excluded(const QString &relative, const QString &root,
+              const codecairn::ProjectConfiguration &options) {
     for (const auto &rule : options.excludedPaths)
         if (beneath(relative, rule))
             return true;
-    const auto names = options.excludedDirectories.value_or(defaultWorkspaceExcludes());
+    const auto names = options.excludedDirectories.value_or(defaultExcludedDirectories());
     const auto parts = relative.split('/');
     QString current = root;
     for (qsizetype i = 0; i < parts.size(); ++i) {
@@ -93,8 +94,12 @@ bool excluded(const QString &relative, const QString &root, const WorkspaceOptio
 }
 }
 
+QString codecairn::validateProjectConfiguration(const ProjectConfiguration &configuration) {
+    return configuration.error.isEmpty() ? ruleError(configuration) : configuration.error;
+}
+
 bool projectIncludesPath(const QString &root, const QString &path,
-                         const WorkspaceOptions &options) {
+                         const codecairn::ProjectConfiguration &options) {
     const auto relative = relativeProjectPath(root, path);
     if (relative.isEmpty() || !options.error.isEmpty() || !ruleError(options).isEmpty() ||
         excluded(relative, root, options))
@@ -108,7 +113,7 @@ bool projectIncludesPath(const QString &root, const QString &path,
 }
 
 bool projectTraversesDirectory(const QString &root, const QString &path,
-                               const WorkspaceOptions &options) {
+                               const codecairn::ProjectConfiguration &options) {
     const auto relative = relativeProjectPath(root, path);
     if (relative.isEmpty() || !QFileInfo(QDir(root).filePath(relative)).isDir() ||
         !options.error.isEmpty() || !ruleError(options).isEmpty() ||
@@ -122,16 +127,16 @@ bool projectTraversesDirectory(const QString &root, const QString &path,
     return false;
 }
 
-namespace WorkspaceOptionsStore {
-WorkspaceOptions loadOptions(const QString &root, const QString &projectFile) {
+namespace codecairn::ProjectConfigurationStore {
+codecairn::ProjectConfiguration loadOptions(const QString &root, const QString &projectFile) {
     if (!projectFile.isEmpty()) {
         auto project = loadProject(projectFile);
-        if (project.error.isEmpty() && workspacePath(project.root) != workspacePath(root))
+        if (project.error.isEmpty() && canonicalPath(project.root) != canonicalPath(root))
             project.options.error = "Project root does not match the requested workspace.";
         return project.options;
     }
-    WorkspaceOptions result;
-    const auto path = workspaceOptionsPath(root);
+    codecairn::ProjectConfiguration result;
+    const auto path = projectConfigurationPath(root);
     const auto fail = [&](const QString &message) {
         result.error = path + ": " + message;
         qCWarning(storageLog) << "storage.workspace_read_failed" << "root=" << root
@@ -165,7 +170,7 @@ WorkspaceOptions loadOptions(const QString &root, const QString &projectFile) {
     if (object.value("schemaVersion").toDouble(-1) != 1)
         return fail("Unsupported or missing workspace schemaVersion; expected 1.");
     const auto storedRoot = object.value("workspaceRoot").toString();
-    if (!QDir::isAbsolutePath(storedRoot) || workspacePath(storedRoot) != workspacePath(root))
+    if (!QDir::isAbsolutePath(storedRoot) || canonicalPath(storedRoot) != canonicalPath(root))
         return fail("Workspace configuration root does not match the requested workspace.");
     if (object.contains("compilationDirectory") && !object.value("compilationDirectory").isString())
         return fail("compilationDirectory must be a string.");
@@ -186,7 +191,7 @@ WorkspaceOptions loadOptions(const QString &root, const QString &projectFile) {
 namespace {
 QString writeOptions(const QString &root, const QString &compilationDirectory,
                      const QStringList &excludedDirectories, bool onlyIfMissing) {
-    const auto directory = workspaceStorageDirectory(root);
+    const auto directory = projectStateDirectory(root);
     if (directory.isEmpty() || !QFileInfo(root).isDir())
         return "No valid workspace or application state directory is available.";
     for (const auto &name : excludedDirectories)
@@ -197,7 +202,7 @@ QString writeOptions(const QString &root, const QString &compilationDirectory,
         return "Refusing a symlinked workspace storage directory: " + directory;
     if (!QDir().mkpath(directory))
         return "Cannot create workspace storage: " + directory;
-    const auto path = workspaceOptionsPath(root);
+    const auto path = projectConfigurationPath(root);
     if (onlyIfMissing && QFileInfo::exists(path))
         return loadOptions(root).error;
     QLockFile lock(path + ".lock");
@@ -210,7 +215,7 @@ QString writeOptions(const QString &root, const QString &compilationDirectory,
     if (onlyIfMissing && QFileInfo::exists(path))
         return {};
     const auto bytes = QJsonDocument(QJsonObject{{"schemaVersion", 1},
-                                                 {"workspaceRoot", workspacePath(root)},
+                                                 {"workspaceRoot", canonicalPath(root)},
                                                  {"compilationDirectory", compilationDirectory},
                                                  {"excludedDirectories",
                                                   QJsonArray::fromStringList(excludedDirectories)}})
@@ -227,7 +232,7 @@ QString initialize(const QString &root, const QString &projectFile) {
         const auto error = loadOptions(root, projectFile).error;
         if (!error.isEmpty())
             return error;
-        const auto directory = workspaceStorageDirectory(root, {}, projectFile);
+        const auto directory = projectStateDirectory(root, {}, projectFile);
         if (!QFileInfo(root).isDir() || directory.isEmpty())
             return "No valid project root or application state directory is available.";
         if (hasSymlinkComponent(directory))
@@ -236,7 +241,7 @@ QString initialize(const QString &root, const QString &projectFile) {
             return "Cannot create project storage: " + directory;
         return {};
     }
-    const auto error = writeOptions(root, {}, defaultWorkspaceExcludes(), true);
+    const auto error = writeOptions(root, {}, defaultExcludedDirectories(), true);
     if (!error.isEmpty())
         qCWarning(storageLog) << "storage.workspace_initialize_failed" << "root=" << root
                               << "error=" << error;
@@ -256,12 +261,12 @@ QString saveOptions(const QString &root, const QString &compilationDirectory,
     const auto error = writeOptions(root, compilationDirectory, excludedDirectories, false);
     if (!error.isEmpty())
         qCWarning(storageLog) << "storage.workspace_write_failed" << "root=" << root
-                              << "path=" << workspaceOptionsPath(root) << "error=" << error;
+                              << "path=" << projectConfigurationPath(root) << "error=" << error;
     return error;
 }
 
-WorkspaceProject loadProject(const QString &projectFile) {
-    WorkspaceProject result;
+codecairn::ProjectDefinition loadProject(const QString &projectFile) {
+    codecairn::ProjectDefinition result;
     result.options.managed = true;
     const auto fail = [&](const QString &message) {
         result.error = projectFile + ": " + message;
@@ -322,13 +327,13 @@ WorkspaceProject loadProject(const QString &projectFile) {
     const auto validation = ruleError(result.options);
     if (!validation.isEmpty())
         return fail(validation);
-    result.options.projectFile = workspacePath(projectFile);
+    result.options.projectFile = canonicalPath(projectFile);
     result.options.projectDigest = QCryptographicHash::hash(bytes, QCryptographicHash::Sha256);
     return result;
 }
 
 QString saveProject(const QString &projectFile, const QString &root,
-                    const WorkspaceOptions &options) {
+                    const codecairn::ProjectConfiguration &options) {
     const auto fail = [&](const QString &message) {
         return projectFile + ": " + message;
     };
@@ -357,16 +362,16 @@ QString saveProject(const QString &projectFile, const QString &root,
         const auto existing = loadProject(projectFile);
         if (!existing.error.isEmpty())
             return existing.error;
-        if (options.projectFile != workspacePath(projectFile) || options.projectDigest.isEmpty() ||
+        if (options.projectFile != canonicalPath(projectFile) || options.projectDigest.isEmpty() ||
             options.projectDigest != existing.options.projectDigest)
             return fail("Project descriptor changed externally. Reopen it before saving.");
-    } else if (options.projectFile == workspacePath(projectFile) &&
+    } else if (options.projectFile == canonicalPath(projectFile) &&
                !options.projectDigest.isEmpty()) {
         return fail(
             "Project descriptor was removed externally. Reopen it or save to a new location.");
     }
     QJsonObject object{{"schemaVersion", 1},
-                       {"root", workspacePath(root)},
+                       {"root", canonicalPath(root)},
                        {"name", options.name.trimmed()},
                        {"includedPaths", QJsonArray::fromStringList(options.includedPaths)},
                        {"excludedPaths", QJsonArray::fromStringList(options.excludedPaths)},

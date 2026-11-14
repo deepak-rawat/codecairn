@@ -5,7 +5,7 @@
 #include <codecairn/Project.h>
 #include "SourceDocument.h"
 #include "SymbolBrowser.h"
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include <codecairn/ApplicationStateStore.h>
 #include "TestStorage.h"
 #include <codecairn/ReferenceSearch.h>
@@ -21,8 +21,8 @@
 #include <memory>
 
 namespace {
-IndexedSymbol candidate(const QString &name, bool definition) {
-    IndexedSymbol entry;
+codecairn::IndexedSymbol candidate(const QString &name, bool definition) {
+    codecairn::IndexedSymbol entry;
     entry.path = "example.cpp";
     entry.symbol.name = name;
     entry.symbol.qualifiedName = name;
@@ -106,27 +106,28 @@ void RefactoringTests::stoppingAnalysisDisconnectsCompletion() {
 void RefactoringTests::workspaceOptionsPreserveMissingAndEmptyExclusions() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
-    auto options = WorkspaceOptionsStore::loadOptions(directory.path());
+    auto options = codecairn::ProjectConfigurationStore::loadOptions(directory.path());
     QVERIFY(options.error.isEmpty());
     QVERIFY(!options.excludedDirectories);
-    QVERIFY(WorkspaceOptionsStore::saveOptions(directory.path(), "build", {}).isEmpty());
-    options = WorkspaceOptionsStore::loadOptions(directory.path());
+    QVERIFY(
+        codecairn::ProjectConfigurationStore::saveOptions(directory.path(), "build", {}).isEmpty());
+    options = codecairn::ProjectConfigurationStore::loadOptions(directory.path());
     QVERIFY(options.error.isEmpty());
     QCOMPARE(options.compilationDirectory, QString("build"));
     QVERIFY(options.excludedDirectories);
     QVERIFY(options.excludedDirectories->isEmpty());
-    const auto configuration = workspaceOptionsPath(directory.path());
+    const auto configuration = projectConfigurationPath(directory.path());
     QJsonObject object{{"schemaVersion", 1},
-                       {"workspaceRoot", workspacePath(directory.path())},
+                       {"workspaceRoot", canonicalPath(directory.path())},
                        {"compilationDirectory", "custom"}};
     QVERIFY(writeSourceFile(configuration, QJsonDocument(object).toJson(), false).isEmpty());
-    options = WorkspaceOptionsStore::loadOptions(directory.path());
+    options = codecairn::ProjectConfigurationStore::loadOptions(directory.path());
     QVERIFY(!options.excludedDirectories);
     QCOMPARE(options.compilationDirectory, QString("custom"));
     QVERIFY(writeSourceFile(configuration, "{", false).isEmpty());
-    options = WorkspaceOptionsStore::loadOptions(directory.path());
+    options = codecairn::ProjectConfigurationStore::loadOptions(directory.path());
     QVERIFY(options.error.contains("Invalid workspace configuration JSON"));
-    QVERIFY(!WorkspaceOptionsStore::saveOptions(directory.path(), {}, {}).isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveOptions(directory.path(), {}, {}).isEmpty());
     QCOMPARE(readSourceFile(configuration).bytes, QByteArray("{"));
 }
 
@@ -154,7 +155,7 @@ void RefactoringTests::workspaceSessionPreservesFieldsInJson() {
 }
 
 void RefactoringTests::definitionPreferencePreservesCompleteness() {
-    SymbolPage page;
+    codecairn::SymbolPage page;
     page.symbols = {candidate("run", false), candidate("run", true)};
     page.total = 2;
     auto candidates = definitionCandidates(page);
@@ -232,8 +233,8 @@ void RefactoringTests::definitionRequestsCoalesceWithoutMixingTokens() {
                 names.append(candidates.targets.first().symbol.name);
             });
     const auto request = [&](const QString &name, quint64 token) {
-        SymbolQuery query;
-        SourceAnalysis analysis;
+        codecairn::SymbolCatalogQuery query;
+        codecairn::SourceAnalysis analysis;
         analysis.symbols.append(candidate(name, true).symbol);
         query.overlays = {{"example.py", {}, analysis, "hash"}};
         resolver.request({}, query, token);
@@ -251,7 +252,7 @@ void RefactoringTests::symbolBrowserPreservesAllRowsAndSelection() {
     QTreeWidget categories;
     symbols.setColumnCount(2);
     categories.setColumnCount(2);
-    SymbolPage page;
+    codecairn::SymbolPage page;
     for (int i = 0; i < 450; ++i) {
         auto entry = candidate(QString("function_%1").arg(i), true);
         entry.symbol.nameStart = i;
@@ -281,7 +282,7 @@ void RefactoringTests::textReferenceOverlayLookupPreservesFirstMatch() {
     QVERIFY(writeSourceFile(path, "disk = 1\n", false).isEmpty());
     const QByteArray first = "target = 1\n";
     const QByteArray second = "target = target\n";
-    const QVector<SymbolOverlay> overlays = {
+    const QVector<codecairn::SymbolOverlay> overlays = {
         {directory.filePath("./source.py"), first, analyzeSource(first, path)},
         {path, second, analyzeSource(second, path)}};
     auto cancel = std::make_shared<std::atomic_bool>(false);

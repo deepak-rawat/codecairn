@@ -25,8 +25,8 @@ private slots:
 private:
     QTemporaryDir directory_;
     QStringList paths_;
-    QVector<SymbolOverlay> overlays_;
-    SymbolPage page_;
+    QVector<codecairn::SymbolOverlay> overlays_;
+    codecairn::SymbolPage page_;
     std::shared_ptr<std::atomic_bool> cancel_ = std::make_shared<std::atomic_bool>(false);
 };
 
@@ -43,12 +43,12 @@ void RefactoringBenchmarks::initTestCase() {
         overlays_.append({path, source, analyzeSource(source, path)});
     }
     const auto result =
-        buildWorkspaceIndex(directory_.path(), IndexRefresh::DiscoverChanges, {}, cancel_);
+        buildProjectIndex(directory_.path(), codecairn::IndexUpdate::DiscoverChanges, {}, cancel_);
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.limit = 2000;
     query.includeCategorySymbols = true;
-    page_ = queryWorkspaceSymbols(directory_.path(), query);
+    page_ = queryProjectSymbols(directory_.path(), query);
     QVERIFY2(page_.error.isEmpty(), qPrintable(page_.error));
     QCOMPARE(page_.total, 1024);
 }
@@ -63,11 +63,11 @@ void RefactoringBenchmarks::textOccurrencesWithLiveOverlays() {
 }
 
 void RefactoringBenchmarks::warmWorkspaceQuery() {
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.text = "function_127";
-    SymbolPage page;
+    codecairn::SymbolPage page;
     QBENCHMARK {
-        page = queryWorkspaceSymbols(directory_.path(), query);
+        page = queryProjectSymbols(directory_.path(), query);
     }
     QVERIFY(page.error.isEmpty());
     QCOMPARE(page.total, 7);

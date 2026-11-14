@@ -550,12 +550,14 @@ void MainWindow::buildUi() {
            [this] { findText(true); });
     refreshFiles_ = action(projectMenu, "refreshFiles", "Refresh File List", "refresh",
                            QKeySequence("Ctrl+Shift+R"),
-                           [this] { refreshWorkspace(IndexRefresh::DiscoverChanges); });
+                           [this] { refreshWorkspace(codecairn::IndexUpdate::DiscoverChanges); });
     refreshFiles_->setEnabled(false);
-    rebuildSymbols_ = action(projectMenu, "rebuildSymbols", "Rebuild Symbol Index", "refresh", {},
-                             [this] { refreshWorkspace(IndexRefresh::ReparseKnownFiles); });
-    rebuildAll_ = action(projectMenu, "rebuildAll", "Rebuild Files and Symbols", "refresh", {},
-                         [this] { refreshWorkspace(IndexRefresh::RebuildFilesAndSymbols); });
+    rebuildSymbols_ =
+        action(projectMenu, "rebuildSymbols", "Rebuild Symbol Index", "refresh", {},
+               [this] { refreshWorkspace(codecairn::IndexUpdate::ReparseKnownFiles); });
+    rebuildAll_ =
+        action(projectMenu, "rebuildAll", "Rebuild Files and Symbols", "refresh", {},
+               [this] { refreshWorkspace(codecairn::IndexUpdate::RebuildFilesAndSymbols); });
     cancelIndex_ = action(projectMenu, "cancelIndex", "Cancel Background Indexing", "collapse", {},
                           [this] { project_->cancelIndexing(); });
     rebuildSymbols_->setEnabled(false);
@@ -574,7 +576,7 @@ void MainWindow::buildUi() {
                if (!directory.isEmpty()) {
                    const auto previous = compilationDirectory_;
                    compilationDirectory_ = directory;
-                   if (!writeWorkspaceOptions(project_->excludedDirectories())) {
+                   if (!writeProjectConfiguration(project_->excludedDirectories())) {
                        compilationDirectory_ = previous;
                        return;
                    }
@@ -596,7 +598,7 @@ void MainWindow::buildUi() {
             QStringList excludes;
             for (const auto &name : names.split(',', Qt::SkipEmptyParts))
                 excludes << name.trimmed();
-            writeWorkspaceOptions(excludes);
+            writeProjectConfiguration(excludes);
         }
     });
     auto *filesFocus =

@@ -9,7 +9,7 @@
 #include <QTreeWidget>
 
 namespace SymbolBrowser {
-void display(QTreeWidget *symbols, QTreeWidget *categoryTree, const SymbolPage &page,
+void display(QTreeWidget *symbols, QTreeWidget *categoryTree, const codecairn::SymbolPage &page,
              const QString &workspaceRoot, const QString &selectedCategory) {
     const QSignalBlocker symbolsBlock(symbols), categoriesBlock(categoryTree);
     QHash<QString, QIcon> icons;

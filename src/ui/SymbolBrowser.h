@@ -14,6 +14,6 @@ constexpr int Line = Qt::UserRole + 4;
 }
 
 namespace SymbolBrowser {
-void display(QTreeWidget *symbols, QTreeWidget *categories, const SymbolPage &page,
+void display(QTreeWidget *symbols, QTreeWidget *categories, const codecairn::SymbolPage &page,
              const QString &workspaceRoot, const QString &selectedCategory);
 }

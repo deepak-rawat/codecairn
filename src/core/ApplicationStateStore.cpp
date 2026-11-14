@@ -1,6 +1,6 @@
 #include <codecairn/ApplicationStateStore.h>
 #include <codecairn/Diagnostics.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
@@ -96,8 +96,8 @@ ApplicationState parseState(const QJsonObject &object) {
         absolutePath(project.projectFile, "projectFile");
         if (project.name.trimmed().isEmpty())
             invalid("Recent project name must not be empty.");
-        const auto identity = project.projectFile.isEmpty() ? workspacePath(project.root)
-                                                            : workspacePath(project.projectFile);
+        const auto identity = project.projectFile.isEmpty() ? canonicalPath(project.root)
+                                                            : canonicalPath(project.projectFile);
         if (identities.contains(identity))
             invalid("Duplicate recent project.");
         identities.insert(identity);
@@ -135,7 +135,7 @@ WorkspaceSession parseSession(const QJsonObject &object, const QString &root) {
     keys(object, {"schemaVersion", "workspaceRoot", "files", "activeFile", "references"});
     const auto storedRoot = string(object, "workspaceRoot");
     absolutePath(storedRoot, "workspaceRoot", false);
-    if (workspacePath(storedRoot) != workspacePath(root))
+    if (canonicalPath(storedRoot) != canonicalPath(root))
         invalid("Session workspaceRoot does not match the requested workspace.");
     if (object.contains("files") && !object.value("files").isArray())
         invalid("files must be an array.");
@@ -146,12 +146,12 @@ WorkspaceSession parseSession(const QJsonObject &object, const QString &root) {
             invalid("Each session file must be an object.");
         const auto entry = value.toObject();
         keys(entry, {"path", "start", "end", "firstLine"});
-        NavigationLocation location;
+        codecairn::SourceLocation location;
         location.path = string(entry, "path");
         absolutePath(location.path, "path", false);
-        if (!pathInWorkspace(location.path, root))
+        if (!pathUnderRoot(location.path, root))
             invalid("Session file is outside its workspace: " + location.path);
-        const auto identity = workspacePath(location.path);
+        const auto identity = canonicalPath(location.path);
         if (seen.contains(identity))
             invalid("Duplicate session file: " + location.path);
         seen.insert(identity);
@@ -164,7 +164,7 @@ WorkspaceSession parseSession(const QJsonObject &object, const QString &root) {
     }
     session.activeFile = string(object, "activeFile");
     absolutePath(session.activeFile, "activeFile");
-    if (!session.activeFile.isEmpty() && !seen.contains(workspacePath(session.activeFile)))
+    if (!session.activeFile.isEmpty() && !seen.contains(canonicalPath(session.activeFile)))
         invalid("activeFile is not an open session file.");
     if (object.contains("references") && !object.value("references").isArray())
         invalid("references must be an array.");
@@ -184,7 +184,7 @@ QJsonObject sessionJson(const QString &root, const WorkspaceSession &session) {
                                  {"end", location.end},
                                  {"firstLine", location.firstVisibleLine}});
     return {{"schemaVersion", 1},
-            {"workspaceRoot", workspacePath(root)},
+            {"workspaceRoot", canonicalPath(root)},
             {"files", files},
             {"activeFile", session.activeFile},
             {"references", referenceHistoryJson(session.references)}};
@@ -206,13 +206,13 @@ QString ApplicationStateStore::statePath() const {
 QString ApplicationStateStore::sessionPath(const QString &root, const QString &projectFile) const {
     if (directory_.isEmpty() || root.isEmpty())
         return {};
-    const auto directory = workspaceStorageDirectory(root, directory_, projectFile);
+    const auto directory = projectStateDirectory(root, directory_, projectFile);
     if (directory.isEmpty())
         return {};
     const auto name =
         projectFile.isEmpty()
             ? QString("session.json")
-            : "session-" + QString::fromLatin1(fingerprint(workspacePath(root).toUtf8()).toHex()) +
+            : "session-" + QString::fromLatin1(fingerprint(canonicalPath(root).toUtf8()).toHex()) +
                   ".json";
     return QDir(directory).filePath(name);
 }
@@ -347,15 +347,15 @@ WorkspaceSessionResult ApplicationStateStore::loadSession(const QString &root,
             return {{}, result.error};
         }
         if (!projectFile.isEmpty() && !QFileInfo::exists(path)) {
-            const auto previous = QDir(workspaceStorageDirectory(root, directory_, projectFile))
-                                      .filePath("session.json");
+            const auto previous =
+                QDir(projectStateDirectory(root, directory_, projectFile)).filePath("session.json");
             if (QFileInfo::exists(previous)) {
                 const auto legacy = loadJson(previous, {});
                 if (!legacy.object)
                     throw std::invalid_argument(legacy.error.toStdString());
                 const auto previousRoot = string(*legacy.object, "workspaceRoot");
                 const auto session = parseSession(*legacy.object, previousRoot);
-                if (workspacePath(previousRoot) == workspacePath(root))
+                if (canonicalPath(previousRoot) == canonicalPath(root))
                     return {session, {}};
             }
         }

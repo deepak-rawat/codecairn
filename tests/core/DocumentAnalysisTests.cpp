@@ -1,6 +1,6 @@
 #include <codecairn/Document.h>
 #include <codecairn/FileIO.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -108,7 +108,7 @@ void DocumentAnalysisTests::unbindingRetainsCurrentContents() {
 
 void DocumentAnalysisTests::pathsUseNormalizedIdentity() {
     codecairn::Document relative("./src/../sample.py", {});
-    QCOMPARE(relative.path(), workspacePath("sample.py"));
+    QCOMPARE(relative.path(), canonicalPath("sample.py"));
     QCOMPARE(relative.snapshot().path, relative.path());
     codecairn::Document resource(":/examples/sample.py", {});
     QCOMPARE(resource.path(), QString(":/examples/sample.py"));

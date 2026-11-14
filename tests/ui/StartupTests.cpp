@@ -159,7 +159,7 @@ void StartupTests::restoresLastWorkspaceWithoutOpeningDocuments() {
                         stateDirectory_);
     QSignalSpy indexed(&restored, &MainWindow::indexReady);
     restored.openStartupPaths({});
-    QCOMPARE(restored.findChild<ProjectIndexer *>()->root(), workspacePath(project.path()));
+    QCOMPARE(restored.findChild<ProjectIndexer *>()->root(), canonicalPath(project.path()));
     QTRY_VERIFY_WITH_TIMEOUT(!indexed.isEmpty(), 10000);
     QCOMPARE(restored.documentCount(), 0);
     QCOMPARE(restored.findChild<ProjectIndexer *>()->files().size(), 1);
@@ -196,9 +196,9 @@ void StartupTests::noProjectBypassesRestoreAndAutomaticWorkspace() {
     QVERIFY(window.openFile(source));
     QCOMPARE(window.documentCount(), 1);
     QVERIFY(index->root().isEmpty());
-    QVERIFY(!QFileInfo::exists(workspaceDatabase(project.path())));
+    QVERIFY(!QFileInfo::exists(projectIndexPath(project.path())));
     window.openProject(project.path());
-    QCOMPARE(index->root(), workspacePath(project.path()));
+    QCOMPARE(index->root(), canonicalPath(project.path()));
 }
 
 void StartupTests::managedProjectsRestoreIndependentSessions() {
@@ -209,26 +209,28 @@ void StartupTests::managedProjectsRestoreIndependentSessions() {
     QVERIFY(writeSourceFile(secondFile, "int second(void) { return 2; }\n", false).isEmpty());
     const auto first = project.filePath("first.cairn");
     const auto second = project.filePath("second.cairn");
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "First subset";
     options.includedPaths = {"first.c"};
-    QVERIFY(WorkspaceOptionsStore::saveProject(first, project.path(), options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(first, project.path(), options)
+                .isEmpty());
     options.name = "Second subset";
     options.includedPaths = {"second.c"};
-    QVERIFY(WorkspaceOptionsStore::saveProject(second, project.path(), options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(second, project.path(), options)
+                .isEmpty());
     {
         MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"),
                           stateDirectory_);
         auto *index = window.findChild<ProjectIndexer *>();
         window.openManagedProject(first);
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
-        QCOMPARE(index->files(), QStringList{workspacePath(firstFile)});
+        QCOMPARE(index->files(), QStringList{canonicalPath(firstFile)});
         QCOMPARE(window.windowTitle(), QString("First subset - CodeCairn"));
         QVERIFY(window.openFile(firstFile));
         window.openManagedProject(second);
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
-        QCOMPARE(index->files(), QStringList{workspacePath(secondFile)});
+        QCOMPARE(index->files(), QStringList{canonicalPath(secondFile)});
         QCOMPARE(window.documentCount(), 0);
         QVERIFY(window.openFile(secondFile));
         auto *recent = window.findChild<QMenu *>("recentProjects");
@@ -246,7 +248,7 @@ void StartupTests::managedProjectsRestoreIndependentSessions() {
     restored.openManagedProject(first);
     QCOMPARE(restored.documentCount(), 1);
     QCOMPARE(restored.activeEditor()->bytes(), QByteArray("int first(void) { return 1; }\n"));
-    QVERIFY(workspaceDatabase(project.path(), first) != workspaceDatabase(project.path(), second));
+    QVERIFY(projectIndexPath(project.path(), first) != projectIndexPath(project.path(), second));
 }
 
 void StartupTests::managedBaseFolderChangeCanSaveAndReopenSession() {
@@ -256,11 +258,12 @@ void StartupTests::managedBaseFolderChangeCanSaveAndReopenSession() {
     const auto secondFile = second.filePath("second.c");
     QVERIFY(writeSourceFile(firstFile, "int first;\n", false).isEmpty());
     QVERIFY(writeSourceFile(secondFile, "int second;\n", false).isEmpty());
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "Root change";
     options.includedPaths = {"."};
-    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, first.path(), options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(descriptor, first.path(), options)
+                .isEmpty());
     MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
     window.openManagedProject(descriptor);
     auto *index = window.findChild<ProjectIndexer *>();
@@ -302,7 +305,7 @@ void StartupTests::managedBaseFolderChangeCanSaveAndReopenSession() {
     window.findChild<QAction *>("manageProjectFiles")->trigger();
     driver.stop();
     QVERIFY(changed && !timedOut);
-    QCOMPARE(index->root(), workspacePath(second.path()));
+    QCOMPARE(index->root(), canonicalPath(second.path()));
     QCOMPARE(window.documentCount(), 0);
     QVERIFY(window.openFile(secondFile));
     QVERIFY(window.closeProject());
@@ -318,8 +321,9 @@ void StartupTests::managedBaseFolderChangeCanSaveAndReopenSession() {
     window.findChild<QAction *>("manageProjectFiles")->trigger();
     driver.stop();
     QVERIFY(closeCancelled && !timedOut);
-    QCOMPARE(index->root(), workspacePath(second.path()));
-    QCOMPARE(WorkspaceOptionsStore::loadProject(descriptor).root, workspacePath(second.path()));
+    QCOMPARE(index->root(), canonicalPath(second.path()));
+    QCOMPARE(codecairn::ProjectConfigurationStore::loadProject(descriptor).root,
+             canonicalPath(second.path()));
     QVERIFY(window.activeEditor()->isModified());
     window.activeEditor()->markSaved();
     QVERIFY(window.closeProject());
@@ -369,9 +373,9 @@ void StartupTests::newProjectStartsBlankAndSavesOutsideSourceTree() {
     QVERIFY(blank);
     QVERIFY(QFileInfo::exists(descriptor));
     QCOMPARE(window.windowTitle(), QString("Selected project - CodeCairn"));
-    const auto saved = WorkspaceOptionsStore::loadProject(descriptor);
+    const auto saved = codecairn::ProjectConfigurationStore::loadProject(descriptor);
     QVERIFY2(saved.error.isEmpty(), qPrintable(saved.error));
-    QCOMPARE(saved.root, workspacePath(project.path()));
+    QCOMPARE(saved.root, canonicalPath(project.path()));
     QCOMPARE(saved.options.name, QString("Selected project"));
     QCOMPARE(saved.options.includedPaths, QStringList{"."});
     QCOMPARE(QDir(project.path()).entryList(QDir::Files), QStringList{"main.c"});
@@ -381,8 +385,8 @@ void StartupTests::newProjectStartsBlankAndSavesOutsideSourceTree() {
 void StartupTests::corruptIndexOffersRecreation() {
     QTemporaryDir project;
     QVERIFY(writeSourceFile(project.filePath("main.c"), "int seed;\n", false).isEmpty());
-    QVERIFY(WorkspaceOptionsStore::initialize(project.path()).isEmpty());
-    QFile database(workspaceDatabase(project.path()));
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(project.path()).isEmpty());
+    QFile database(projectIndexPath(project.path()));
     QVERIFY(database.open(QIODevice::WriteOnly));
     QCOMPARE(database.write("not sqlite"), qint64(10));
     database.close();
@@ -400,8 +404,8 @@ void StartupTests::corruptIndexOffersRecreation() {
     prompt->done(QMessageBox::Yes);
     auto *index = window.findChild<ProjectIndexer *>();
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
-    SymbolQuery query;
-    const auto page = queryWorkspaceSymbols(project.path(), query);
+    codecairn::SymbolCatalogQuery query;
+    const auto page = queryProjectSymbols(project.path(), query);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QCOMPARE(page.total, 1);
     auto *filter = window.findChild<QLineEdit *>("symbolFilter");
@@ -425,7 +429,8 @@ void StartupTests::largeCatalogIsBrowsableDuringIndexing() {
     connect(index, &ProjectIndexer::catalogReady, &window,
             [&] { catalogWhileBusy = index->busy() && files->topLevelItemCount() > 0; });
     connect(window.findChild<codecairn::detail::ProjectSymbolQuery *>(),
-            &codecairn::detail::ProjectSymbolQuery::ready, &window, [&](const SymbolPage &page) {
+            &codecairn::detail::ProjectSymbolQuery::ready, &window,
+            [&](const codecairn::SymbolPage &page) {
                 symbolsWhileBusy = symbolsWhileBusy || (index->busy() && page.total > 0);
             });
     window.openProject(project.path());
@@ -463,13 +468,13 @@ void StartupTests::explicitPathsOverrideLastWorkspace() {
                           stateDirectory_);
         window.openStartupPaths({project.path()});
         QCOMPARE(window.documentCount(), 0);
-        QCOMPARE(window.findChild<ProjectIndexer *>()->root(), workspacePath(project.path()));
+        QCOMPARE(window.findChild<ProjectIndexer *>()->root(), canonicalPath(project.path()));
     }
     MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
     window.openStartupPaths({path});
     QCOMPARE(window.documentCount(), 1);
     QCOMPARE(window.activeEditor()->bytes(), source);
-    QCOMPARE(window.findChild<ProjectIndexer *>()->root(), workspacePath(project.path()));
+    QCOMPARE(window.findChild<ProjectIndexer *>()->root(), canonicalPath(project.path()));
 }
 
 void StartupTests::latestWorkspaceIsRemembered() {
@@ -483,7 +488,7 @@ void StartupTests::latestWorkspaceIsRemembered() {
     ApplicationStateStore store(stateDirectory_);
     const auto loaded = store.loadState();
     QVERIFY2(loaded.state.has_value(), qPrintable(loaded.error));
-    QCOMPARE(loaded.state->lastWorkspace, workspacePath(second.path()));
+    QCOMPARE(loaded.state->lastWorkspace, canonicalPath(second.path()));
 }
 
 void StartupTests::cachedWorkspacePopulatesSymbols() {
@@ -492,8 +497,8 @@ void StartupTests::cachedWorkspacePopulatesSymbols() {
                             false)
                 .isEmpty());
     const auto built =
-        buildWorkspaceIndex(workspacePath(project.path()), IndexRefresh::DiscoverChanges, {},
-                            std::make_shared<std::atomic_bool>(false));
+        buildProjectIndex(canonicalPath(project.path()), codecairn::IndexUpdate::DiscoverChanges,
+                          {}, std::make_shared<std::atomic_bool>(false));
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     MainWindow window(false);
     window.openStartupPaths({project.path() + QDir::separator()});
@@ -513,15 +518,15 @@ void StartupTests::externalWorkspaceStartup() {
     QSignalSpy ready(&window, &MainWindow::indexReady);
     window.openStartupPaths({root + QDir::separator()});
     QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 30000);
-    SymbolQuery all;
+    codecairn::SymbolCatalogQuery all;
     all.limit = std::numeric_limits<int>::max();
-    const auto expected = queryWorkspaceSymbols(root, all);
+    const auto expected = queryProjectSymbols(root, all);
     QVERIFY2(expected.error.isEmpty(), qPrintable(expected.error));
     QVERIFY(expected.total > 0);
     auto *scope = window.findChild<QLabel *>("symbolScope");
     auto *symbols = window.findChild<QTreeWidget *>("symbolList");
     QTRY_COMPARE_WITH_TIMEOUT(scope->text(), QString("%1 symbols").arg(expected.total), 30000);
-    QCOMPARE(window.findChild<ProjectIndexer *>()->root(), workspacePath(root));
+    QCOMPARE(window.findChild<ProjectIndexer *>()->root(), canonicalPath(root));
     if (expected.total > 4096)
         QCOMPARE(window.findChild<QTreeView *>("virtualSymbolList")->model()->rowCount(),
                  expected.total);
@@ -555,10 +560,10 @@ void StartupTests::externalWorkspaceStartup() {
         targets.append(expected.symbols.last().symbol.name);
     for (const auto &target : targets) {
         window.findChild<QLineEdit *>("symbolFilter")->setText(target);
-        SymbolQuery query;
+        codecairn::SymbolCatalogQuery query;
         query.text = target;
         query.limit = std::numeric_limits<int>::max();
-        const auto filtered = queryWorkspaceSymbols(root, query);
+        const auto filtered = queryProjectSymbols(root, query);
         QVERIFY2(filtered.error.isEmpty(), qPrintable(filtered.error));
         QVERIFY2(filtered.total > 0, qPrintable("Missing symbol: " + target));
         QTRY_COMPARE_WITH_TIMEOUT(scope->text(), QString("%1 symbols").arg(filtered.total), 10000);
@@ -574,8 +579,7 @@ void StartupTests::externalWorkspaceStartup() {
     qInfo() << "Startup displayed" << expected.total << "symbols;" << expected.symbols.size()
             << "in the list";
     ready.clear();
-    QTemporaryDir metadataNoise(
-        QDir(workspaceStorageDirectory(root)).filePath("refresh-check-XXXXXX"));
+    QTemporaryDir metadataNoise(QDir(projectStateDirectory(root)).filePath("refresh-check-XXXXXX"));
     QVERIFY(metadataNoise.isValid());
     QTest::qWait(2500);
     QCOMPARE(ready.count(), 0);

@@ -1,7 +1,7 @@
 #include "MainWindow.h"
 #include <codecairn/FileIO.h>
 #include <codecairn/RuntimeLimits.h>
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include "SymbolBrowser.h"
 #include "SymbolCatalogModel.h"
 #include <codecairn/Diagnostics.h>
@@ -59,8 +59,9 @@ void MainWindow::initializeWorkspace() {
     symbolQueryTimer_->setInterval(configuration_.behavior.searchDebounceMs);
     symbolQueryTimer_->setSingleShot(true);
     connect(symbolQueryTimer_, &QTimer::timeout, this, &MainWindow::updateOpenSymbols);
-    connect(project_, &codecairn::Project::symbolsReady, this,
-            [this](codecairn::RequestId, const SymbolPage &page) { displaySymbols(page); });
+    connect(
+        project_, &codecairn::Project::symbolsReady, this,
+        [this](codecairn::RequestId, const codecairn::SymbolPage &page) { displaySymbols(page); });
     connect(project_, &codecairn::Project::failed, this, [this](const QString &message) {
         reportError(message);
         projectState_->setText(message);
@@ -89,7 +90,7 @@ void MainWindow::initializeWorkspace() {
         rebuildAll_->setEnabled(!projectPath_.isEmpty());
     });
     connect(project_, &codecairn::Project::indexReady, this,
-            [this](codecairn::RequestId, const IndexResult &result) {
+            [this](codecairn::RequestId, const codecairn::IndexResult &result) {
                 populateFiles(result.files);
                 const auto text =
                     QString("%1 files; %2 parsed, %3 cached%4")
@@ -125,13 +126,17 @@ void MainWindow::initializeWorkspace() {
 }
 
 void MainWindow::displayDefinitionCandidates(quint64 token,
-                                             const DefinitionCandidates &candidates) {
+                                             const codecairn::DefinitionPage &candidates) {
     if (token == contextGeneration_ && !pinContextAction_->isChecked()) {
         if (!candidates.error.isEmpty()) {
             reportError(candidates.error);
             contextTitle_->setText("Lookup failed: " + candidates.error);
         } else {
-            fallbackTargets_ = candidates.targets;
+            fallbackTargets_.clear();
+            fallbackTargets_.reserve(candidates.definitions.size());
+            for (const auto &definition : candidates.definitions)
+                if (definition.symbol)
+                    fallbackTargets_.append(*definition.symbol);
             if (fallbackTargets_.size() == 1 && candidates.complete) {
                 previewTarget(fallbackTargets_.first(),
                               "Syntax-index candidate (not compiler verified)");
@@ -166,8 +171,8 @@ void MainWindow::displayDefinitionCandidates(quint64 token,
     }
 }
 
-QVector<SymbolOverlay> MainWindow::liveOverlays() const {
-    QVector<SymbolOverlay> overlays;
+QVector<codecairn::SymbolOverlay> MainWindow::liveOverlays() const {
+    QVector<codecairn::SymbolOverlay> overlays;
     overlays.reserve(documents_.size());
     for (const auto &doc : documents_) {
         if (!projectPath_.isEmpty() && !projectContains(doc->path()))
@@ -177,13 +182,13 @@ QVector<SymbolOverlay> MainWindow::liveOverlays() const {
         const auto source = doc->source()->snapshot();
         overlays.append(
             {source.path, source.bytes,
-             doc->analyzedRevision == source.revision ? doc->analysis : SourceAnalysis{},
+             doc->analyzedRevision == source.revision ? doc->analysis : codecairn::SourceAnalysis{},
              source.hash});
     }
     return overlays;
 }
 
-void MainWindow::displaySymbols(const SymbolPage &page) {
+void MainWindow::displaySymbols(const codecairn::SymbolPage &page) {
     const QSignalBlocker symbolsBlock(symbolList_), categoriesBlock(categoryTree_);
     const auto navigation = std::exchange(symbolNavigationAfterFilter_, std::nullopt);
     symbolFilterPending_ = false;
@@ -226,7 +231,7 @@ void MainWindow::displaySymbols(const SymbolPage &page) {
     virtualSymbols_->setVisible(virtualSymbolMode_);
     categoryTree_->setVisible(!virtualCategoryMode_);
     virtualCategories_->setVisible(virtualCategoryMode_);
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.projectFile = projectFile_;
     query.text = symbolFilter_->text();
     query.category = category_;
@@ -274,7 +279,7 @@ void MainWindow::displaySymbols(const SymbolPage &page) {
     symbolScope_->setToolTip(
         projectPath_.isEmpty()
             ? "Open buffers; open a folder to index a workspace."
-            : workspaceDatabase(projectPath_, projectFile_) +
+            : projectIndexPath(projectPath_, projectFile_) +
                   "\nLive buffers override disk symbols. Syntax index with compiler recovery, "
                   "not semantic resolution.");
     if (navigation) {
@@ -364,7 +369,7 @@ void MainWindow::resetSymbolBrowser() {
     virtualCategoryMode_ = false;
 }
 
-void MainWindow::activateIndexedSymbol(const IndexedSymbol &entry, bool open) {
+void MainWindow::activateIndexedSymbol(const codecairn::IndexedSymbol &entry, bool open) {
     if (pinContextAction_->isChecked() && !open)
         return;
     if (open) {
@@ -378,7 +383,7 @@ void MainWindow::activateIndexedSymbol(const IndexedSymbol &entry, bool open) {
     previewTarget(entry, "Project index");
 }
 
-void MainWindow::previewTarget(const IndexedSymbol &target, const QString &provenance) {
+void MainWindow::previewTarget(const codecairn::IndexedSymbol &target, const QString &provenance) {
     if (pinContextAction_->isChecked())
         return;
     contextTimer_->stop();
@@ -428,7 +433,8 @@ void MainWindow::resolveDefinition(const QString &path, const QByteArray &source
         if (auto *doc = findDocument(path)) {
             contextPath_ = doc->path();
             showContext(QFileInfo(path).fileName(), source,
-                        doc->analyzedRevision == doc->revision() ? doc->analysis : SourceAnalysis{},
+                        doc->analyzedRevision == doc->revision() ? doc->analysis
+                                                                 : codecairn::SourceAnalysis{},
                         position, position);
         }
         return;
@@ -456,22 +462,14 @@ void MainWindow::displayContextDefinitions(quint64 token, const codecairn::Defin
         return;
     }
     if (!result.semantic) {
-        DefinitionCandidates candidates;
-        candidates.total = result.total;
-        candidates.complete = result.complete;
-        candidates.error = result.error;
-        for (const auto &definition : result.definitions)
-            if (definition.symbol)
-                candidates.targets.append(*definition.symbol);
-        displayDefinitionCandidates(token, candidates);
+        displayDefinitionCandidates(token, result);
         return;
     }
     lookupProvider_ = result.provider;
-    QVector<LspLocation> definitions;
+    QVector<codecairn::SourceLocation> definitions;
     for (const auto &definition : result.definitions) {
         const auto &location = definition.location;
-        definitions.append({location.path, location.line, location.character, location.endLine,
-                            location.endCharacter});
+        definitions.append(location);
     }
     if (definitions.size() == 1) {
         semanticPreview(definitions.first());
@@ -501,7 +499,7 @@ void MainWindow::chooseDefinition(int choice) {
     }
 }
 
-void MainWindow::semanticPreview(const LspLocation &target) {
+void MainWindow::semanticPreview(const codecairn::SourceLocation &target) {
     QString provenance = lookupProvider_;
     if (auto *doc = findDocument(target.path)) {
         const auto bytes = doc->editor->bytes();
@@ -523,7 +521,8 @@ void MainWindow::semanticPreview(const LspLocation &target) {
         }
         contextPath_ = doc->path();
         showContext(QFileInfo(doc->path()).fileName() + " - " + provenance, bytes,
-                    doc->revision() == doc->analyzedRevision ? doc->analysis : SourceAnalysis{},
+                    doc->revision() == doc->analyzedRevision ? doc->analysis
+                                                             : codecairn::SourceAnalysis{},
                     start, end);
     } else {
         ++contextGeneration_;
@@ -536,19 +535,19 @@ void MainWindow::semanticPreview(const LspLocation &target) {
     }
 }
 
-void MainWindow::refreshWorkspace(IndexRefresh mode) {
+void MainWindow::refreshWorkspace(codecairn::IndexUpdate mode) {
     if (!projectPath_.isEmpty()) {
         indexRecoveryOffered_ = false;
         project_->refreshIndex(mode);
     }
 }
 
-void MainWindow::reconcileOpenDocuments(const IndexResult &result) {
+void MainWindow::reconcileOpenDocuments(const codecairn::IndexResult &result) {
     for (const auto &owned : documents_) {
         auto *doc = owned.get();
-        if (!pathInWorkspace(doc->path(), projectPath_))
+        if (!pathUnderRoot(doc->path(), projectPath_))
             continue;
-        doc->reconcileDiskHash(result.sourceHashes.value(workspacePath(doc->path())));
+        doc->reconcileDiskHash(result.sourceHashes.value(canonicalPath(doc->path())));
     }
 }
 
@@ -568,7 +567,7 @@ void MainWindow::synchronizeLanguageDocuments() {
         doc->setProject(project_);
 }
 
-void MainWindow::readWorkspaceOptions() {
+void MainWindow::readProjectConfiguration() {
     const auto loaded = project_->reloadOptions();
     if (!loaded) {
         reportError(loaded.error().message);
@@ -578,14 +577,14 @@ void MainWindow::readWorkspaceOptions() {
     compilationDirectory_ = projectOptions_.compilationDirectory;
 }
 
-bool MainWindow::writeWorkspaceOptions(const QStringList &excludedDirectories) {
-    const auto error = WorkspaceOptionsStore::saveOptions(projectPath_, compilationDirectory_,
-                                                          excludedDirectories, projectFile_);
+bool MainWindow::writeProjectConfiguration(const QStringList &excludedDirectories) {
+    const auto error = codecairn::ProjectConfigurationStore::saveOptions(
+        projectPath_, compilationDirectory_, excludedDirectories, projectFile_);
     if (!error.isEmpty()) {
         reportError(error);
         return false;
     }
-    readWorkspaceOptions();
+    readProjectConfiguration();
     return true;
 }
 
@@ -597,8 +596,7 @@ bool MainWindow::saveProjectSession() {
         auto saved = group;
         saved.hits.erase(std::remove_if(saved.hits.begin(), saved.hits.end(),
                                         [this](const auto &hit) {
-                                            return !pathInWorkspace(hit.location.path,
-                                                                    projectPath_);
+                                            return !pathUnderRoot(hit.location.path, projectPath_);
                                         }),
                          saved.hits.end());
         session.references.append(saved);
@@ -606,7 +604,7 @@ bool MainWindow::saveProjectSession() {
     for (int i = 0; i < documentsTabs_->count(); ++i) {
         for (const auto &doc : documents_) {
             if (doc->editor != documentsTabs_->widget(i) ||
-                !pathInWorkspace(doc->path(), projectPath_))
+                !pathUnderRoot(doc->path(), projectPath_))
                 continue;
             session.files.append({doc->path(),
                                   static_cast<int>(doc->editor->send(SCI_GETSELECTIONSTART)),
@@ -617,7 +615,7 @@ bool MainWindow::saveProjectSession() {
     }
     const auto *active = currentDocument();
     session.activeFile =
-        active && pathInWorkspace(active->path(), projectPath_) ? active->path() : QString{};
+        active && pathUnderRoot(active->path(), projectPath_) ? active->path() : QString{};
     const auto error = stateStore_.saveSession(projectPath_, session, projectFile_);
     if (error.isEmpty())
         return true;
@@ -646,7 +644,7 @@ void MainWindow::restoreProjectSession() {
     QStringList warnings;
     for (const auto &location : session.files) {
         const auto path = location.path;
-        if (path.isEmpty() || !pathInWorkspace(path, projectPath_)) {
+        if (path.isEmpty() || !pathUnderRoot(path, projectPath_)) {
             warnings.append("Invalid saved project file: " + path);
             continue;
         }

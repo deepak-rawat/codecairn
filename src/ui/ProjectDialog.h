@@ -1,7 +1,7 @@
 #pragma once
 
 #include "AppSettings.h"
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include <codecairn/ProjectDiscovery.h>
 #include <QDialog>
 #include <QFutureWatcher>
@@ -21,13 +21,14 @@ class ProjectFileListModel;
 class ProjectDialog : public QDialog {
     Q_OBJECT
 public:
-    explicit ProjectDialog(const QString &root = {}, const WorkspaceOptions &options = {},
+    explicit ProjectDialog(const QString &root = {},
+                           const codecairn::ProjectConfiguration &options = {},
                            QWidget *parent = nullptr,
                            const AppSettings &settings = defaultAppSettings());
     ~ProjectDialog() override;
     QString root() const;
     QString projectFile() const;
-    WorkspaceOptions options() const;
+    codecairn::ProjectConfiguration options() const;
     void setSaveError(const QString &error);
     void accept() override;
 
@@ -43,7 +44,7 @@ private:
     void publishFiles();
     void updateControls();
     QString validationError() const;
-    WorkspaceOptions options_;
+    codecairn::ProjectConfiguration options_;
     QString activeRoot_;
     QString defaultName_;
     QString selectionError_;

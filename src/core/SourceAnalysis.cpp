@@ -124,7 +124,7 @@ struct AnalysisContext {
     const QString &fileName;
     SourceAnalysisMode mode;
     const QString &compilationDirectory;
-    SourceAnalysis result;
+    codecairn::SourceAnalysis result;
     LanguageId language = LanguageId::Plain;
     std::unique_ptr<TSParser, decltype(&ts_parser_delete)> parser{nullptr, ts_parser_delete};
     std::unique_ptr<TSTree, decltype(&ts_tree_delete)> tree{nullptr, ts_tree_delete};
@@ -134,7 +134,7 @@ struct AnalysisContext {
         int start;
         int end;
         int declaration;
-        TextStyle style;
+        codecairn::TextStyle style;
     };
     QHash<QByteArray, QVector<Binding>> bindings;
     QVector<TSNode> identifiers;
@@ -146,14 +146,14 @@ struct AnalysisContext {
     void styleBindings();
     void recoverCompilerSymbolsIfNeeded();
     QString text(TSNode node) const;
-    void paint(TSNode node, TextStyle style);
+    void paint(TSNode node, codecairn::TextStyle style);
     int addSymbol(TSNode node, TSNode name, const QString &kind, int parent);
     int addOutline(TSNode node, int parent, const QString &kind);
     void bind(TSNode name, bool parameter);
 };
 }
 
-QString symbolCategory(const SourceSymbol &symbol) {
+QString symbolCategory(const codecairn::SourceSymbol &symbol) {
     if (symbol.category == "Enum")
         return "Enumerations";
     if (symbol.kind == "Type")
@@ -189,7 +189,7 @@ bool AnalysisContext::parseInput() {
         return false;
     }
     if (mode == SourceAnalysisMode::Editor)
-        result.styles = QByteArray(source.size(), static_cast<char>(TextStyle::Plain));
+        result.styles = QByteArray(source.size(), static_cast<char>(codecairn::TextStyle::Plain));
     language = languageForFile(fileName, source).id;
     const auto *grammar = languageById(language).grammar;
     if (!grammar)
@@ -265,7 +265,7 @@ QString AnalysisContext::text(TSNode node) const {
         source.mid(ts_node_start_byte(node), ts_node_end_byte(node) - ts_node_start_byte(node)));
 }
 
-void AnalysisContext::paint(TSNode node, TextStyle style) {
+void AnalysisContext::paint(TSNode node, codecairn::TextStyle style) {
     if (mode != SourceAnalysisMode::Editor)
         return;
     const int start = static_cast<int>(ts_node_start_byte(node));
@@ -354,8 +354,9 @@ void AnalysisContext::bind(TSNode name, bool parameter) {
     bindings[text(name).toUtf8()].append(
         {parameter ? static_cast<int>(ts_node_start_byte(scope)) : declaration,
          static_cast<int>(ts_node_end_byte(scope)), declaration,
-         parameter ? TextStyle::Parameter : TextStyle::Variable});
-    paint(name, parameter ? TextStyle::Parameter : TextStyle::VariableDeclaration);
+         parameter ? codecairn::TextStyle::Parameter : codecairn::TextStyle::Variable});
+    paint(name,
+          parameter ? codecairn::TextStyle::Parameter : codecairn::TextStyle::VariableDeclaration);
 }
 
 void AnalysisContext::extractSyntax() {
@@ -390,38 +391,38 @@ void AnalysisContext::extractSyntax() {
             identifiers.append(node);
         if (type == "comment" || type == "line_comment" || type == "block_comment" ||
             type == "bracket_comment") {
-            paint(node, TextStyle::Comment);
+            paint(node, codecairn::TextStyle::Comment);
             continue;
         }
         if (type == "string_literal" || type == "raw_string_literal" || type == "char_literal" ||
             type == "system_lib_string" || type == "string" || type == "raw_string" ||
             type == "heredoc_body" || type == "quoted_argument") {
-            paint(node, TextStyle::String);
+            paint(node, codecairn::TextStyle::String);
             continue;
         }
         if (cFamily && (type == "null" || type == "true" || type == "false")) {
-            paint(node, TextStyle::Constant);
+            paint(node, codecairn::TextStyle::Constant);
             continue;
         } else if (type == "number_literal")
-            paint(node, TextStyle::Number);
+            paint(node, codecairn::TextStyle::Number);
         else if (type == "type_identifier")
-            paint(node, TextStyle::TypeReference);
+            paint(node, codecairn::TextStyle::TypeReference);
         else if (type == "primitive_type" || type == "sized_type_specifier")
-            paint(node, TextStyle::Primitive);
+            paint(node, codecairn::TextStyle::Primitive);
         else if (type == "field_identifier")
-            paint(node, TextStyle::Field);
+            paint(node, codecairn::TextStyle::Field);
         else if (cFamily && (type == "const" || type == "sizeof" || type == "static"))
-            paint(node, TextStyle::Primitive);
+            paint(node, codecairn::TextStyle::Primitive);
         else if (keywords.contains(type))
-            paint(node, TextStyle::Keyword);
+            paint(node, codecairn::TextStyle::Keyword);
         else if (type.startsWith('#'))
-            paint(node, TextStyle::Preprocessor);
+            paint(node, codecairn::TextStyle::Preprocessor);
         else if (!ts_node_is_named(node) && ts_node_child_count(node) == 0)
             paint(node, cFamily && (type == "(" || type == ")" || type == "{" || type == "}" ||
                                     type == "[" || type == "]" || type == "," || type == ";" ||
                                     type == "?" || type == ":")
-                            ? TextStyle::Punctuation
-                            : TextStyle::Operator);
+                            ? codecairn::TextStyle::Punctuation
+                            : codecairn::TextStyle::Operator);
 
         if (cFamily && type == "parameter_declaration")
             bind(nameNode(field(node, "declarator")), true);
@@ -649,13 +650,14 @@ void AnalysisContext::qualifyAndStyleSymbols() {
                 : "::");
         if (mode != SourceAnalysisMode::Editor)
             continue;
-        const auto style = symbol.kind == "Function"                        ? TextStyle::Function
-                           : symbol.kind == "Type" || symbol.kind == "Enum" ? TextStyle::Type
-                           : symbol.kind == "Macro" ? TextStyle::Preprocessor
-                           : isCFamily(language) && symbol.kind == "Constant" ? TextStyle::Constant
-                           : isCFamily(language) && symbol.kind == "Variable"
-                               ? TextStyle::VariableDeclaration
-                               : TextStyle::Field;
+        const auto style =
+            symbol.kind == "Function"                          ? codecairn::TextStyle::Function
+            : symbol.kind == "Type" || symbol.kind == "Enum"   ? codecairn::TextStyle::Type
+            : symbol.kind == "Macro"                           ? codecairn::TextStyle::Preprocessor
+            : isCFamily(language) && symbol.kind == "Constant" ? codecairn::TextStyle::Constant
+            : isCFamily(language) && symbol.kind == "Variable"
+                ? codecairn::TextStyle::VariableDeclaration
+                : codecairn::TextStyle::Field;
         std::fill(result.styles.begin() + symbol.nameStart, result.styles.begin() + symbol.nameEnd,
                   static_cast<char>(style));
     }
@@ -671,7 +673,7 @@ void AnalysisContext::styleBindings() {
         "strstr",  "strtod",  "strtol", "strtoul", "vsnprintf"};
     for (const auto identifier : identifiers) {
         const int position = static_cast<int>(ts_node_start_byte(identifier));
-        if (result.styles[position] != static_cast<char>(TextStyle::Plain))
+        if (result.styles[position] != static_cast<char>(codecairn::TextStyle::Plain))
             continue;
         const auto name = text(identifier).toUtf8();
         const Binding *binding = nullptr;
@@ -690,10 +692,11 @@ void AnalysisContext::styleBindings() {
             if (!ts_node_is_null(enclosing) &&
                 qstrcmp(ts_node_type(enclosing), "call_expression") == 0 &&
                 ts_node_eq(field(enclosing, "function"), identifier))
-                paint(identifier, libraryFunctions.contains(name) ? TextStyle::LibraryFunction
-                                                                  : TextStyle::FunctionReference);
+                paint(identifier, libraryFunctions.contains(name)
+                                      ? codecairn::TextStyle::LibraryFunction
+                                      : codecairn::TextStyle::FunctionReference);
             else if (constants.contains(name) || constantName(name))
-                paint(identifier, TextStyle::Constant);
+                paint(identifier, codecairn::TextStyle::Constant);
         }
     }
 }
@@ -704,8 +707,9 @@ void AnalysisContext::recoverCompilerSymbolsIfNeeded() {
 }
 }
 
-SourceAnalysis analyzeSource(const QByteArray &source, const QString &fileName,
-                             SourceAnalysisMode mode, const QString &compilationDirectory) {
+codecairn::SourceAnalysis analyzeSource(const QByteArray &source, const QString &fileName,
+                                        SourceAnalysisMode mode,
+                                        const QString &compilationDirectory) {
     if (mode == SourceAnalysisMode::Editor)
         qCInfo(analysisLog) << "analysis.started" << "path=" << fileName
                             << "bytes=" << source.size();

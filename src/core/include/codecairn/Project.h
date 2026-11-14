@@ -7,8 +7,10 @@
 #include <codecairn/Symbols.h>
 
 namespace codecairn {
+namespace detail {
+struct QuerySources;
+}
 
-using ProjectConfiguration = WorkspaceOptions;
 struct ProjectInfo {
     QString root;
     QString projectFile;
@@ -34,7 +36,7 @@ public:
     QStringList excludedDirectories() const;
     void setExcludedDirectories(const QStringList &names);
     void setRefreshIntervalMinutes(int minutes);
-    RequestId refreshIndex(IndexRefresh mode = IndexRefresh::DiscoverChanges);
+    RequestId refreshIndex(codecairn::IndexUpdate mode = codecairn::IndexUpdate::DiscoverChanges);
     RequestId findSymbols(const SymbolQuery &query);
     RequestId findDefinitions(const DefinitionQuery &query);
     RequestId findReferences(const ReferenceQuery &query);
@@ -50,11 +52,11 @@ public:
     Result<void> recreateIndex();
 
 signals:
-    void indexReady(codecairn::RequestId request, const IndexResult &result);
+    void indexReady(codecairn::RequestId request, const codecairn::IndexResult &result);
     void catalogReady(const QStringList &files);
     void indexBatchReady();
     void indexingChanged(bool busy);
-    void symbolsReady(codecairn::RequestId request, const SymbolPage &page);
+    void symbolsReady(codecairn::RequestId request, const codecairn::SymbolPage &page);
     void definitionsReady(codecairn::RequestId request, const codecairn::DefinitionPage &page);
     void referencesReady(codecairn::RequestId request, const codecairn::SearchPage &page);
     void textMatchesReady(codecairn::RequestId request, const codecairn::SearchPage &page);
@@ -67,11 +69,11 @@ signals:
 private:
     friend class Engine;
     explicit Project(Engine *engine);
-    RequestId startSearch(ReferenceSearchRequest request,
-                          const std::optional<SourcePosition> &origin, bool references,
-                          bool declarations);
-    SourceAnalysis cachedAnalysis(const SourceSnapshot &snapshot) const;
+    codecairn::SourceAnalysis cachedAnalysis(const SourceSnapshot &snapshot) const;
     void invalidateOperations();
+    detail::QuerySources captureSources() const;
+    quint64 analysisGeneration() const;
+    QString analysisDirectory(const QString &path) const;
     struct State;
     std::unique_ptr<State> state_;
 };

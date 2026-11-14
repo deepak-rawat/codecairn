@@ -20,7 +20,7 @@ public:
     void open(const QString &root, const QString &projectFile = {},
               OpenMode mode = OpenMode::IndexAndWatch);
     void close();
-    void refresh(IndexRefresh mode = IndexRefresh::DiscoverChanges);
+    void refresh(codecairn::IndexUpdate mode = codecairn::IndexUpdate::DiscoverChanges);
     void cancel();
     QString recreateDatabase();
     bool busy() const { return busy_; }
@@ -31,7 +31,7 @@ public:
     void setRefreshIntervalMinutes(int minutes);
     int refreshIntervalMinutes() const { return pollTimer_.interval() / 60000; }
 signals:
-    void ready(const IndexResult &result);
+    void ready(const codecairn::IndexResult &result);
     void status(const QString &message);
     void failed(const QString &message);
     void busyChanged(bool busy);
@@ -47,8 +47,8 @@ private:
     QString runningRoot_;
     QStringList files_;
     QHash<QString, QByteArray> directorySnapshots_;
-    QStringList excludes_ = defaultWorkspaceExcludes();
-    QFutureWatcher<IndexResult> indexJob_;
+    QStringList excludes_ = defaultExcludedDirectories();
+    QFutureWatcher<codecairn::IndexResult> indexJob_;
     QThreadPool indexPool_;
     QFileSystemWatcher watcher_;
     QTimer refreshTimer_;
@@ -57,7 +57,7 @@ private:
     QTimer resourceTimer_;
     QElapsedTimer resourceElapsed_;
     std::shared_ptr<std::atomic_bool> cancelled_;
-    std::shared_ptr<IndexProgress> progress_;
+    std::shared_ptr<codecairn::IndexProgress> progress_;
     quint64 generation_ = 0;
     quint64 runningGeneration_ = 0;
     bool busy_ = false;

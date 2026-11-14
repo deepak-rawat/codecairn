@@ -23,12 +23,12 @@
 #include <algorithm>
 
 void MainWindow::openManagedProject(const QString &projectFile) {
-    const auto loaded = WorkspaceOptionsStore::loadProject(projectFile);
+    const auto loaded = codecairn::ProjectConfigurationStore::loadProject(projectFile);
     if (!loaded.error.isEmpty()) {
         reportError(loaded.error);
         return;
     }
-    openWorkspace(loaded.root, workspacePath(projectFile));
+    openWorkspace(loaded.root, canonicalPath(projectFile));
 }
 
 void MainWindow::openWorkspace(const QString &root, const QString &projectFile) {
@@ -93,11 +93,11 @@ void MainWindow::openWorkspace(const QString &root, const QString &projectFile) 
         categoryTree_->clear();
         symbolPage_ = {};
         resetSymbolBrowser();
-        readWorkspaceOptions();
+        readProjectConfiguration();
         synchronizeLanguageDocuments();
         restoreProjectSession();
     } else {
-        readWorkspaceOptions();
+        readProjectConfiguration();
         project_->refreshIndex();
     }
     updateOpenSymbols();
@@ -107,8 +107,8 @@ void MainWindow::newProject() {
     ProjectDialog dialog({}, {}, this, configuration_);
     while (dialog.exec() == QDialog::Accepted) {
         const auto file = dialog.projectFile();
-        const auto error =
-            WorkspaceOptionsStore::saveProject(file, dialog.root(), dialog.options());
+        const auto error = codecairn::ProjectConfigurationStore::saveProject(file, dialog.root(),
+                                                                             dialog.options());
         if (error.isEmpty()) {
             openManagedProject(file);
             return;
@@ -125,7 +125,7 @@ void MainWindow::manageProjectFiles() {
         reportError("Use New Project to create a managed file selection.");
         return;
     }
-    const auto options = WorkspaceOptionsStore::loadOptions(root, file);
+    const auto options = codecairn::ProjectConfigurationStore::loadOptions(root, file);
     if (!options.error.isEmpty()) {
         reportError(options.error);
         return;
@@ -143,8 +143,8 @@ void MainWindow::manageProjectFiles() {
                 return;
             closed = true;
         }
-        const auto error =
-            WorkspaceOptionsStore::saveProject(file, dialog.root(), dialog.options());
+        const auto error = codecairn::ProjectConfigurationStore::saveProject(file, dialog.root(),
+                                                                             dialog.options());
         if (error.isEmpty()) {
             openManagedProject(file);
             return;

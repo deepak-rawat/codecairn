@@ -3,12 +3,12 @@
 #include "CompilerSymbolRecovery.h"
 #include <codecairn/FileIO.h>
 #include <codecairn/SourceAnalysis.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QRegularExpression>
 
 namespace {
-QString containerAt(const SourceAnalysis &analysis, int start, int end) {
-    const SourceSymbol *container = nullptr;
+QString containerAt(const codecairn::SourceAnalysis &analysis, int start, int end) {
+    const codecairn::SourceSymbol *container = nullptr;
     for (const auto &symbol : analysis.symbols) {
         if (symbol.outlineOnly || !symbol.definition || symbol.start > start || symbol.end < end ||
             (symbol.kind != "Function" && symbol.kind != "Type" && symbol.kind != "Enum" &&
@@ -24,8 +24,8 @@ QString containerAt(const SourceAnalysis &analysis, int start, int end) {
 }
 
 ReferenceResults findTextOccurrences(const QStringList &paths, const QString &identifier,
-                                     const QVector<SymbolOverlay> &overlays, bool includeComments,
-                                     bool includeStrings,
+                                     const QVector<codecairn::SymbolOverlay> &overlays,
+                                     bool includeComments, bool includeStrings,
                                      const std::shared_ptr<std::atomic_bool> &cancel) {
     ReferenceResults results;
     const auto needle = identifier.toUtf8();
@@ -35,13 +35,13 @@ ReferenceResults findTextOccurrences(const QStringList &paths, const QString &id
     }
     if (paths.isEmpty())
         return results;
-    QHash<QString, const SymbolOverlay *> overlaysByPath;
+    QHash<QString, const codecairn::SymbolOverlay *> overlaysByPath;
     for (const auto &overlay : overlays) {
         if (cancel->load()) {
             results.cancelled = true;
             return results;
         }
-        const auto path = workspacePath(overlay.path);
+        const auto path = canonicalPath(overlay.path);
         if (!overlaysByPath.contains(path))
             overlaysByPath.insert(path, &overlay);
     }
@@ -56,9 +56,9 @@ ReferenceResults findTextOccurrences(const QStringList &paths, const QString &id
             return results;
         }
         FileContents file;
-        SourceAnalysis analysis;
+        codecairn::SourceAnalysis analysis;
         const auto *overlay =
-            overlaysByPath.isEmpty() ? nullptr : overlaysByPath.value(workspacePath(path), nullptr);
+            overlaysByPath.isEmpty() ? nullptr : overlaysByPath.value(canonicalPath(path), nullptr);
         if (overlay) {
             file.bytes = overlay->source;
             analysis = overlay->analysis;
@@ -89,10 +89,10 @@ ReferenceResults findTextOccurrences(const QStringList &paths, const QString &id
             const bool whole = (start == 0 || !word(file.bytes[start - 1])) &&
                                (end == file.bytes.size() || !word(file.bytes[end]));
             const auto style = start < analysis.styles.size()
-                                   ? static_cast<TextStyle>(analysis.styles[start])
-                                   : TextStyle::Plain;
-            if (whole && (includeComments || style != TextStyle::Comment) &&
-                (includeStrings || style != TextStyle::String)) {
+                                   ? static_cast<codecairn::TextStyle>(analysis.styles[start])
+                                   : codecairn::TextStyle::Plain;
+            if (whole && (includeComments || style != codecairn::TextStyle::Comment) &&
+                (includeStrings || style != codecairn::TextStyle::String)) {
                 while (start > lineEnd) {
                     lineStart = lineEnd + 1;
                     lineEnd = file.bytes.indexOf('\n', lineStart);
@@ -121,7 +121,7 @@ ReferenceResults findTextOccurrences(const QStringList &paths, const QString &id
 
 ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
                                            const QStringList &paths, const QString &identifier,
-                                           const QVector<SymbolOverlay> &overlays,
+                                           const QVector<codecairn::SymbolOverlay> &overlays,
                                            const std::shared_ptr<std::atomic_bool> &cancel,
                                            int offset, int limit, bool skipInactive,
                                            const QHash<QString, QByteArray> &expectedHashes,
@@ -138,23 +138,23 @@ ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
     }
     int consumed = 0;
     QHash<QString, FileContents> sources;
-    QHash<QString, SourceAnalysis> analyses;
+    QHash<QString, codecairn::SourceAnalysis> analyses;
     QHash<QString, QByteArray> hashes;
     QHash<QString, InactiveCodeRanges> inactive;
     for (const auto &overlay : overlays) {
-        const auto path = workspacePath(overlay.path);
+        const auto path = canonicalPath(overlay.path);
         sources.insert(path, {overlay.source, {}, false});
         analyses.insert(path, overlay.analysis);
     }
     QSet<QString> scope, seen;
     for (const auto &path : paths)
-        scope.insert(workspacePath(path));
+        scope.insert(canonicalPath(path));
     for (const auto &target : targets) {
         if (cancel && cancel->load()) {
             results.cancelled = true;
             break;
         }
-        const auto path = workspacePath(target.path);
+        const auto path = canonicalPath(target.path);
         if (!scope.contains(path))
             continue;
         if (!sources.contains(path))

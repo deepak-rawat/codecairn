@@ -5,7 +5,7 @@
 #include <codecairn/LanguageRegistry.h>
 #include "SymbolBrowser.h"
 #include <codecairn/CompilationDatabase.h>
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 
 #include <QAction>
 #include <QApplication>
@@ -227,7 +227,7 @@ bool MainWindow::openFile(const QString &path) {
     if (!path.startsWith(":/")) {
         if (projectPath_.isEmpty() && !suppressAutomaticProject_) {
             openProject(QFileInfo(path).absolutePath());
-        } else if (!projectPath_.isEmpty() && !pathInWorkspace(path, projectPath_)) {
+        } else if (!projectPath_.isEmpty() && !pathUnderRoot(path, projectPath_)) {
             const auto choice = QMessageBox::question(
                 this, "File outside workspace",
                 "Use this file's containing folder as the workspace?\nNo keeps the current "
@@ -514,7 +514,7 @@ void MainWindow::syncOutlineToEditor(bool clearWhenOutside) {
     doc->outlineSelectionPending = false;
     const int position = static_cast<int>(doc->editor->send(SCI_GETSELECTIONSTART));
     QTreeWidgetItem *best = nullptr;
-    const SourceSymbol *bestSymbol = nullptr;
+    const codecairn::SourceSymbol *bestSymbol = nullptr;
     bool bestName = false;
     for (QTreeWidgetItemIterator it(outline_); *it; ++it) {
         auto *item = *it;
@@ -746,9 +746,9 @@ void MainWindow::updateContext() {
             }
         }
         if (position >= 0 && position < doc->analysis.styles.size()) {
-            const auto style = static_cast<TextStyle>(doc->analysis.styles[position]);
-            if ((!configuration_.context.comments && style == TextStyle::Comment) ||
-                (!configuration_.context.strings && style == TextStyle::String))
+            const auto style = static_cast<codecairn::TextStyle>(doc->analysis.styles[position]);
+            if ((!configuration_.context.comments && style == codecairn::TextStyle::Comment) ||
+                (!configuration_.context.strings && style == codecairn::TextStyle::String))
                 return;
         }
     }
@@ -756,7 +756,7 @@ void MainWindow::updateContext() {
 }
 
 void MainWindow::showContext(const QString &title, const QByteArray &bytes,
-                             const SourceAnalysis &analysis, int start, int end,
+                             const codecairn::SourceAnalysis &analysis, int start, int end,
                              bool referenceLine) {
     ++contextGeneration_;
     pendingPreviewPath_.clear();
@@ -834,7 +834,7 @@ void MainWindow::openContext() {
     const auto path = contextPath_;
     const auto bytes = contextPreviewEditor_->bytes();
     const int start = contextStart_, end = contextEnd_;
-    NavigationLocation location{
+    codecairn::SourceLocation location{
         path, start, end, -1, QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex()};
     location.wholeLine = contextReferenceLine_;
     navigateTo(location, true, true);
@@ -852,8 +852,9 @@ void MainWindow::previewFile(const QString &path) {
     if (auto *doc = findDocument(path)) {
         contextPath_ = doc->path();
         showContext(QFileInfo(path).fileName() + " - live buffer", doc->editor->bytes(),
-                    doc->analyzedRevision == doc->revision() ? doc->analysis : SourceAnalysis{}, 0,
-                    0);
+                    doc->analyzedRevision == doc->revision() ? doc->analysis
+                                                             : codecairn::SourceAnalysis{},
+                    0, 0);
         return;
     }
     ++contextGeneration_;
@@ -880,7 +881,7 @@ void MainWindow::startDiskPreview() {
     pendingProvenance_.clear();
     const bool open = std::exchange(openAfterPreview_, false);
     const auto compilation =
-        projectContains(path) ? workspaceClangdDirectory(projectPath_, projectFile_) : QString{};
+        projectContains(path) ? projectCompilationDirectory(projectPath_, projectFile_) : QString{};
     diskPreview_->setFuture(QtConcurrent::run([path, compilation] {
         const auto file = readSourceFile(path);
         DiskPreview result{file.bytes, {}, file.error};

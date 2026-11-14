@@ -40,7 +40,7 @@ public:
 
     CodeEditor *editor = nullptr;
     quint64 analyzedRevision = std::numeric_limits<quint64>::max();
-    SourceAnalysis analysis;
+    codecairn::SourceAnalysis analysis;
     QSet<QString> collapsedOutlineKeys;
     QString selectedOutlineKey;
     int outlineScroll = 0;

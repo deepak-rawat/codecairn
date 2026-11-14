@@ -45,7 +45,7 @@ private slots:
         connect(&index, &ProjectIndexer::batchReady, this, [&] {
             if (symbolsMs >= 0)
                 return;
-            const auto page = queryWorkspaceSymbols(directory.path(), {});
+            const auto page = queryProjectSymbols(directory.path(), {});
             QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
             if (page.total > 0) {
                 symbolsMs = elapsed.elapsed();
@@ -60,7 +60,7 @@ private slots:
         QVERIFY2(failures.isEmpty(),
                  failures.isEmpty() ? "" : qPrintable(failures.first().first().toString()));
         QCOMPARE(index.files().size(), fileCount);
-        const auto page = queryWorkspaceSymbols(directory.path(), {});
+        const auto page = queryProjectSymbols(directory.path(), {});
         QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
         QCOMPARE(page.total, fileCount);
         QVERIFY(catalogMs >= 0);
@@ -68,8 +68,8 @@ private slots:
 
         const auto cancel = std::make_shared<std::atomic_bool>(false);
         elapsed.restart();
-        const auto warm =
-            buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {}, cancel);
+        const auto warm = buildProjectIndex(directory.path(),
+                                            codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
         const auto warmMs = elapsed.elapsed();
         QVERIFY2(warm.error.isEmpty(), qPrintable(warm.error));
         QCOMPARE(warm.reused, fileCount);

@@ -1,6 +1,6 @@
 #include "LanguageServerClient.h"
 #include <codecairn/LanguageRegistry.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <codecairn/CompilationDatabase.h>
 #include <codecairn/Diagnostics.h>
 
@@ -156,7 +156,7 @@ void LanguageServerClient::start(const QString &root, const QString &compilation
     stop();
     stopping_ = false;
     serviceName_ = "clangd";
-    root_ = workspacePath(root);
+    root_ = canonicalPath(root);
     configured_ = false;
     const auto database = prepareCompilationDatabase(root_, compilationDirectory, projectFile);
     if (!database.error.isEmpty()) {
@@ -208,7 +208,7 @@ void LanguageServerClient::start(const QString &root, const QString &compilation
 void LanguageServerClient::startServer(const QString &root, const QStringList &command) {
     stop();
     stopping_ = false;
-    root_ = workspacePath(root);
+    root_ = canonicalPath(root);
     configured_ = false;
     serviceName_ = command.value(0);
     const auto executable = QStandardPaths::findExecutable(serviceName_);
@@ -413,7 +413,7 @@ void LanguageServerClient::syncDocument(const QString &path, const QByteArray &s
                                         const QString &languageId) {
     if (path.startsWith(":/"))
         return;
-    const auto key = workspacePath(path);
+    const auto key = canonicalPath(path);
     auto &doc = documents_[key];
     if (!languageId.isEmpty() && languageId != doc.language) {
         if (doc.sent)
@@ -465,7 +465,7 @@ void LanguageServerClient::locations(const QString &path, const QByteArray &sour
     }
     syncDocument(path, source, version);
     cancelLocations(channel);
-    QJsonObject parameters{{"textDocument", QJsonObject{{"uri", uri(workspacePath(path))}}},
+    QJsonObject parameters{{"textDocument", QJsonObject{{"uri", uri(canonicalPath(path))}}},
                            {"position", lspPosition(source, position)}};
     if (references)
         parameters["context"] = QJsonObject{{"includeDeclaration", includeDeclaration}};
@@ -508,7 +508,7 @@ void LanguageServerClient::cancelLocations(const QString &channel) {
 }
 
 void LanguageServerClient::closeDocument(const QString &path) {
-    const auto key = workspacePath(path);
+    const auto key = canonicalPath(path);
     if (documents_.contains(key) && documents_[key].sent)
         notify("textDocument/didClose", {{"textDocument", QJsonObject{{"uri", uri(key)}}}});
     documents_.remove(key);
@@ -517,7 +517,7 @@ void LanguageServerClient::closeDocument(const QString &path) {
 void LanguageServerClient::definition(const QString &path, const QByteArray &source, int version,
                                       int position, quint64 token) {
     syncDocument(path, source, version);
-    selection_ = {workspacePath(path), source, version, position, token};
+    selection_ = {canonicalPath(path), source, version, position, token};
     haveSelection_ = true;
     ++selectionGeneration_;
     if (initialized_)
@@ -563,7 +563,7 @@ void LanguageServerClient::requestSelection() {
                         .toObject();
                 const auto start = range.value("start").toObject(),
                            end = range.value("end").toObject();
-                targets.append({workspacePath(targetUri.toLocalFile()),
+                targets.append({canonicalPath(targetUri.toLocalFile()),
                                 start.value("line").toInt(-1), start.value("character").toInt(-1),
                                 end.value("line").toInt(-1), end.value("character").toInt(-1)});
             }

@@ -161,7 +161,9 @@ flowchart TD
     DOC --> EDIT["CodeEditor: Scintilla adapter"]
     DOC --> TEXT["Document: shared revision/snapshots"]
     UI --> ENGINE["Engine: documents, source reads and job ownership"]
+    ENGINE --> ANALYSIS["AnalysisScheduler: bounded, coalesced requests"]
     ENGINE --> SERVICES["Project: membership and analysis context"]
+    SERVICES --> CONTEXT["ProjectContext: configuration generation"]
     SERVICES --> PARSE["SourceAnalysis and LanguageRegistry"]
     PARSE --> COMP["CompilerSymbolRecovery: libclang"]
     SERVICES --> INDEX["ProjectIndexer: scheduling and watching"]
@@ -178,9 +180,14 @@ flowchart TD
     LSP --> SERVER["clangd or optional server"]
     UI --> BROWSER["SymbolBrowser and DefinitionResolver"]
     SERVICES --> REFS["Reference/text queries and private search jobs"]
+    SERVICES --> DEFINITIONS["DefinitionQueryExecutor"]
+    SERVICES --> SEARCH["SearchExecutor: scope, snapshots and cursors"]
+    DEFINITIONS --> LANG
+    SEARCH --> LANG
+    SEARCH --> REFS
     REFS --> DB
     UI --> RESULTS["ReferenceResultsView: Qt presentation"]
-    UI --> STATE["ApplicationStateStore and WorkspaceOptionsStore"]
+    UI --> STATE["ApplicationStateStore and ProjectConfigurationStore"]
     UI --> SETTINGS["AppSettings and SettingsFile"]
 ```
 
@@ -216,14 +223,16 @@ separate controllers.
 | Parsing, language selection, compiler recovery | [SourceAnalysis.cpp](../src/core/SourceAnalysis.cpp), [LanguageRegistry.cpp](../src/core/LanguageRegistry.cpp), [CompilerSymbolRecovery.cpp](../src/core/CompilerSymbolRecovery.cpp) |
 | Project-owned provider lifecycle | [ProjectLanguages.cpp](../src/core/ProjectLanguages.cpp) |
 | Public domain ownership and project queries | [Engine.cpp](../src/core/Engine.cpp), [Project.cpp](../src/core/Project.cpp), [Document.cpp](../src/core/Document.cpp) |
+| Analysis execution and context/cache ownership | [AnalysisScheduler.cpp](../src/core/AnalysisScheduler.cpp), [ProjectContext.cpp](../src/core/ProjectContext.cpp), [ProjectAnalysisCache.h](../src/core/internal/ProjectAnalysisCache.h) |
+| Definition and text/reference execution | [DefinitionQueryExecutor.cpp](../src/core/DefinitionQueryExecutor.cpp), [SearchExecutor.cpp](../src/core/SearchExecutor.cpp) |
 | Index scheduling, watchers, cancellation | [ProjectIndexer.cpp](../src/core/ProjectIndexer.cpp) |
 | Discovery, indexing phases, query scheduling/execution | [ProjectFileScanner.cpp](../src/core/ProjectFileScanner.cpp), [IndexingPass.cpp](../src/core/IndexingPass.cpp), [ProjectSymbolQuery.cpp](../src/core/ProjectSymbolQuery.cpp), [SymbolQueryExecutor.cpp](../src/core/SymbolQueryExecutor.cpp) |
-| SQLite and path identity | [ProjectIndexStore.cpp](../src/core/ProjectIndexStore.cpp), [WorkspacePaths.cpp](../src/core/WorkspacePaths.cpp) |
+| SQLite and path identity | [ProjectIndexStore.cpp](../src/core/ProjectIndexStore.cpp), [Paths.cpp](../src/core/Paths.cpp) |
 | Browser rows and syntax fallback | [SymbolBrowser.cpp](../src/ui/SymbolBrowser.cpp), [DefinitionResolver.cpp](../src/core/DefinitionResolver.cpp) |
 | LSP, compilation database, coordinate conversion | [LanguageServerClient.cpp](../src/core/LanguageServerClient.cpp), [CompilationDatabase.cpp](../src/core/CompilationDatabase.cpp), [SourceCoordinates.cpp](../src/core/SourceCoordinates.cpp) |
 | Typed search options, matching, semantic result resolution | [SearchOptions.h](../src/core/include/codecairn/SearchOptions.h), [ReferenceQuery.cpp](../src/core/ReferenceQuery.cpp), [ReferenceSearch.cpp](../src/core/ReferenceSearch.cpp) |
 | Candidate postings, history validation/export, text caret | [ReferenceCandidateIndex.cpp](../src/core/ReferenceCandidateIndex.cpp), [ReferenceHistory.cpp](../src/core/ReferenceHistory.cpp), [ReferenceResultsView.cpp](../src/ui/ReferenceResultsView.cpp) |
-| Preferences, window/session state, workspace options | [AppSettings.cpp](../src/ui/AppSettings.cpp), [ApplicationStateStore.cpp](../src/core/ApplicationStateStore.cpp), [WorkspaceOptionsStore.cpp](../src/core/WorkspaceOptionsStore.cpp) |
+| Preferences, window/session state, workspace options | [AppSettings.cpp](../src/ui/AppSettings.cpp), [ApplicationStateStore.cpp](../src/core/ApplicationStateStore.cpp), [ProjectConfigurationStore.cpp](../src/core/ProjectConfigurationStore.cpp) |
 | File safety, shared limits, appearance | [FileIO.cpp](../src/core/FileIO.cpp), [RuntimeLimits.h](../src/core/include/codecairn/RuntimeLimits.h), [UiAppearance.cpp](../src/ui/UiAppearance.cpp) |
 
 MainWindow aliases `SourceDocument` as `Document`. Its important state is:
@@ -288,21 +297,38 @@ and both the GUI and `codecairn-cli` use the core.
   saved contents and lazy snapshots. SourceDocument binds Scintilla as its live
   byte provider, without a second per-keystroke mutable buffer. Analysis results
   belong to the requesting project, not to the shared document.
-- [NavigationTarget.cpp](../src/core/NavigationTarget.cpp) resolves and validates
-  byte/LSP ranges and hashes. [NavigationService.cpp](../src/core/NavigationService.cpp)
-  owns per-channel semantic/syntax lookup policy, context self-target filtering,
-  stale-snapshot rejection, bounded syntax-request coalescing and asynchronous
-  target reads. Explicit semantic-only requests never fall back to syntax.
-  Reads capture live snapshot bytes on the owning thread before dispatch.
-  This service is private. Public Project definition queries return source
-  locations; Engine reads and validates them. The UI alone applies focus/tabs.
-- [ReferenceSession.cpp](../src/core/ReferenceSession.cpp) owns search dispatch,
-  semantic synchronization, page jobs, cancellation, generations, and cross-page
-  source identities. Its optional snapshot provider runs on the owning thread,
-  never a worker, and returns bytes rather than an editor pointer.
-  It is private. Project captures relevant Engine documents automatically and
-  separates symbol references from text search. Frontends supply query/scope,
-  not overlays, language-server messages, versions or compilation directories.
+- [NavigationTarget.cpp](../src/core/NavigationTarget.cpp) validates ranges/hashes;
+  Engine alone owns asynchronous source reads. DefinitionQueryExecutor accepts
+  typed DefinitionQuery/RequestId inputs and returns public DefinitionPage
+  results directly. It owns semantic policy, self-target filtering, freshness
+  checks and syntax fallback, not source reading or UI navigation channels.
+  Applicable cross-file unsaved document snapshots are captured automatically.
+- SearchExecutor owns separate text/reference entry points, scoped source
+  capture, provider dispatch, pagination, cursor validity and cancellation.
+  One immutable input set is captured per search, not recaptured during startup
+  or between pages. Each semantic search has its own internal protocol channel.
+  Snapshot providers run on the owning thread, never a worker. Project routes
+  public results without maintaining another search/session map.
+- AnalysisScheduler owns bounded execution and pending-request coalescing.
+  Each Engine uses two analysis workers, admits at most 130 submitted/undelivered
+  jobs and 512 subscribers, and reports overload asynchronously as
+  "Analysis queue is full; retry after pending work completes." Equivalent
+  in-flight requests share parsing only when project, context generation, path,
+  revision, supplied hash, detail and compilation directory match; source bytes
+  are compared as a collision guard. Cancelling a subscriber does not cancel
+  another subscriber's result. A queued job with no subscribers skips parsing.
+  These limits bound admitted parsing work, not deferred error notifications
+  from an arbitrary synchronous flood of rejected requests.
+  ProjectAnalysisCache accepts only matching current document identities.
+  Full styling analysis is not overwritten by symbol-only analysis of the same
+  revision. Cache entries remain bounded by open documents and are discarded
+  on document close or project-context invalidation.
+- ProjectContext owns validated identity/configuration, the prepared compilation
+  directory and analysis generation. Manual reopening with changed configuration
+  invalidates obsolete analysis just like explicit reload/restart.
+  Invalid configuration leaves the existing context intact and reports an error.
+  Active language providers restart with changed settings; manual contexts stop
+  obsolete providers rather than using their previous compilation settings.
 - ReferenceHistoryModel owns append/replacement limits, staging and rollback on
   persistence failure. Presentation labels, source links, close/quit interaction
   and confirmation prompts remain frontend responsibilities.
@@ -343,7 +369,7 @@ services. SymbolQuery has filter/page fields; source overlays, database identity
 and pending-schema handling are captured internally.
 
 Use the named index modes for `Project::refreshIndex()` and the advanced synchronous
-`buildWorkspaceIndex()` entry point in [Indexing.h](../src/core/include/codecairn/Indexing.h):
+`buildProjectIndex()` entry point in [Indexing.h](../src/core/include/codecairn/Indexing.h):
 
 - `DiscoverChanges`: rediscover files and reuse unchanged analysis.
 - `ReparseKnownFiles`: reparse the current catalog without discovering new files.
@@ -425,7 +451,7 @@ int main(int argc, char **argv) {
     auto *project = engine.createProject();
     codecairn::TextQuery query;
     query.files.scope = codecairn::SearchScope::CurrentFile;
-    query.files.currentFile = workspacePath(app.arguments()[1]);
+    query.files.currentFile = canonicalPath(app.arguments()[1]);
     query.text = "parse";
     QObject::connect(project, &codecairn::Project::textMatchesReady, &app,
                      [&](codecairn::RequestId, const codecairn::SearchPage &page) {
@@ -449,6 +475,9 @@ int main(int argc, char **argv) {
 
 Every query returns an Engine-generated RequestId. Use `project->cancel(id)` to
 abandon project work, or `engine.cancel(id)` for source reads/standalone analysis.
+Project cancellation is owner-scoped: passing another project's request ID cannot
+cancel that project's analysis. Separate semantic definitions and reference
+searches use independent protocol requests, so one does not supersede another.
 No caller-generated token or frontend-specific channel string is needed.
 SearchCursor is an opaque continuation of the captured search, not an offset to
 apply to unrelated results. It becomes invalid on source changes, cancellation,
@@ -465,6 +494,16 @@ AnalysisDetail selects `Symbols` or `StylesAndSymbols`, not a frontend-specific
 "editor" mode; symbol-only analysis avoids allocating style bytes.
 The CLI and [CoreTests.cpp](../tests/core/CoreTests.cpp) show
 executed end-to-end examples, including navigation requests and live documents.
+
+`IndexUpdate` is the canonical namespaced indexing policy, not an alias to an
+older global enum. `SymbolQuery` is the normal frontend query passed to
+`Project::findSymbols()`. The lower-level `SymbolCatalogQuery` describes a
+captured catalog read: overlays, descriptor, paging, counts and cancellation.
+It is deliberately public because bounded virtual symbol/category models and
+index-parity fixtures use independent catalog reads rather than the project's
+single latest-query channel. It is not an ostensibly private `detail` type
+leaking through public headers. These reads remain implemented in the core;
+frontend models own only presentation, page caching and scheduling.
 
 #### Lifetime, threading and result contracts
 
@@ -954,7 +993,7 @@ invalidation or migration, not silent database deletion.
 The compiler-assisted index uses a bumped ParserVersion so syntax-only caches
 are reparsed and macro-generated definitions are restored without deleting databases.
 Managed descriptors select separate database identities through the optional
-`projectFile` on `buildWorkspaceIndex()`, `ProjectIndexer::open()`, and
+`projectFile` on `buildProjectIndex()`, `ProjectIndexer::open()`, and
 `SymbolQuery`; folder and managed-project catalogs never share a store.
 Existing databases must contain the complete required schema before indexing;
 missing versioned tables/columns produce an error and require confirmed recreation,
@@ -1025,7 +1064,7 @@ identity as indexing and document synchronization.
 Generated compilation databases canonicalize file and working-directory fields
 without rewriting compiler arguments. Result-page freshness checks reuse each
 document's revision-cached snapshot hash rather than hashing once per result.
-WorkspacePaths owns the locations; WorkspaceOptionsStore initializes versioned
+Paths owns the locations; ProjectConfigurationStore initializes versioned
 options before indexing/services. The stored root must match the requested
 workspace. An empty compilation directory enables discovery. Edit through the
 UI or close the app before manual changes; the generated normalized compilation
@@ -1057,7 +1096,7 @@ in paint or keystroke paths.
 
 ### Managed project descriptors and selection
 
-`WorkspaceOptionsStore::saveProject()` writes a user-chosen `.cairn` JSON object
+`ProjectConfigurationStore::saveProject()` writes a user-chosen `.cairn` JSON object
 with integer `schemaVersion: 1`, absolute canonical `root`, nonempty editable
 `name`, `includedPaths`, `excludedPaths`, and `compilationDirectory`. The optional
 `excludedDirectories` array retains the distinction between absent (default
@@ -1438,6 +1477,9 @@ Build first. Registration/environment are in
 | Suite | Main coverage |
 |---|---|
 | `core` | Headless project/discovery rules, navigation validation, search pagination/cancellation and transactional history |
+| `analysis` | Public analysis coalescing, admission limits, subscriber cancellation, snapshot identity and context invalidation |
+| `definitions` | Public definition pages, unsaved cross-file sources, freshness, syntax policy and independent clangd requests |
+| `search` | Public text/reference pages, captured scope, cursor ownership, cancellation/errors and concurrent clangd searches |
 | `document_analysis` | Supplied/editor-bound snapshots, stale analysis, compilation changes, dirty-buffer decisions and shutdown |
 | `cli` | Real subprocess analysis/index/query/search, isolated state, JSON/errors, pagination and clangd definitions/references |
 | `workflows` | Paired legacy/shared asynchronous reference dispatch and navigation-read median/p95 fixtures |
@@ -1721,6 +1763,47 @@ The legacy text-occurrence helper preserves the first matching overlay; semantic
 resolution has its own overlay policy. Browser icon caches are scoped to a pass.
 Do not introduce SQL rewrites, custom models, incremental trees, more threads,
 or broad caches without profiling and parity evidence.
+
+### Core execution refactor measurements
+
+The remaining core execution refactor was compared with revision `fc30bd1`
+using identical fixtures on a shared Apple Silicon macOS host (Debug,
+AppleClang 21, Qt 6.12). Both analysis harnesses explicitly use two workers,
+matching GUI/CLI configuration; an unconstrained old standalone global pool is
+not a valid comparison with the new Engine-owned pool.
+
+[AnalysisBenchmarks.cpp](../tests/benchmarks/AnalysisBenchmarks.cpp) measures
+complete asynchronous bursts, including submission and result delivery. Each
+reported value is a seven-iteration median; the ranges below are two final
+serial runs with reversed order:
+
+| Analysis burst | Before | After |
+|---|---:|---:|
+| 128 distinct 27-byte Python snapshots | 3.427-3.479 ms | 3.393-3.477 ms |
+| 512 equivalent 27-byte Python snapshots | 13.567-13.725 ms | 0.958-0.971 ms |
+| 128 distinct 3,307-byte Python snapshots | 251.116-254.151 ms | 246.798-254.745 ms |
+
+Earlier tiny-source runs showed roughly 1 ms added fixed cost per 128 distinct
+requests; single-subscriber delivery was subsequently simplified. The final
+medians overlap, but individual worst samples still vary (new tiny bursts up to
+8.1 ms versus old up to 4.5 ms). These measurements do not establish a universal
+zero-cost or tail-latency guarantee. Equivalent pending requests demonstrably
+avoid repeated parsing, while distinct representative work has no stable
+throughput regression in these runs.
+
+The unchanged 25k-file indexing fixture measured cold 11.949-13.029 s before
+and 11.955-12.021 s after; warm 2.722-2.755 s before and 2.715-2.725 s after.
+Exact counts/reuse assertions passed. Repeated lookup, snapshot and source-read
+fixtures likewise found no stable regression. Measured reference dispatch and
+navigation reads exclude setup; use the analysis burst fixture above to assess
+setup analysis rather than attributing executable startup time to a query.
+
+Complete validation passed all 28 CTest entries, including functional suites,
+launcher/version checks and benchmark smoke tests. Real clangd concurrency is
+covered where available. Optional external-workspace cases need
+explicit fixtures and may skip. Offscreen GUI tests and shared-host Debug
+measurements are not native Windows/Linux/macOS input, packaging, release
+performance or app-wide certification.
 
 ### UI screenshot and native input
 

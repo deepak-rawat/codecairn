@@ -1,7 +1,7 @@
 #include "ProjectIndexer.h"
 #include "ProjectFileScanner.h"
 #include <codecairn/Diagnostics.h>
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 
 #include <QFileInfo>
 #include <QDir>
@@ -34,7 +34,7 @@ ProjectIndexer::ProjectIndexer(QObject *parent) : QObject(parent) {
     refreshTimer_.setSingleShot(true);
     refreshTimer_.setInterval(700);
     pollTimer_.setTimerType(Qt::VeryCoarseTimer);
-    pollTimer_.setInterval(RuntimeLimits::DefaultWorkspaceRefreshMinutes * 60000);
+    pollTimer_.setInterval(RuntimeLimits::DefaultProjectRefreshMinutes * 60000);
     progressTimer_.setInterval(250);
     resourceTimer_.setInterval(5000);
     connect(&resourceTimer_, &QTimer::timeout, this, [this] {
@@ -63,7 +63,7 @@ ProjectIndexer::ProjectIndexer(QObject *parent) : QObject(parent) {
         const int parsed = progress_->parsed.load();
         if (runningAutomatic_ && parsed == 0)
             return;
-        emit status(progress_->phase.load() == IndexPhase::References
+        emit status(progress_->phase.load() == codecairn::IndexPhase::References
                         ? QString("Symbols ready; preparing reference acceleration...")
                     : parsed > 0 ? QString("Indexing: %1 files discovered, %2 parsed, %3 committed")
                                        .arg(progress_->discovered.load())
@@ -72,7 +72,7 @@ ProjectIndexer::ProjectIndexer(QObject *parent) : QObject(parent) {
                                  : QString("Checking workspace: %1 files discovered")
                                        .arg(progress_->discovered.load()));
     });
-    connect(&indexJob_, &QFutureWatcher<IndexResult>::finished, this, [this] {
+    connect(&indexJob_, &QFutureWatcher<codecairn::IndexResult>::finished, this, [this] {
         resourceTimer_.stop();
         logResources("complete");
         busy_ = false;
@@ -139,7 +139,7 @@ ProjectIndexer::~ProjectIndexer() {
 }
 
 void ProjectIndexer::open(const QString &root, const QString &projectFile, OpenMode mode) {
-    root_ = workspacePath(root);
+    root_ = canonicalPath(root);
     projectFile_ = projectFile;
     ++generation_;
     files_.clear();
@@ -147,8 +147,8 @@ void ProjectIndexer::open(const QString &root, const QString &projectFile, OpenM
     automaticFileChanged_ = false;
     refreshTimer_.stop();
     progressTimer_.stop();
-    const auto options = WorkspaceOptionsStore::loadOptions(root_, projectFile_);
-    excludes_ = options.excludedDirectories.value_or(defaultWorkspaceExcludes());
+    const auto options = codecairn::ProjectConfigurationStore::loadOptions(root_, projectFile_);
+    excludes_ = options.excludedDirectories.value_or(defaultExcludedDirectories());
     if (cancelled_)
         cancelled_->store(true);
     if (!watcher_.directories().isEmpty())
@@ -184,22 +184,22 @@ void ProjectIndexer::close() {
 }
 
 void ProjectIndexer::setRefreshIntervalMinutes(int minutes) {
-    if (minutes < 1 || minutes > RuntimeLimits::MaximumWorkspaceRefreshMinutes) {
+    if (minutes < 1 || minutes > RuntimeLimits::MaximumProjectRefreshMinutes) {
         qCWarning(indexLog) << "index.invalid_refresh_interval" << "root=" << root_
                             << "minutes=" << minutes;
         emit failed(QString("Workspace refresh interval must be between 1 and %1 minutes.")
-                        .arg(RuntimeLimits::MaximumWorkspaceRefreshMinutes));
+                        .arg(RuntimeLimits::MaximumProjectRefreshMinutes));
         return;
     }
     if (pollTimer_.interval() != minutes * 60000)
         pollTimer_.setInterval(minutes * 60000);
 }
 
-void ProjectIndexer::refresh(IndexRefresh mode) {
-    const bool force =
-        mode == IndexRefresh::ReparseKnownFiles || mode == IndexRefresh::RebuildFilesAndSymbols;
-    const bool rescan =
-        mode == IndexRefresh::DiscoverChanges || mode == IndexRefresh::RebuildFilesAndSymbols;
+void ProjectIndexer::refresh(codecairn::IndexUpdate mode) {
+    const bool force = mode == codecairn::IndexUpdate::ReparseKnownFiles ||
+                       mode == codecairn::IndexUpdate::RebuildFilesAndSymbols;
+    const bool rescan = mode == codecairn::IndexUpdate::DiscoverChanges ||
+                        mode == codecairn::IndexUpdate::RebuildFilesAndSymbols;
     requestRefresh(force, rescan, false, true);
 }
 
@@ -243,8 +243,8 @@ QString ProjectIndexer::recreateDatabase() {
         logResources("complete");
     busy_ = false;
     emit busyChanged(false);
-    const auto database = workspaceDatabase(root_, projectFile_);
-    const auto metadata = workspaceStorageDirectory(root_, {}, projectFile_);
+    const auto database = projectIndexPath(root_, projectFile_);
+    const auto metadata = projectStateDirectory(root_, {}, projectFile_);
     QLockFile lock(QDir(metadata).filePath("index.lock"));
     if (!lock.tryLock(0))
         return "Another CodeCairn process is using the workspace index; cannot recreate it.";
@@ -288,7 +288,7 @@ void ProjectIndexer::startPending() {
     busy_ = true;
     runningGeneration_ = generation_;
     cancelled_ = std::make_shared<std::atomic_bool>(false);
-    progress_ = std::make_shared<IndexProgress>();
+    progress_ = std::make_shared<codecairn::IndexProgress>();
     const auto generation = runningGeneration_;
     progress_->catalogReady = [this, generation](const QStringList &paths) {
         QMetaObject::invokeMethod(
@@ -330,36 +330,36 @@ void ProjectIndexer::startPending() {
     resourceElapsed_.start();
     logResources("start");
     resourceTimer_.start();
-    indexJob_.setFuture(QtConcurrent::run(&indexPool_, [root, projectFile, excludes, cancel,
-                                                        progress, snapshots, automatic,
-                                                        verifyContents, force, rescan] {
-        if (automatic && !force && !verifyContents && !snapshots.isEmpty()) {
-            bool unchanged = true;
-            for (auto it = snapshots.cbegin(); it != snapshots.cend(); ++it) {
-                const QFileInfo directory(it.key());
-                if (!directory.isDir() || !directory.isReadable() ||
-                    directorySnapshot(directoryEntries(it.key()), excludes) != it.value()) {
-                    unchanged = false;
-                    break;
+    indexJob_.setFuture(
+        QtConcurrent::run(&indexPool_, [root, projectFile, excludes, cancel, progress, snapshots,
+                                        automatic, verifyContents, force, rescan] {
+            if (automatic && !force && !verifyContents && !snapshots.isEmpty()) {
+                bool unchanged = true;
+                for (auto it = snapshots.cbegin(); it != snapshots.cend(); ++it) {
+                    const QFileInfo directory(it.key());
+                    if (!directory.isDir() || !directory.isReadable() ||
+                        directorySnapshot(directoryEntries(it.key()), excludes) != it.value()) {
+                        unchanged = false;
+                        break;
+                    }
+                    if (cancel->load())
+                        break;
                 }
-                if (cancel->load())
-                    break;
+                if (unchanged || cancel->load()) {
+                    codecairn::IndexResult result;
+                    result.root = root;
+                    result.automatic = true;
+                    result.skipped = unchanged;
+                    result.cancelled = cancel->load();
+                    return result;
+                }
             }
-            if (unchanged || cancel->load()) {
-                IndexResult result;
-                result.root = root;
-                result.automatic = true;
-                result.skipped = unchanged;
-                result.cancelled = cancel->load();
-                return result;
-            }
-        }
-        const auto mode =
-            force
-                ? (rescan ? IndexRefresh::RebuildFilesAndSymbols : IndexRefresh::ReparseKnownFiles)
-                : (rescan ? IndexRefresh::DiscoverChanges : IndexRefresh::CheckKnownFiles);
-        auto result = buildWorkspaceIndex(root, mode, excludes, cancel, progress, projectFile);
-        result.automatic = automatic;
-        return result;
-    }));
+            const auto mode = force ? (rescan ? codecairn::IndexUpdate::RebuildFilesAndSymbols
+                                              : codecairn::IndexUpdate::ReparseKnownFiles)
+                                    : (rescan ? codecairn::IndexUpdate::DiscoverChanges
+                                              : codecairn::IndexUpdate::CheckKnownFiles);
+            auto result = buildProjectIndex(root, mode, excludes, cancel, progress, projectFile);
+            result.automatic = automatic;
+            return result;
+        }));
 }

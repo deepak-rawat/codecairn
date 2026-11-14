@@ -1,7 +1,7 @@
 #include "ProjectDialog.h"
 #include <codecairn/Diagnostics.h>
 #include "UiAppearance.h"
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 
 #include <QAbstractListModel>
 #include <QDialogButtonBox>
@@ -98,8 +98,8 @@ public:
     }
 };
 
-ProjectDialog::ProjectDialog(const QString &root, const WorkspaceOptions &options, QWidget *parent,
-                             const AppSettings &settings)
+ProjectDialog::ProjectDialog(const QString &root, const codecairn::ProjectConfiguration &options,
+                             QWidget *parent, const AppSettings &settings)
     : QDialog(parent), options_(options), scanJob_(this) {
     const bool editing = options.managed;
     setWindowTitle(editing ? tr("Manage Project Files") : tr("New Project"));
@@ -339,7 +339,7 @@ ProjectDialog::~ProjectDialog() {
 
 QString ProjectDialog::root() const {
     const auto text = rootEdit_->text().trimmed();
-    return text.isEmpty() ? QString{} : workspacePath(text);
+    return text.isEmpty() ? QString{} : canonicalPath(text);
 }
 
 QString ProjectDialog::projectFile() const {
@@ -347,7 +347,7 @@ QString ProjectDialog::projectFile() const {
     return text.isEmpty() ? QString{} : QDir::cleanPath(text);
 }
 
-WorkspaceOptions ProjectDialog::options() const {
+codecairn::ProjectConfiguration ProjectDialog::options() const {
     auto result = options_;
     result.name = nameEdit_->text().trimmed();
     return result;

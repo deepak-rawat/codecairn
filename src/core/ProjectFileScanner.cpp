@@ -1,7 +1,7 @@
 #include "ProjectFileScanner.h"
 #include <codecairn/LanguageRegistry.h>
 #include "ProjectIndexStore.h"
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 
 #include <QDataStream>
 #include <QDateTime>
@@ -46,8 +46,9 @@ QByteArray directorySnapshot(const QFileInfoList &entries, const QStringList &ex
 QStringList scanProjectFiles(ProjectIndexStore &database, const QString &root, bool rescan,
                              const QStringList &excludes,
                              const std::shared_ptr<std::atomic_bool> &cancel,
-                             const std::shared_ptr<IndexProgress> &progress, IndexResult &result,
-                             const WorkspaceOptions &options) {
+                             const std::shared_ptr<codecairn::IndexProgress> &progress,
+                             codecairn::IndexResult &result,
+                             const codecairn::ProjectConfiguration &options) {
     auto membership = options;
     membership.excludedDirectories = excludes;
     QStringList paths;
@@ -73,7 +74,7 @@ QStringList scanProjectFiles(ProjectIndexStore &database, const QString &root, b
                     ++result.suppressedWarnings;
                 IndexStatement old(database, "SELECT path FROM files");
                 while (old.next())
-                    if (pathInWorkspace(old.text(0), directory) &&
+                    if (pathUnderRoot(old.text(0), directory) &&
                         projectIncludesPath(root, old.text(0), membership))
                         paths.append(old.text(0));
                 continue;
@@ -89,7 +90,7 @@ QStringList scanProjectFiles(ProjectIndexStore &database, const QString &root, b
                         directories.append(entry.absoluteFilePath());
                 } else if (entry.isFile() &&
                            projectIncludesPath(root, entry.absoluteFilePath(), membership)) {
-                    paths.append(workspacePath(entry.absoluteFilePath()));
+                    paths.append(canonicalPath(entry.absoluteFilePath()));
                     if (progress)
                         ++progress->discovered;
                 }

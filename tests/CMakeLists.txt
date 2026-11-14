@@ -20,6 +20,9 @@ function(
 endfunction()
 
 codecairn_core_test(core_tests core/CoreTests.cpp core)
+codecairn_core_test(search_tests core/SearchTests.cpp search)
+codecairn_core_test(definition_tests core/DefinitionTests.cpp definitions)
+codecairn_core_test(analysis_tests core/AnalysisTests.cpp analysis)
 codecairn_core_test(document_analysis_tests core/DocumentAnalysisTests.cpp document_analysis)
 codecairn_core_test(analysis_parity_tests core/AnalysisParityTests.cpp analysis_parity)
 codecairn_core_test(index_parity_tests core/IndexParityTests.cpp index_parity)
@@ -53,6 +56,8 @@ option(CODECAIRN_BUILD_BENCHMARKS "Build and register benchmark fixtures" ON)
 if(CODECAIRN_BUILD_BENCHMARKS)
     codecairn_core_test(workflow_benchmarks benchmarks/WorkflowBenchmarks.cpp workflows)
     set_tests_properties(workflows PROPERTIES LABELS benchmark)
+    codecairn_core_test(analysis_benchmarks benchmarks/AnalysisBenchmarks.cpp analysis_benchmarks)
+    set_tests_properties(analysis_benchmarks PROPERTIES LABELS benchmark)
 endif()
 
 if(NOT CODECAIRN_BUILD_GUI)

@@ -6,7 +6,7 @@
 #include "ProjectIndexStore.h"
 #include "TestStorage.h"
 #include <codecairn/Indexing.h>
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 
 #include <QElapsedTimer>
 #include <QApplication>
@@ -32,19 +32,19 @@ class SymbolScalingTests : public QObject {
 private slots:
     void largeCatalogRemainsBrowsableAndNavigable() {
         QTemporaryDir directory;
-        const auto root = workspacePath(directory.path());
+        const auto root = canonicalPath(directory.path());
         const auto path = QDir(root).filePath("symbols.c");
         const QByteArray source = "int needle(void) { return 1; }\n";
         QVERIFY(writeSourceFile(path, source, false).isEmpty());
         const auto catalogPath = QDir(root).filePath("catalog.c");
         QVERIFY(writeSourceFile(catalogPath, "int unused;\n", false).isEmpty());
-        const auto built = buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {},
-                                               std::make_shared<std::atomic_bool>(false));
+        const auto built = buildProjectIndex(root, codecairn::IndexUpdate::DiscoverChanges, {},
+                                             std::make_shared<std::atomic_bool>(false));
         QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
         const int requested = qEnvironmentVariableIntValue("CODECAIRN_SYMBOL_SCALE");
         const int count = requested > 0 ? requested : 100000;
         {
-            ProjectIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(projectIndexPath(root), true);
             db.ensureSchema();
             db.exec("BEGIN; DELETE FROM symbols;");
             const auto sql =
@@ -67,13 +67,13 @@ private slots:
         auto *index = window.findChild<ProjectIndexer *>();
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
         index->cancel();
-        SymbolQuery summaryQuery;
+        codecairn::SymbolCatalogQuery summaryQuery;
         summaryQuery.limit = 4097;
         summaryQuery.includeCategorySymbols = true;
         summaryQuery.categoryLimit = 4097;
         QElapsedTimer elapsed;
         elapsed.start();
-        const auto summary = queryWorkspaceSymbols(root, summaryQuery);
+        const auto summary = queryProjectSymbols(root, summaryQuery);
         QVERIFY2(summary.error.isEmpty(), qPrintable(summary.error));
         QCOMPARE(summary.total, count);
         QCOMPARE(summary.symbols.size(), qMin(count, 4097));
@@ -81,12 +81,12 @@ private slots:
         qInfo() << "symbols=" << count << "overviewMs=" << elapsed.elapsed();
         QVERIFY(elapsed.elapsed() < 10000);
 
-        SymbolQuery lookup;
+        codecairn::SymbolCatalogQuery lookup;
         lookup.text = "needle";
         lookup.exact = true;
         lookup.includeCategories = false;
         elapsed.restart();
-        const auto target = queryWorkspaceSymbols(root, lookup);
+        const auto target = queryProjectSymbols(root, lookup);
         QVERIFY2(target.error.isEmpty(), qPrintable(target.error));
         QCOMPARE(target.total, 1);
         QCOMPARE(target.symbols.first().symbol.name, QString("needle"));
@@ -117,7 +117,7 @@ private slots:
         refreshes.start();
         QTRY_VERIFY_WITH_TIMEOUT(!replies.isEmpty(), 10000);
         refreshes.stop();
-        const auto reply = qvariant_cast<SymbolPage>(replies.last().first());
+        const auto reply = qvariant_cast<codecairn::SymbolPage>(replies.last().first());
         QVERIFY(!reply.cancelled);
         QCOMPARE(reply.total, count);
 
@@ -170,43 +170,43 @@ private slots:
 
     void growingCatalogRefetchesShortAndShiftedPages() {
         QTemporaryDir directory;
-        const auto root = workspacePath(directory.path());
+        const auto root = canonicalPath(directory.path());
         const auto path = QDir(root).filePath("source.c");
         QVERIFY(writeSourceFile(path, "int source;\n", false).isEmpty());
-        QVERIFY(buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {},
-                                    std::make_shared<std::atomic_bool>(false))
+        QVERIFY(buildProjectIndex(root, codecairn::IndexUpdate::DiscoverChanges, {},
+                                  std::make_shared<std::atomic_bool>(false))
                     .error.isEmpty());
         {
-            ProjectIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(projectIndexPath(root), true);
             db.exec("BEGIN; DELETE FROM symbols;"
                     "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<299)"
                     "INSERT INTO symbols SELECT path,printf('name_%03d',i),'Variable','','',1,"
                     "0,11,4,10,0,'Variable',0,'syntax' FROM files,n; COMMIT;");
         }
-        SymbolQuery query;
+        codecairn::SymbolCatalogQuery query;
         query.limit = 128;
-        auto summary = queryWorkspaceSymbols(root, query);
+        auto summary = queryProjectSymbols(root, query);
         QCOMPARE(summary.total, 300);
         SymbolCatalogModel model(false);
         model.setCatalog(root, query, summary);
         QTRY_VERIFY(model.entry(model.index(299, 0)).has_value());
         QCOMPARE(model.entry(model.index(299, 0))->symbol.name, QString("name_299"));
         {
-            ProjectIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(projectIndexPath(root), true);
             db.exec("INSERT INTO symbols SELECT path,'zzz_new','Variable','','',1,"
                     "0,11,4,10,0,'Variable',0,'syntax' FROM files;");
         }
-        summary = queryWorkspaceSymbols(root, query);
+        summary = queryProjectSymbols(root, query);
         QCOMPARE(summary.total, 301);
         model.setCatalog(root, query, summary);
         QTRY_VERIFY(model.entry(model.index(300, 0)).has_value());
         QCOMPARE(model.entry(model.index(300, 0))->symbol.name, QString("zzz_new"));
         {
-            ProjectIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(projectIndexPath(root), true);
             db.exec("INSERT INTO symbols SELECT path,'aaa_new','Variable','','',1,"
                     "0,11,4,10,0,'Variable',0,'syntax' FROM files;");
         }
-        summary = queryWorkspaceSymbols(root, query);
+        summary = queryProjectSymbols(root, query);
         model.setCatalog(root, query, summary);
         QTRY_VERIFY(model.entry(model.index(299, 0)).has_value());
         QCOMPARE(model.entry(model.index(299, 0))->symbol.name, QString("name_298"));
@@ -261,15 +261,16 @@ private slots:
             QSKIP("Set an isolated database snapshot and source root for real Linux validation.");
         QTemporaryDir directory;
         const auto projectFile = directory.filePath("linux-audit.cairn");
-        WorkspaceOptions options;
+        codecairn::ProjectConfiguration options;
         options.managed = true;
         options.name = "Linux audit";
         options.includedPaths = {"."};
-        QVERIFY(WorkspaceOptionsStore::saveProject(projectFile, root, options).isEmpty());
-        QVERIFY(WorkspaceOptionsStore::initialize(root, projectFile).isEmpty());
+        QVERIFY(codecairn::ProjectConfigurationStore::saveProject(projectFile, root, options)
+                    .isEmpty());
+        QVERIFY(codecairn::ProjectConfigurationStore::initialize(root, projectFile).isEmpty());
         {
             ProjectIndexStore source(snapshot, false);
-            ProjectIndexStore target(workspaceDatabase(root, projectFile), true);
+            ProjectIndexStore target(projectIndexPath(root, projectFile), true);
             auto *backup = sqlite3_backup_init(target.handle(), "main", source.handle(), "main");
             QVERIFY2(backup, sqlite3_errmsg(target.handle()));
             const int copied = sqlite3_backup_step(backup, -1);
@@ -277,14 +278,14 @@ private slots:
             QCOMPARE(copied, SQLITE_DONE);
             target.ensureSchema();
         }
-        SymbolQuery query;
+        codecairn::SymbolCatalogQuery query;
         query.projectFile = projectFile;
         query.limit = 4097;
         query.categoryLimit = 4097;
         query.includeCategorySymbols = true;
         QElapsedTimer elapsed;
         elapsed.start();
-        const auto summary = queryWorkspaceSymbols(root, query);
+        const auto summary = queryProjectSymbols(root, query);
         QVERIFY2(summary.error.isEmpty(), qPrintable(summary.error));
         QVERIFY(summary.total > 100000);
         qInfo() << "Linux snapshot symbols=" << summary.total << "overviewMs=" << elapsed.elapsed();
@@ -304,13 +305,13 @@ private slots:
         QVERIFY(!model->entry(last)->symbol.name.isEmpty());
         QVERIFY(model->cachedRows() <= 16 * 128);
 
-        SymbolQuery lookup;
+        codecairn::SymbolCatalogQuery lookup;
         lookup.projectFile = projectFile;
         lookup.includeCategories = false;
         lookup.text = "amdgpu_device_init";
         lookup.exact = true;
         elapsed.restart();
-        const auto matches = queryWorkspaceSymbols(root, lookup);
+        const auto matches = queryProjectSymbols(root, lookup);
         QVERIFY2(matches.error.isEmpty(), qPrintable(matches.error));
         QVERIFY(matches.total > 0);
         const auto definition =
@@ -363,15 +364,16 @@ private slots:
             QSKIP("Set an isolated Linux index snapshot and source root.");
         QTemporaryDir directory;
         const auto projectFile = directory.filePath("linux.cairn");
-        WorkspaceOptions options;
+        codecairn::ProjectConfiguration options;
         options.managed = true;
         options.name = "Linux screenshot";
         options.includedPaths = {"drivers/gpu"};
-        QVERIFY(WorkspaceOptionsStore::saveProject(projectFile, root, options).isEmpty());
-        QVERIFY(WorkspaceOptionsStore::initialize(root, projectFile).isEmpty());
+        QVERIFY(codecairn::ProjectConfigurationStore::saveProject(projectFile, root, options)
+                    .isEmpty());
+        QVERIFY(codecairn::ProjectConfigurationStore::initialize(root, projectFile).isEmpty());
         {
             ProjectIndexStore source(snapshot, false);
-            ProjectIndexStore target(workspaceDatabase(root, projectFile), true);
+            ProjectIndexStore target(projectIndexPath(root, projectFile), true);
             auto *backup = sqlite3_backup_init(target.handle(), "main", source.handle(), "main");
             QVERIFY(backup);
             const auto code = sqlite3_backup_step(backup, -1);

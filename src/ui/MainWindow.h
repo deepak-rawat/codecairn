@@ -9,7 +9,7 @@
 #include "ReferenceItemRoles.h"
 #include "SourceDocument.h"
 #include <codecairn/ApplicationStateStore.h>
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include <QMainWindow>
 #include <QFutureWatcher>
 #include <QSet>
@@ -74,7 +74,7 @@ private:
     using Document = SourceDocument;
     struct DiskPreview {
         QByteArray bytes;
-        SourceAnalysis analysis;
+        codecairn::SourceAnalysis analysis;
         QString error;
     };
     void buildUi();
@@ -106,14 +106,16 @@ private:
     void navigateContext(int direction);
     void openContext();
     void initializeNavigation();
-    void navigateTo(const NavigationLocation &location, bool pin = false, bool focus = false,
-                    bool record = true, const std::optional<IndexedSymbol> &indexedTarget = {});
-    void commitNavigation(const NavigationLocation &location, const FileContents &file, bool pin,
-                          bool focus, bool record, const NavigationLocation &origin,
+    void navigateTo(const codecairn::SourceLocation &location, bool pin = false, bool focus = false,
+                    bool record = true,
+                    const std::optional<codecairn::IndexedSymbol> &indexedTarget = {});
+    void commitNavigation(const codecairn::SourceLocation &location, const FileContents &file,
+                          bool pin, bool focus, bool record,
+                          const codecairn::SourceLocation &origin,
                           const QPointer<QWidget> &previousFocus,
-                          const std::optional<IndexedSymbol> &indexedTarget,
+                          const std::optional<codecairn::IndexedSymbol> &indexedTarget,
                           const std::optional<ResolvedNavigation> &resolvedRange = {});
-    NavigationLocation currentLocation() const;
+    codecairn::SourceLocation currentLocation() const;
     void navigateHistory(int direction);
     void pinDocument(Document *document);
     void navigateOutline(bool pin);
@@ -124,7 +126,6 @@ private:
     void jumpToDefinition(CodeEditor *editor, int position);
     void handleDefinitionResult(quint64 token, const QString &channel,
                                 const codecairn::DefinitionPage &result);
-    void navigateDefinition(const LspLocation &target);
     void lookupLink(CodeEditor *editor, int position, bool activate);
     codecairn::Engine *engine_;
     codecairn::RequestId contextRequest_, hoverRequest_, jumpRequest_, sourceReadRequest_;
@@ -154,7 +155,7 @@ private:
     void cancelReferenceSearch();
     void activateReferenceResult(bool open);
     void stepReferenceResult(int direction, bool first = false);
-    QVector<SymbolOverlay> referenceOverlays_;
+    QVector<codecairn::SymbolOverlay> referenceOverlays_;
     QString referenceIdentifier_;
     ReferenceHistoryModel referenceHistory_;
     QVector<ReferenceGroup> &referenceGroups_ = referenceHistory_.groups;
@@ -193,27 +194,27 @@ private:
     QHash<QString, QAction *> actions_;
     void lookupReferences(CodeEditor *editor = nullptr, bool projectSearch = false,
                           const QString &symbolPath = {}, int symbolPosition = -1);
-    QVector<SymbolOverlay> liveOverlays() const;
-    void displaySymbols(const SymbolPage &page);
+    QVector<codecairn::SymbolOverlay> liveOverlays() const;
+    void displaySymbols(const codecairn::SymbolPage &page);
     QTreeView *projectSymbolView() const;
     QTreeView *projectCategoryView() const;
     void resetSymbolBrowser();
     void activateProjectSymbol(bool open);
     void activateCategorySymbol(bool open);
-    void activateIndexedSymbol(const IndexedSymbol &entry, bool open);
-    void previewTarget(const IndexedSymbol &target, const QString &provenance);
+    void activateIndexedSymbol(const codecairn::IndexedSymbol &entry, bool open);
+    void previewTarget(const codecairn::IndexedSymbol &target, const QString &provenance);
     void resolveDefinition(const QString &path, const QByteArray &source, int version,
                            int position);
     void displayContextDefinitions(quint64 token, const codecairn::DefinitionPage &result);
-    void displayDefinitionCandidates(quint64 token, const DefinitionCandidates &candidates);
+    void displayDefinitionCandidates(quint64 token, const codecairn::DefinitionPage &candidates);
     void chooseDefinition(int index);
-    void semanticPreview(const LspLocation &target);
+    void semanticPreview(const codecairn::SourceLocation &target);
     void restartLanguageService();
     void synchronizeLanguageDocuments();
-    void readWorkspaceOptions();
-    bool writeWorkspaceOptions(const QStringList &excludedDirectories);
-    void refreshWorkspace(IndexRefresh mode);
-    void reconcileOpenDocuments(const IndexResult &result);
+    void readProjectConfiguration();
+    bool writeProjectConfiguration(const QStringList &excludedDirectories);
+    void refreshWorkspace(codecairn::IndexUpdate mode);
+    void reconcileOpenDocuments(const codecairn::IndexResult &result);
     Document *currentDocument() const;
     Document *findDocument(const QString &path) const;
     void addDocument(const QString &path, const QByteArray &bytes, bool bom, bool focus = true,
@@ -222,8 +223,9 @@ private:
     void updateOutline();
     void updateOpenSymbols();
     void updateContext();
-    void showContext(const QString &title, const QByteArray &bytes, const SourceAnalysis &analysis,
-                     int start, int end, bool referenceLine = false);
+    void showContext(const QString &title, const QByteArray &bytes,
+                     const codecairn::SourceAnalysis &analysis, int start, int end,
+                     bool referenceLine = false);
     void previewFile(const QString &path);
     void startDiskPreview();
     void applyTypography();
@@ -293,14 +295,14 @@ private:
     NavigationHistory navigationHistory_;
     quint64 navigationGeneration_ = 0;
     struct OpenRequest {
-        NavigationLocation location;
-        NavigationLocation origin;
+        codecairn::SourceLocation location;
+        codecairn::SourceLocation origin;
         QPointer<QWidget> focusWidget;
         bool pin = false;
         bool focus = false;
         bool record = true;
         quint64 generation = 0;
-        std::optional<IndexedSymbol> indexedTarget;
+        std::optional<codecairn::IndexedSymbol> indexedTarget;
     };
     std::optional<OpenRequest> pendingOpen_;
     QTimer *hoverTimer_;
@@ -315,20 +317,20 @@ private:
     QLabel *symbolScope_;
     QComboBox *definitionChoices_;
     codecairn::Project *project_;
-    SymbolPage symbolPage_;
-    std::optional<IndexedSymbol> selectedProjectSymbol_;
+    codecairn::SymbolPage symbolPage_;
+    std::optional<codecairn::IndexedSymbol> selectedProjectSymbol_;
     QStringList indexWarnings_;
     QTimer *symbolQueryTimer_;
     QString compilationDirectory_;
-    QVector<IndexedSymbol> fallbackTargets_;
-    QVector<LspLocation> semanticTargets_;
+    QVector<codecairn::IndexedSymbol> fallbackTargets_;
+    QVector<codecairn::SourceLocation> semanticTargets_;
     bool semanticChoice_ = false;
     QString lookupName_;
     QString lookupProvider_;
     bool hasPreviewTarget_ = false;
-    IndexedSymbol previewTarget_;
+    codecairn::IndexedSymbol previewTarget_;
     bool pendingSemantic_ = false;
-    LspLocation pendingDefinition_;
+    codecairn::SourceLocation pendingDefinition_;
     QString pendingProvenance_;
     bool openAfterPreview_ = false;
     bool contextFollowsEditor_ = true;
@@ -353,7 +355,7 @@ private:
         QString title;
         QString path;
         QByteArray bytes;
-        SourceAnalysis analysis;
+        codecairn::SourceAnalysis analysis;
         int start = 0;
         int end = 0;
         bool referenceLine = false;
@@ -369,7 +371,7 @@ private:
     QString projectPath_;
     QString projectFile_;
     QString projectName_;
-    WorkspaceOptions projectOptions_;
+    codecairn::ProjectConfiguration projectOptions_;
     QMenu *recentProjectsMenu_ = nullptr;
     bool suppressAutomaticProject_ = false;
     QPointer<QDialog> recreateIndexDialog_;

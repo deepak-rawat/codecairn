@@ -1,5 +1,5 @@
 #include <codecairn/FileIO.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 
 #include <QDir>
 #include <QFileInfo>
@@ -321,7 +321,7 @@ private slots:
         QCOMPARE(reply.code, 0);
         QCOMPARE(reply.json["hits"].toArray().size(), 1);
         QCOMPARE(reply.json["hits"].toArray()[0].toObject()["path"].toString(),
-                 workspacePath(unsavedPath));
+                 canonicalPath(unsavedPath));
         QCOMPARE(reply.json["filesSearched"].toInt(), 1);
         QVERIFY(!QFileInfo::exists(unsavedPath));
         QVERIFY(writeSourceFile(buffer, {}, false).isEmpty());

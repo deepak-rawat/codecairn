@@ -4,8 +4,7 @@
 
 namespace codecairn {
 
-using Symbol = ::SourceSymbol;
-using SymbolPage = ::SymbolPage;
+using Symbol = codecairn::SourceSymbol;
 
 struct SymbolQuery {
     QString text;
@@ -17,7 +16,7 @@ struct SymbolQuery {
     bool includeCategorySymbols = false;
     bool includeCounts = true;
     int categoryPageSize = -1;
-    std::optional<IndexedSymbol> anchor;
+    std::optional<codecairn::IndexedSymbol> anchor;
 };
 
 }

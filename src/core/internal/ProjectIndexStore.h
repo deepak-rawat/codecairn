@@ -86,7 +86,7 @@ public:
     IndexedFileMetadata metadata(const QString &path);
     bool reconcile(const QStringList &paths, const std::shared_ptr<std::atomic_bool> &cancel);
     void updateMetadata(const FileIndexRecord &file);
-    bool replace(const FileIndexRecord &file, const QVector<SourceSymbol> &symbols,
+    bool replace(const FileIndexRecord &file, const QVector<codecairn::SourceSymbol> &symbols,
                  const std::shared_ptr<std::atomic_bool> &cancel);
 
 private:

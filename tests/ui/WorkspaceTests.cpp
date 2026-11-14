@@ -3,7 +3,7 @@
 #include <codecairn/FileIO.h>
 #include "MainWindow.h"
 #include "TestStorage.h"
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include <codecairn/CompilationDatabase.h>
 #include "CompilerSymbolRecovery.h"
 #include "ProjectIndexStore.h"
@@ -39,12 +39,13 @@
 
 #include "ProjectIndexer.h"
 namespace {
-IndexResult index(const QString &root, bool force = false, bool rescan = true) {
-    const auto mode =
-        force ? (rescan ? IndexRefresh::RebuildFilesAndSymbols : IndexRefresh::ReparseKnownFiles)
-              : (rescan ? IndexRefresh::DiscoverChanges : IndexRefresh::CheckKnownFiles);
-    return buildWorkspaceIndex(workspacePath(root), mode, {".git", "build"},
-                               std::make_shared<std::atomic_bool>(false));
+codecairn::IndexResult index(const QString &root, bool force = false, bool rescan = true) {
+    const auto mode = force ? (rescan ? codecairn::IndexUpdate::RebuildFilesAndSymbols
+                                      : codecairn::IndexUpdate::ReparseKnownFiles)
+                            : (rescan ? codecairn::IndexUpdate::DiscoverChanges
+                                      : codecairn::IndexUpdate::CheckKnownFiles);
+    return buildProjectIndex(canonicalPath(root), mode, {".git", "build"},
+                             std::make_shared<std::atomic_bool>(false));
 }
 void write(const QString &path, const QByteArray &bytes) {
     // Simulate an external tool writing in place while the editor/indexer runs.
@@ -130,11 +131,11 @@ void WorkspaceTests::persistsUnopenedSymbolsAndSkipsMetadata() {
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     QCOMPARE(result.files.size(), 3);
     QCOMPARE(result.parsed, 2);
-    QVERIFY(QFileInfo::exists(workspaceDatabase(dir.path())));
-    QVERIFY(!pathInWorkspace(workspaceDatabase(dir.path()), dir.path()));
+    QVERIFY(QFileInfo::exists(projectIndexPath(dir.path())));
+    QVERIFY(!pathUnderRoot(projectIndexPath(dir.path()), dir.path()));
     QCOMPARE(QDir(dir.path()).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot),
              QStringList({".git", "api.h", "impl.cpp", "notes.txt"}));
-    const auto page = queryWorkspaceSymbols(dir.path(), {});
+    const auto page = queryProjectSymbols(dir.path(), {});
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QCOMPARE(page.total, 2);
     int definitions = 0;
@@ -171,12 +172,12 @@ void WorkspaceTests::refreshRebuildAndDeletion() {
     write(dir.filePath("new.cpp"), "int newcomer();\n");
     auto refreshed = index(dir.path());
     QCOMPARE(refreshed.parsed, 2);
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).total, 2);
+    QCOMPARE(queryProjectSymbols(dir.path(), {}).total, 2);
     QVERIFY(QFile::remove(a));
     QVERIFY(QFile::rename(dir.filePath("new.cpp"), dir.filePath("renamed.cpp")));
     refreshed = index(dir.path());
     QCOMPARE(refreshed.files.size(), 1);
-    const auto page = queryWorkspaceSymbols(dir.path(), {});
+    const auto page = queryProjectSymbols(dir.path(), {});
     QCOMPARE(page.total, 1);
     QVERIFY(page.symbols.first().path.endsWith("renamed.cpp"));
     const auto rebuild = index(dir.path(), true, false);
@@ -190,15 +191,15 @@ void WorkspaceTests::dirtyOverlayReplacesDiskSymbols() {
     write(path, "int disk_name();\n");
     QVERIFY(index(dir.path()).error.isEmpty());
     const QByteArray dirty = "int unsaved_name();\n";
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.overlays.append({path, dirty, analyzeSource(dirty, path)});
-    const auto result = queryWorkspaceSymbols(dir.path(), query);
+    const auto result = queryProjectSymbols(dir.path(), query);
     QCOMPARE(result.total, 1);
     QCOMPARE(result.symbols.first().symbol.name, "unsaved_name");
     QVERIFY(result.symbols.first().live);
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).symbols.first().symbol.name, "disk_name");
+    QCOMPARE(queryProjectSymbols(dir.path(), {}).symbols.first().symbol.name, "disk_name");
     query.overlays[0].analysis = {};
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), query).total, 0);
+    QCOMPARE(queryProjectSymbols(dir.path(), query).total, 0);
 }
 
 void WorkspaceTests::queryPaginationFragmentsAndRegex() {
@@ -208,13 +209,13 @@ void WorkspaceTests::queryPaginationFragmentsAndRegex() {
         text += "int function_" + QByteArray::number(i) + "();\n";
     write(dir.filePath("many.cpp"), text);
     QVERIFY(index(dir.path()).error.isEmpty());
-    SymbolQuery query;
-    auto result = queryWorkspaceSymbols(dir.path(), query);
+    codecairn::SymbolCatalogQuery query;
+    auto result = queryProjectSymbols(dir.path(), query);
     QCOMPARE(result.total, 654);
     QCOMPARE(result.symbols.size(), 300);
     query.limit = 17;
     query.includeCategorySymbols = true;
-    const auto bounded = queryWorkspaceSymbols(dir.path(), query);
+    const auto bounded = queryProjectSymbols(dir.path(), query);
     QCOMPARE(bounded.total, 654);
     QCOMPARE(bounded.symbols.size(), 17);
     QCOMPARE(bounded.categorySymbols.size(), bounded.total);
@@ -222,17 +223,17 @@ void WorkspaceTests::queryPaginationFragmentsAndRegex() {
     query.limit = RuntimeLimits::SymbolPageSize;
     query.includeCategorySymbols = false;
     query.offset = 600;
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), query).symbols.size(), 54);
+    QCOMPARE(queryProjectSymbols(dir.path(), query).symbols.size(), 54);
     query.offset = 0;
     query.text = "doc write(";
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), query).total, 2);
+    QCOMPARE(queryProjectSymbols(dir.path(), query).total, 2);
     query.text = "?^function_[0-9]+$";
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), query).total, 650);
+    QCOMPARE(queryProjectSymbols(dir.path(), query).total, 650);
     query.text = "?[invalid";
-    QVERIFY(!queryWorkspaceSymbols(dir.path(), query).error.isEmpty());
+    QVERIFY(!queryProjectSymbols(dir.path(), query).error.isEmpty());
     query.text.clear();
     query.category = "Structures";
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), query).total, 1);
+    QCOMPARE(queryProjectSymbols(dir.path(), query).total, 1);
 }
 
 void WorkspaceTests::symbolCategoriesPersistAndOverlay() {
@@ -258,9 +259,9 @@ void WorkspaceTests::symbolCategoriesPersistAndOverlay() {
         {"Structures", 3},          {"Type Definitions", 2}, {"Enumerations", 2}, {"Constants", 1},
         {"Enum Constants", 3},      {"Variables", 1},        {"Functions", 1},    {"Macros", 1},
         {"Function Prototypes", 2}, {"Data Members", 2}};
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.includeCategorySymbols = true;
-    const auto page = queryWorkspaceSymbols(dir.path(), query);
+    const auto page = queryProjectSymbols(dir.path(), query);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QCOMPARE(page.categories, expected);
     QCOMPARE(page.total, 18);
@@ -269,7 +270,7 @@ void WorkspaceTests::symbolCategoriesPersistAndOverlay() {
     for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
         query.category = it.key();
         query.limit = 1;
-        const auto filtered = queryWorkspaceSymbols(dir.path(), query);
+        const auto filtered = queryProjectSymbols(dir.path(), query);
         QCOMPARE(filtered.total, it.value());
         QCOMPARE(filtered.symbols.size(), 1);
         QCOMPARE(symbolCategory(filtered.symbols.first().symbol), it.key());
@@ -278,7 +279,7 @@ void WorkspaceTests::symbolCategoriesPersistAndOverlay() {
     }
     query.category.clear();
     query.text = "run(";
-    const auto filtered = queryWorkspaceSymbols(dir.path(), query);
+    const auto filtered = queryProjectSymbols(dir.path(), query);
     QCOMPARE(filtered.total, 2);
     QCOMPARE(filtered.categories, expected);
     QCOMPARE(filtered.categorySymbols.size(), page.total);
@@ -286,14 +287,14 @@ void WorkspaceTests::symbolCategoriesPersistAndOverlay() {
     query.limit = 300;
     const QByteArray dirty = "enum Changed { NewValue };\nint replacement() { return 0; }\n";
     query.overlays.append({path, dirty, analyzeSource(dirty, path)});
-    const auto overlay = queryWorkspaceSymbols(dir.path(), query);
+    const auto overlay = queryProjectSymbols(dir.path(), query);
     const QMap<QString, int> overlayCategories{
         {"Enumerations", 1}, {"Enum Constants", 1}, {"Functions", 1}};
     QCOMPARE(overlay.categories, overlayCategories);
     QCOMPARE(overlay.categorySymbols.size(), 3);
     for (const auto &entry : overlay.categorySymbols)
         QVERIFY(entry.live);
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).categories, expected);
+    QCOMPARE(queryProjectSymbols(dir.path(), {}).categories, expected);
 }
 
 void WorkspaceTests::cancellationPreservesCompletedIndex() {
@@ -304,33 +305,33 @@ void WorkspaceTests::cancellationPreservesCompletedIndex() {
         write(dir.filePath(QString("new_%1.cpp").arg(i)),
               "int function_" + QByteArray::number(i) + "();\n");
     const auto cancel = std::make_shared<std::atomic_bool>(false);
-    const auto progress = std::make_shared<IndexProgress>();
+    const auto progress = std::make_shared<codecairn::IndexProgress>();
     bool catalogPublished = false;
     progress->catalogReady = [&](const QStringList &paths) {
         catalogPublished = true;
         QCOMPARE(paths.size(), 41);
         QCOMPARE(progress->parsed.load(), 0);
-        QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).total, 1);
+        QCOMPARE(queryProjectSymbols(dir.path(), {}).total, 1);
     };
     progress->batchReady = [&] {
         QVERIFY(catalogPublished);
-        const auto page = queryWorkspaceSymbols(dir.path(), {});
+        const auto page = queryProjectSymbols(dir.path(), {});
         QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
         QVERIFY(page.total > 1);
         QVERIFY(page.total < 41);
         cancel->store(true);
     };
-    const auto stopped = buildWorkspaceIndex(workspacePath(dir.path()),
-                                             IndexRefresh::DiscoverChanges, {}, cancel, progress);
+    const auto stopped = buildProjectIndex(
+        canonicalPath(dir.path()), codecairn::IndexUpdate::DiscoverChanges, {}, cancel, progress);
     QVERIFY(stopped.cancelled);
     QVERIFY(stopped.parsed > 0);
-    const auto partial = queryWorkspaceSymbols(dir.path(), {});
+    const auto partial = queryProjectSymbols(dir.path(), {});
     QCOMPARE(partial.total, stopped.parsed + 1);
     const auto resumed = index(dir.path());
     QVERIFY2(resumed.error.isEmpty(), qPrintable(resumed.error));
     QCOMPARE(resumed.reused, stopped.parsed + 1);
     QCOMPARE(resumed.parsed + stopped.parsed, 40);
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).total, 41);
+    QCOMPARE(queryProjectSymbols(dir.path(), {}).total, 41);
 }
 
 void WorkspaceTests::syntaxOnlyAnalysisPreservesSymbolsWithoutStyles() {
@@ -359,13 +360,13 @@ void WorkspaceTests::unsupportedSchemaRequiresExplicitRecreation() {
     write(dir.filePath("one.cpp"), "int one();\n");
     QVERIFY(index(dir.path()).error.isEmpty());
     {
-        codecairn::detail::ProjectIndexStore database(workspaceDatabase(dir.path()), true);
+        codecairn::detail::ProjectIndexStore database(projectIndexPath(dir.path()), true);
         database.exec("PRAGMA user_version=1;");
     }
     QVERIFY(index(dir.path()).error.contains("Unsupported workspace database version"));
-    QVERIFY(queryWorkspaceSymbols(dir.path(), {})
+    QVERIFY(queryProjectSymbols(dir.path(), {})
                 .error.contains("Unsupported workspace database version"));
-    codecairn::detail::ProjectIndexStore database(workspaceDatabase(dir.path()), false);
+    codecairn::detail::ProjectIndexStore database(projectIndexPath(dir.path()), false);
     codecairn::detail::IndexStatement count(database, "SELECT count(*) FROM symbols");
     QVERIFY(count.next());
     QCOMPARE(count.integer(0), 1);
@@ -374,8 +375,8 @@ void WorkspaceTests::unsupportedSchemaRequiresExplicitRecreation() {
 void WorkspaceTests::databaseRecreationArchivesAndHonorsLock() {
     QTemporaryDir dir;
     write(dir.filePath("one.cpp"), "int one();\n");
-    QVERIFY(WorkspaceOptionsStore::initialize(dir.path()).isEmpty());
-    const auto database = workspaceDatabase(dir.path());
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(dir.path()).isEmpty());
+    const auto database = projectIndexPath(dir.path());
     write(database, "broken database");
     ProjectIndexer workspace;
     QSignalSpy failed(&workspace, &ProjectIndexer::failed);
@@ -384,7 +385,7 @@ void WorkspaceTests::databaseRecreationArchivesAndHonorsLock() {
     QSignalSpy batches(&workspace, &ProjectIndexer::batchReady);
     workspace.open(dir.path());
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 10000);
-    QLockFile lock(QDir(workspaceStorageDirectory(dir.path())).filePath("index.lock"));
+    QLockFile lock(QDir(projectStateDirectory(dir.path())).filePath("index.lock"));
     QVERIFY(lock.tryLock(0));
     QVERIFY(!workspace.recreateDatabase().isEmpty());
     QCOMPARE(readSourceFile(database).bytes, QByteArray("broken database"));
@@ -393,7 +394,7 @@ void WorkspaceTests::databaseRecreationArchivesAndHonorsLock() {
     QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
     QVERIFY(!catalog.isEmpty());
     QVERIFY(!batches.isEmpty());
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).total, 1);
+    QCOMPARE(queryProjectSymbols(dir.path(), {}).total, 1);
     const auto backups =
         QDir(QFileInfo(database).absolutePath()).entryList({"index.sqlite3.backup-*"}, QDir::Files);
     QCOMPARE(backups.size(), 1);
@@ -403,46 +404,47 @@ void WorkspaceTests::databaseRecreationArchivesAndHonorsLock() {
 
 void WorkspaceTests::managedProjectsIndexOnlySelectedMembership() {
     QTemporaryDir dir;
-    const auto root = workspacePath(dir.path());
+    const auto root = canonicalPath(dir.path());
     QVERIFY(QDir(dir.path()).mkpath("selected/excluded"));
     QVERIFY(QDir(dir.path()).mkpath("other"));
     write(dir.filePath("selected/one.cpp"), "int selected_symbol();\n");
     write(dir.filePath("selected/excluded/no.cpp"), "int excluded_symbol();\n");
     write(dir.filePath("other/two.cpp"), "int other_symbol();\n");
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "Selected";
     options.includedPaths = {"selected"};
     options.excludedPaths = {"selected/excluded"};
     const auto first = QDir(root).filePath("first.cairn");
-    const auto projectError = WorkspaceOptionsStore::saveProject(first, root, options);
+    const auto projectError =
+        codecairn::ProjectConfigurationStore::saveProject(first, root, options);
     QVERIFY2(projectError.isEmpty(), qPrintable(projectError));
     options.name = "Other";
     options.includedPaths = {"other"};
     options.excludedPaths.clear();
     const auto second = QDir(root).filePath("second.cairn");
-    QVERIFY(WorkspaceOptionsStore::saveProject(second, root, options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(second, root, options).isEmpty());
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto selected =
-        buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {}, cancel, {}, first);
+        buildProjectIndex(root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel, {}, first);
     QVERIFY2(selected.error.isEmpty(), qPrintable(selected.error));
-    QCOMPARE(selected.files, QStringList{workspacePath(dir.filePath("selected/one.cpp"))});
-    QVERIFY(!selected.directories.contains(workspacePath(dir.filePath("other"))));
-    QVERIFY(!selected.directories.contains(workspacePath(dir.filePath("selected/excluded"))));
+    QCOMPARE(selected.files, QStringList{canonicalPath(dir.filePath("selected/one.cpp"))});
+    QVERIFY(!selected.directories.contains(canonicalPath(dir.filePath("other"))));
+    QVERIFY(!selected.directories.contains(canonicalPath(dir.filePath("selected/excluded"))));
     const auto other =
-        buildWorkspaceIndex(root, IndexRefresh::DiscoverChanges, {}, cancel, {}, second);
+        buildProjectIndex(root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel, {}, second);
     QVERIFY2(other.error.isEmpty(), qPrintable(other.error));
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.projectFile = first;
-    const auto firstPage = queryWorkspaceSymbols(dir.path(), query);
+    const auto firstPage = queryProjectSymbols(dir.path(), query);
     QVERIFY2(firstPage.error.isEmpty(), qPrintable(firstPage.error));
     QCOMPARE(firstPage.total, 1);
     QCOMPARE(firstPage.symbols.first().symbol.name, "selected_symbol");
     query.projectFile = second;
-    const auto secondPage = queryWorkspaceSymbols(dir.path(), query);
+    const auto secondPage = queryProjectSymbols(dir.path(), query);
     QCOMPARE(secondPage.total, 1);
     QCOMPARE(secondPage.symbols.first().symbol.name, "other_symbol");
-    QVERIFY(workspaceDatabase(dir.path(), first) != workspaceDatabase(dir.path(), second));
+    QVERIFY(projectIndexPath(dir.path(), first) != projectIndexPath(dir.path(), second));
 }
 
 void WorkspaceTests::failedReplacementRetainsPreviousSymbols() {
@@ -454,13 +456,12 @@ void WorkspaceTests::failedReplacementRetainsPreviousSymbols() {
     const auto failed = index(dir.path());
     QVERIFY(failed.error.isEmpty());
     QVERIFY(!failed.warnings.isEmpty());
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).symbols.first().symbol.name, "previous_symbol");
+    QCOMPARE(queryProjectSymbols(dir.path(), {}).symbols.first().symbol.name, "previous_symbol");
     write(path, "int replacement_symbol();\n");
     const auto replaced = index(dir.path());
     QVERIFY2(replaced.error.isEmpty(), qPrintable(replaced.error));
     QCOMPARE(replaced.parsed, 1);
-    QCOMPARE(queryWorkspaceSymbols(dir.path(), {}).symbols.first().symbol.name,
-             "replacement_symbol");
+    QCOMPARE(queryProjectSymbols(dir.path(), {}).symbols.first().symbol.name, "replacement_symbol");
 }
 
 void WorkspaceTests::parallelParsersOverlapAndPublishWhileBusy() {
@@ -472,9 +473,9 @@ void WorkspaceTests::parallelParsersOverlapAndPublishWhileBusy() {
         source += "int parallel_symbol_" + QByteArray::number(i) + "(int value);\n";
     for (int i = 0; i < 12; ++i)
         write(dir.filePath(QString("parallel_%1.cpp").arg(i)), source);
-    const auto progress = std::make_shared<IndexProgress>();
-    const auto built = buildWorkspaceIndex(dir.path(), IndexRefresh::DiscoverChanges, {},
-                                           std::make_shared<std::atomic_bool>(false), progress);
+    const auto progress = std::make_shared<codecairn::IndexProgress>();
+    const auto built = buildProjectIndex(dir.path(), codecairn::IndexUpdate::DiscoverChanges, {},
+                                         std::make_shared<std::atomic_bool>(false), progress);
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     QCOMPARE(built.parsed, 12);
     QVERIFY(progress->peakParsers.load() >= 2);
@@ -492,7 +493,7 @@ void WorkspaceTests::parallelParsersOverlapAndPublishWhileBusy() {
     connect(&workspace, &ProjectIndexer::batchReady, this, [&] {
         if (queriedWhileBusy)
             return;
-        const auto page = queryWorkspaceSymbols(dir.path(), {});
+        const auto page = queryProjectSymbols(dir.path(), {});
         QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
         QCOMPARE(page.total, 48000);
         queriedWhileBusy = workspace.busy();
@@ -524,7 +525,9 @@ void WorkspaceTests::initialPassUsesConfiguredExclusions() {
     QTemporaryDir dir;
     QVERIFY(QDir(dir.path()).mkpath("build"));
     write(dir.filePath("build/one.cpp"), "int included_on_first_pass();\n");
-    QVERIFY(WorkspaceOptionsStore::saveOptions(workspacePath(dir.path()), {}, {".git"}).isEmpty());
+    QVERIFY(
+        codecairn::ProjectConfigurationStore::saveOptions(canonicalPath(dir.path()), {}, {".git"})
+            .isEmpty());
     ProjectIndexer workspace;
     QSignalSpy ready(&workspace, &ProjectIndexer::ready);
     QSignalSpy catalog(&workspace, &ProjectIndexer::catalogReady);
@@ -533,57 +536,57 @@ void WorkspaceTests::initialPassUsesConfiguredExclusions() {
     QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
     QCOMPARE(catalog.size(), 1);
     QCOMPARE(catalog.first().first().toStringList(),
-             QStringList{workspacePath(dir.filePath("build/one.cpp"))});
-    const auto page = queryWorkspaceSymbols(dir.path(), {});
+             QStringList{canonicalPath(dir.filePath("build/one.cpp"))});
+    const auto page = queryProjectSymbols(dir.path(), {});
     QCOMPARE(page.total, 1);
     QCOMPARE(page.symbols.first().symbol.name, "included_on_first_pass");
 }
 
 void WorkspaceTests::pendingInitialSchemaDoesNotMaskUnsupportedDatabases() {
     QTemporaryDir dir;
-    const auto root = workspacePath(dir.path());
-    QVERIFY(WorkspaceOptionsStore::initialize(root).isEmpty());
-    codecairn::detail::ProjectIndexStore writer(workspaceDatabase(root), true);
+    const auto root = canonicalPath(dir.path());
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(root).isEmpty());
+    codecairn::detail::ProjectIndexStore writer(projectIndexPath(root), true);
     writer.exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;"
                 "CREATE TABLE files(path TEXT PRIMARY KEY);");
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.allowPendingSchema = true;
-    const auto pending = queryWorkspaceSymbols(root, query);
+    const auto pending = queryProjectSymbols(root, query);
     QVERIFY2(pending.error.isEmpty(), qPrintable(pending.error));
     QCOMPARE(pending.total, 0);
     const auto path = QDir(root).filePath("live.cpp");
     const QByteArray source = "int live_during_initialization();\n";
     query.overlays.append({path, source, analyzeSource(source, path)});
-    const auto live = queryWorkspaceSymbols(root, query);
+    const auto live = queryProjectSymbols(root, query);
     QVERIFY2(live.error.isEmpty(), qPrintable(live.error));
     QCOMPARE(live.total, 1);
     QCOMPARE(live.symbols.first().symbol.name, "live_during_initialization");
     query.overlays.clear();
     query.allowPendingSchema = false;
-    QVERIFY(queryWorkspaceSymbols(root, query)
-                .error.contains("Unsupported workspace database version"));
+    QVERIFY(
+        queryProjectSymbols(root, query).error.contains("Unsupported workspace database version"));
     writer.exec("ROLLBACK; PRAGMA user_version=1;");
     query.allowPendingSchema = true;
-    QVERIFY(queryWorkspaceSymbols(root, query)
-                .error.contains("Unsupported workspace database version"));
+    QVERIFY(
+        queryProjectSymbols(root, query).error.contains("Unsupported workspace database version"));
     writer.exec("PRAGMA user_version=0; CREATE TABLE legacy_marker(value INTEGER);");
-    QVERIFY(queryWorkspaceSymbols(root, query)
-                .error.contains("Unsupported workspace database version"));
+    QVERIFY(
+        queryProjectSymbols(root, query).error.contains("Unsupported workspace database version"));
     writer.exec("DROP TABLE legacy_marker;");
     writer.ensureSchema();
-    const auto ready = queryWorkspaceSymbols(root, query);
+    const auto ready = queryProjectSymbols(root, query);
     QVERIFY2(ready.error.isEmpty(), qPrintable(ready.error));
     QCOMPARE(ready.total, 0);
 }
 
 void WorkspaceTests::corruptDatabaseIsReported() {
     QTemporaryDir dir;
-    QVERIFY(WorkspaceOptionsStore::initialize(dir.path()).isEmpty());
-    const auto path = workspaceDatabase(dir.path());
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(dir.path()).isEmpty());
+    const auto path = projectIndexPath(dir.path());
     write(path, "not a sqlite database");
     const auto result = index(dir.path());
     QVERIFY(!result.error.isEmpty());
-    const auto query = queryWorkspaceSymbols(dir.path(), {});
+    const auto query = queryProjectSymbols(dir.path(), {});
     QVERIFY(!query.error.isEmpty());
     QCOMPARE(readSourceFile(path).bytes, QByteArray("not a sqlite database"));
 }
@@ -593,21 +596,21 @@ void WorkspaceTests::missingSchemaIsNotSilentlyRecreated() {
     write(directory.filePath("one.c"), "int preserved;\n");
     QVERIFY(index(directory.path()).error.isEmpty());
     {
-        codecairn::detail::ProjectIndexStore db(workspaceDatabase(directory.path()), true);
+        codecairn::detail::ProjectIndexStore db(projectIndexPath(directory.path()), true);
         db.exec("DROP TABLE symbols;");
     }
     const auto result = index(directory.path());
     QVERIFY(result.error.contains("no such table"));
-    const auto page = queryWorkspaceSymbols(directory.path(), {});
+    const auto page = queryProjectSymbols(directory.path(), {});
     QVERIFY(page.error.contains("no such table"));
-    codecairn::detail::ProjectIndexStore db(workspaceDatabase(directory.path()), false);
+    codecairn::detail::ProjectIndexStore db(projectIndexPath(directory.path()), false);
     codecairn::detail::IndexStatement table(db, "SELECT 1 FROM sqlite_master WHERE name='symbols'");
     QVERIFY(!table.next());
 }
 
 void WorkspaceTests::unwritableMetadataIsReported() {
     QTemporaryDir dir;
-    const auto metadata = workspaceStorageDirectory(dir.path());
+    const auto metadata = projectStateDirectory(dir.path());
     QVERIFY(QDir().mkpath(QFileInfo(metadata).absolutePath()));
     write(metadata, "a file occupies the metadata directory");
     write(dir.filePath("source.cpp"), "int source();\n");
@@ -626,22 +629,24 @@ void WorkspaceTests::workspaceStorageIsIsolatedAndCoLocated() {
     write(QDir(second).filePath("second.cpp"), "int second();\n");
     QVERIFY2(index(first).error.isEmpty(), "First workspace indexing failed");
     QVERIFY2(index(second).error.isEmpty(), "Second workspace indexing failed");
-    QVERIFY(workspaceStorageDirectory(first) != workspaceStorageDirectory(second));
-    QCOMPARE(workspaceStorageDirectory(first),
-             workspaceStorageDirectory(QDir(first).filePath(".")));
+    QVERIFY(projectStateDirectory(first) != projectStateDirectory(second));
+    QCOMPARE(projectStateDirectory(first), projectStateDirectory(QDir(first).filePath(".")));
     ApplicationStateStore state(defaultStateDirectory());
-    QCOMPARE(QFileInfo(state.sessionPath(first)).absolutePath(), workspaceStorageDirectory(first));
-    QCOMPARE(QFileInfo(workspaceOptionsPath(first)).absolutePath(),
-             workspaceStorageDirectory(first));
-    QCOMPARE(QFileInfo(workspaceDatabase(first)).absolutePath(), workspaceStorageDirectory(first));
-    QCOMPARE(QFileInfo(workspaceClangdDirectory(first)).absolutePath(),
-             workspaceStorageDirectory(first));
-    QVERIFY(WorkspaceOptionsStore::saveOptions(first, "build-one", {"generated"}).isEmpty());
-    QVERIFY(WorkspaceOptionsStore::saveOptions(second, "build-two", {}).isEmpty());
-    QCOMPARE(WorkspaceOptionsStore::loadOptions(first).compilationDirectory, "build-one");
-    QCOMPARE(WorkspaceOptionsStore::loadOptions(second).compilationDirectory, "build-two");
-    QCOMPARE(queryWorkspaceSymbols(first, {}).symbols.first().symbol.name, "first");
-    QCOMPARE(queryWorkspaceSymbols(second, {}).symbols.first().symbol.name, "second");
+    QCOMPARE(QFileInfo(state.sessionPath(first)).absolutePath(), projectStateDirectory(first));
+    QCOMPARE(QFileInfo(projectConfigurationPath(first)).absolutePath(),
+             projectStateDirectory(first));
+    QCOMPARE(QFileInfo(projectIndexPath(first)).absolutePath(), projectStateDirectory(first));
+    QCOMPARE(QFileInfo(projectCompilationDirectory(first)).absolutePath(),
+             projectStateDirectory(first));
+    QVERIFY(codecairn::ProjectConfigurationStore::saveOptions(first, "build-one", {"generated"})
+                .isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveOptions(second, "build-two", {}).isEmpty());
+    QCOMPARE(codecairn::ProjectConfigurationStore::loadOptions(first).compilationDirectory,
+             "build-one");
+    QCOMPARE(codecairn::ProjectConfigurationStore::loadOptions(second).compilationDirectory,
+             "build-two");
+    QCOMPARE(queryProjectSymbols(first, {}).symbols.first().symbol.name, "first");
+    QCOMPARE(queryProjectSymbols(second, {}).symbols.first().symbol.name, "second");
     QCOMPARE(QDir(first).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot),
              QStringList({"first.cpp"}));
     QCOMPARE(QDir(second).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot),
@@ -650,28 +655,28 @@ void WorkspaceTests::workspaceStorageIsIsolatedAndCoLocated() {
 
 void WorkspaceTests::invalidWorkspaceIdentityIsRejected() {
     QTemporaryDir first, other;
-    QVERIFY(WorkspaceOptionsStore::initialize(first.path()).isEmpty());
-    QFile file(workspaceOptionsPath(first.path()));
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(first.path()).isEmpty());
+    QFile file(projectConfigurationPath(first.path()));
     QVERIFY(file.open(QIODevice::ReadOnly));
     auto object = QJsonDocument::fromJson(file.readAll()).object();
     file.close();
     object["workspaceRoot"] = other.path();
     const auto bytes = QJsonDocument(object).toJson();
     write(file.fileName(), bytes);
-    QVERIFY(!WorkspaceOptionsStore::loadOptions(first.path()).error.isEmpty());
-    QVERIFY(!WorkspaceOptionsStore::saveOptions(first.path(), {}, {}).isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::loadOptions(first.path()).error.isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveOptions(first.path(), {}, {}).isEmpty());
     QVERIFY(!index(first.path()).error.isEmpty());
-    QVERIFY(!queryWorkspaceSymbols(first.path(), {}).error.isEmpty());
+    QVERIFY(!queryProjectSymbols(first.path(), {}).error.isEmpty());
     QCOMPARE(readSourceFile(file.fileName()).bytes, bytes);
-    QVERIFY(!QFileInfo::exists(workspaceDatabase(first.path())));
+    QVERIFY(!QFileInfo::exists(projectIndexPath(first.path())));
 }
 
 void WorkspaceTests::workspaceIndexLockIsPerWorkspace() {
     QTemporaryDir first, other;
     write(first.filePath("one.cpp"), "int one();\n");
     write(other.filePath("two.cpp"), "int two();\n");
-    QVERIFY(WorkspaceOptionsStore::initialize(first.path()).isEmpty());
-    QLockFile lock(QDir(workspaceStorageDirectory(first.path())).filePath("index.lock"));
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(first.path()).isEmpty());
+    QLockFile lock(QDir(projectStateDirectory(first.path())).filePath("index.lock"));
     QVERIFY(lock.tryLock(0));
     QVERIFY(index(first.path()).error.contains("Another CodeCairn process"));
     QVERIFY(index(other.path()).error.isEmpty());
@@ -705,7 +710,7 @@ void WorkspaceTests::readOnlySourceFolderCanBeIndexed() {
     const auto result = index(source.path());
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     QCOMPARE(result.parsed, 1);
-    const auto symbols = queryWorkspaceSymbols(source.path(), {});
+    const auto symbols = queryProjectSymbols(source.path(), {});
     QCOMPARE(symbols.total, 1);
     QCOMPARE(symbols.symbols.first().symbol.name, "one");
     QVERIFY(prepareCompilationDatabase(source.path(), {}).error.isEmpty());
@@ -728,15 +733,15 @@ void WorkspaceTests::compilerRecoveryUsesRelocatedCompilationDatabase() {
     const auto database = prepareCompilationDatabase(source.path(), build.path());
     QVERIFY2(database.error.isEmpty(), qPrintable(database.error));
     QVERIFY(database.configured);
-    QCOMPARE(database.directory, workspaceClangdDirectory(source.path()));
+    QCOMPARE(database.directory, projectCompilationDirectory(source.path()));
     QFile normalized(QDir(database.directory).filePath("compile_commands.json"));
     QVERIFY(normalized.open(QIODevice::ReadOnly));
     const auto normalizedEntry =
         QJsonDocument::fromJson(normalized.readAll()).array().first().toObject();
-    QCOMPARE(normalizedEntry.value("directory").toString(), workspacePath(source.path()));
-    QCOMPARE(normalizedEntry.value("file").toString(), workspacePath(path));
+    QCOMPARE(normalizedEntry.value("directory").toString(), canonicalPath(source.path()));
+    QCOMPARE(normalizedEntry.value("file").toString(), canonicalPath(path));
     QCOMPARE(normalizedEntry.value("arguments"), commands.first().toObject().value("arguments"));
-    SourceAnalysis analysis;
+    codecairn::SourceAnalysis analysis;
     analysis.language = LanguageId::C;
     recoverCompilerSymbols(analysis, contents, path);
     QVERIFY(analysis.compilerEnriched);
@@ -763,25 +768,27 @@ void WorkspaceTests::managedCompilerRecoveryUsesOwnConfiguration() {
                             {"file", path},
                             {"arguments", QJsonArray{"clang", "-DPROJECT_FLAG", "-c", path}}}})
               .toJson());
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "Configured";
     options.includedPaths = {"macro.c"};
     options.compilationDirectory = commands.path();
     const auto projectFile = directory.filePath("configured.cairn");
-    QVERIFY(WorkspaceOptionsStore::saveProject(projectFile, directory.path(), options).isEmpty());
+    QVERIFY(
+        codecairn::ProjectConfigurationStore::saveProject(projectFile, directory.path(), options)
+            .isEmpty());
     const auto prepared =
         prepareCompilationDatabase(directory.path(), commands.path(), projectFile);
     QVERIFY2(prepared.error.isEmpty(), qPrintable(prepared.error));
     const auto built =
-        buildWorkspaceIndex(directory.path(), IndexRefresh::RebuildFilesAndSymbols, {},
-                            std::make_shared<std::atomic_bool>(false), {}, projectFile);
+        buildProjectIndex(directory.path(), codecairn::IndexUpdate::RebuildFilesAndSymbols, {},
+                          std::make_shared<std::atomic_bool>(false), {}, projectFile);
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.projectFile = projectFile;
     query.text = "configured_function";
     query.exact = true;
-    const auto page = queryWorkspaceSymbols(directory.path(), query);
+    const auto page = queryProjectSymbols(directory.path(), query);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QCOMPARE(page.total, 1);
     QCOMPARE(page.symbols.first().symbol.provider, QString("compiler"));
@@ -789,7 +796,7 @@ void WorkspaceTests::managedCompilerRecoveryUsesOwnConfiguration() {
     QVERIFY(std::any_of(editor.symbols.cbegin(), editor.symbols.cend(), [](const auto &symbol) {
         return symbol.name == "configured_function" && symbol.generated;
     }));
-    QVERIFY(!QFileInfo::exists(workspaceDatabase(directory.path())));
+    QVERIFY(!QFileInfo::exists(projectIndexPath(directory.path())));
 }
 
 void WorkspaceTests::managedCompilerSettingsDoNotBorrowFolderCache() {
@@ -814,12 +821,13 @@ void WorkspaceTests::managedCompilerSettingsDoNotBorrowFolderCache() {
     commands(folderCommands.path(), true);
     commands(managedCommands.path(), false);
     QVERIFY(prepareCompilationDatabase(directory.path(), folderCommands.path()).error.isEmpty());
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "Managed";
     options.includedPaths = {"configured.c"};
     const auto descriptor = directory.filePath("managed.cairn");
-    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, directory.path(), options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(descriptor, directory.path(), options)
+                .isEmpty());
     const auto empty = prepareCompilationDatabase(directory.path(), {}, descriptor);
     QVERIFY2(empty.error.isEmpty(), qPrintable(empty.error));
     QVERIFY(!empty.configured);
@@ -861,11 +869,12 @@ void WorkspaceTests::excludedNamesCanBeRemoved() {
     const auto skipped = index(directory.path());
     QVERIFY2(skipped.error.isEmpty(), qPrintable(skipped.error));
     QVERIFY(skipped.files.isEmpty());
-    const auto rebuilt = buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {},
-                                             std::make_shared<std::atomic_bool>(false));
+    const auto rebuilt =
+        buildProjectIndex(directory.path(), codecairn::IndexUpdate::DiscoverChanges, {},
+                          std::make_shared<std::atomic_bool>(false));
     QVERIFY2(rebuilt.error.isEmpty(), qPrintable(rebuilt.error));
     QCOMPARE(rebuilt.files.size(), 1);
-    QCOMPARE(queryWorkspaceSymbols(directory.path(), {}).total, 1);
+    QCOMPARE(queryProjectSymbols(directory.path(), {}).total, 1);
 }
 
 void WorkspaceTests::watcherRefreshAndWorkspaceSwitch() {
@@ -879,10 +888,10 @@ void WorkspaceTests::watcherRefreshAndWorkspaceSwitch() {
     write(first.filePath("added.cpp"), "int added();\n");
     QTRY_VERIFY_WITH_TIMEOUT(ready.count() >= 2, 10000);
     QCOMPARE(service.files().size(), 2);
-    service.refresh(IndexRefresh::RebuildFilesAndSymbols);
+    service.refresh(codecairn::IndexUpdate::RebuildFilesAndSymbols);
     service.open(second.path());
     QTRY_VERIFY_WITH_TIMEOUT(!service.busy(), 15000);
-    QCOMPARE(service.root(), workspacePath(second.path()));
+    QCOMPARE(service.root(), canonicalPath(second.path()));
     QCOMPARE(service.files().size(), 1);
     QVERIFY(service.files().first().endsWith("two.cpp"));
 }
@@ -907,7 +916,7 @@ void WorkspaceTests::automaticRefreshIgnoresMetadata() {
     service.open(dir.path());
     QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty() && !service.busy(), 10000);
     ready.clear();
-    write(QDir(workspaceStorageDirectory(dir.path())).filePath("cache-noise"),
+    write(QDir(projectStateDirectory(dir.path())).filePath("cache-noise"),
           "background service activity\n");
     write(dir.filePath("build/output.log"), "build output\n");
     QTest::qWait(2500);
@@ -968,8 +977,8 @@ void WorkspaceTests::refreshesCoalesceWithoutCancelling() {
     QTRY_VERIFY_WITH_TIMEOUT(!service.busy(), 15000);
     QCOMPARE(failed.count(), 0);
     QCOMPARE(ready.count(), 2);
-    QCOMPARE(qvariant_cast<IndexResult>(ready[0][0]).parsed, 1);
-    QCOMPARE(qvariant_cast<IndexResult>(ready[1][0]).reused, 1);
+    QCOMPARE(qvariant_cast<codecairn::IndexResult>(ready[0][0]).parsed, 1);
+    QCOMPARE(qvariant_cast<codecairn::IndexResult>(ready[1][0]).reused, 1);
 }
 
 void WorkspaceTests::refreshPreservesBrowserState() {
@@ -1152,12 +1161,13 @@ void WorkspaceTests::editedExclusionsUpdateOpenBufferMembership() {
     QVERIFY(QDir(directory.path()).mkdir("sub"));
     write(directory.filePath("main.c"), "int kept_symbol;\n");
     write(directory.filePath("sub/one.c"), "int excluded_symbol;\n");
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "Exclusions";
     options.includedPaths = {"."};
     const auto descriptor = directory.filePath("project.cairn");
-    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, directory.path(), options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(descriptor, directory.path(), options)
+                .isEmpty());
     MainWindow window(false);
     window.openManagedProject(descriptor);
     auto *index = window.findChild<ProjectIndexer *>();
@@ -1177,7 +1187,7 @@ void WorkspaceTests::editedExclusionsUpdateOpenBufferMembership() {
     QTRY_COMPARE_WITH_TIMEOUT(symbols->topLevelItemCount(), 1, 10000);
     QCOMPARE(symbols->topLevelItem(0)->text(0), QString("kept_symbol"));
     QCOMPARE(window.documentCount(), 1);
-    QCOMPARE(WorkspaceOptionsStore::loadOptions(directory.path(), descriptor)
+    QCOMPARE(codecairn::ProjectConfigurationStore::loadOptions(directory.path(), descriptor)
                  .excludedDirectories.value(),
              QStringList{"sub"});
     QLockFile lock(descriptor + ".lock");
@@ -1212,10 +1222,10 @@ void WorkspaceTests::externalWorkspaceIndex() {
                  qPrintable(warning));
     }
     QSet<QString> indexed;
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     int total = 0;
     do {
-        const auto page = queryWorkspaceSymbols(root, query);
+        const auto page = queryProjectSymbols(root, query);
         QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
         total = page.total;
         for (const auto &entry : page.symbols)
@@ -1263,9 +1273,9 @@ void WorkspaceTests::externalWorkspaceSymbolPreviews() {
     auto *index = window.findChild<ProjectIndexer *>();
     auto *symbols = window.findChild<QTreeWidget *>("symbolList");
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 30000);
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.limit = std::numeric_limits<int>::max();
-    const auto page = queryWorkspaceSymbols(root, query);
+    const auto page = queryProjectSymbols(root, query);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     auto *virtualView = window.findChild<QTreeView *>("virtualSymbolList");
     if (page.total > 4096)
@@ -1282,10 +1292,10 @@ void WorkspaceTests::externalWorkspaceSymbolPreviews() {
             entry.path + ':' + QString::number(entry.symbol.nameStart) + ':' + entry.symbol.name;
         auto *filter = window.findChild<QLineEdit *>("symbolFilter");
         filter->setText(entry.symbol.name);
-        SymbolQuery search;
+        codecairn::SymbolCatalogQuery search;
         search.text = entry.symbol.name;
         search.limit = std::numeric_limits<int>::max();
-        const auto filtered = queryWorkspaceSymbols(root, search);
+        const auto filtered = queryProjectSymbols(root, search);
         QTRY_COMPARE_WITH_TIMEOUT(symbols->topLevelItemCount(), filtered.total, 10000);
         QTreeWidgetItem *item = nullptr;
         for (int i = 0; i < symbols->topLevelItemCount(); ++i)
@@ -1367,9 +1377,9 @@ void WorkspaceTests::realClangdCrossFileOverloads() {
     QVERIFY2(targets.first().path.endsWith("impl.cpp"), qPrintable(targets.first().path));
     QCOMPARE(targets.first().line, 2);
     QVERIFY(QFileInfo::exists(
-        QDir(workspaceClangdDirectory(dir.path())).filePath("compile_commands.json")));
+        QDir(projectCompilationDirectory(dir.path())).filePath("compile_commands.json")));
     QTRY_VERIFY_WITH_TIMEOUT(
-        !QDir(QDir(workspaceClangdDirectory(dir.path())).filePath(".cache/clangd/index"))
+        !QDir(QDir(projectCompilationDirectory(dir.path())).filePath(".cache/clangd/index"))
              .entryList({"*.idx"}, QDir::Files)
              .isEmpty(),
         15000);
@@ -1448,7 +1458,7 @@ void WorkspaceTests::openFileIndexesParentAndPreviewsUnopenedSymbol() {
     QSignalSpy indexed(&window, &MainWindow::indexReady);
     QVERIFY(window.openFile(dir.filePath("one.cpp")));
     QTRY_VERIFY_WITH_TIMEOUT(indexed.count() > 0, 15000);
-    QVERIFY(QFileInfo::exists(workspaceDatabase(dir.path())));
+    QVERIFY(QFileInfo::exists(projectIndexPath(dir.path())));
     auto *symbols = window.findChild<QTreeWidget *>("symbolList");
     QTRY_COMPARE_WITH_TIMEOUT(symbols->topLevelItemCount(), 2, 15000);
     QTreeWidgetItem *hidden = nullptr;
@@ -1513,7 +1523,8 @@ void WorkspaceTests::missingCDefinitionDoesNotPreviewItsCallAsDefinition() {
     QTRY_VERIFY_WITH_TIMEOUT(!analyzed.isEmpty(), 10000);
     auto *service = window.findChild<LanguageServerClient *>();
     QVERIFY(!service->hasCompilationDatabase());
-    QSignalSpy definitions(service, &LanguageServerClient::definitionReady);
+    QSignalSpy definitions(window.findChild<codecairn::Project *>(),
+                           &codecairn::Project::definitionsReady);
     const int call = source.indexOf("unavailable_definition");
     window.activeEditor()->setFocus();
     window.activeEditor()->selectRange(call, call + qstrlen("unavailable_definition"));
@@ -1558,10 +1569,10 @@ void WorkspaceTests::ambiguousNamesAreNotGuessed() {
     write(dir.filePath("first.cpp"), "static int duplicate() { return 1; }\n");
     write(dir.filePath("second.cpp"), "static int duplicate() { return 2; }\n");
     QVERIFY(index(dir.path()).error.isEmpty());
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.text = "duplicate";
     query.exact = true;
-    const auto page = queryWorkspaceSymbols(dir.path(), query);
+    const auto page = queryProjectSymbols(dir.path(), query);
     QCOMPARE(page.total, 2);
     QCOMPARE(page.symbols.size(), 2);
     QVERIFY(page.symbols[0].path != page.symbols[1].path);

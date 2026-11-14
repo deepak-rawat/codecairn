@@ -1,12 +1,12 @@
 #pragma once
 
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 
 struct PreparedProject {
     QString root;
     QString projectFile;
     QString name;
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     QString error;
 };
 

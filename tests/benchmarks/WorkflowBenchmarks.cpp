@@ -121,7 +121,7 @@ private slots:
         codecairn::Engine engine;
         const auto path = request_.paths.first();
         const auto bytes = request_.overlays.first().source;
-        const NavigationLocation location{path, 4, 10, -1, sourceContentHash(bytes)};
+        const codecairn::SourceLocation location{path, 4, 10, -1, sourceContentHash(bytes)};
         const auto run = [&](bool shared) {
             QEventLoop loop;
             QTimer timeout;

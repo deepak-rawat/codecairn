@@ -1,6 +1,6 @@
 #include "ProjectDialog.h"
-#include <codecairn/WorkspaceOptionsStore.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/ProjectConfiguration.h>
+#include <codecairn/Paths.h>
 #include "TestStorage.h"
 #include <QDir>
 #include <QDialogButtonBox>
@@ -44,8 +44,8 @@ public:
     QString path;
 };
 
-WorkspaceOptions selected(const QStringList &paths = {"src"}) {
-    WorkspaceOptions options;
+codecairn::ProjectConfiguration selected(const QStringList &paths = {"src"}) {
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "My Project";
     options.includedPaths = paths;
@@ -79,9 +79,9 @@ void ProjectTests::descriptorRoundTripAndIdentity() {
     auto options = selected();
     options.excludedPaths = {"src/generated"};
     options.compilationDirectory = "compile";
-    QVERIFY(WorkspaceOptionsStore::saveProject(first, root, options).isEmpty());
-    QVERIFY(WorkspaceOptionsStore::saveProject(second, root, options).isEmpty());
-    const auto loaded = WorkspaceOptionsStore::loadProject(first);
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(first, root, options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(second, root, options).isEmpty());
+    const auto loaded = codecairn::ProjectConfigurationStore::loadProject(first);
     QVERIFY2(loaded.error.isEmpty(), qPrintable(loaded.error));
     QCOMPARE(loaded.root, root);
     QVERIFY(loaded.options.managed);
@@ -89,28 +89,30 @@ void ProjectTests::descriptorRoundTripAndIdentity() {
     QCOMPARE(loaded.options.includedPaths, options.includedPaths);
     QCOMPARE(loaded.options.excludedPaths, options.excludedPaths);
     QCOMPARE(loaded.options.excludedDirectories, options.excludedDirectories);
-    QCOMPARE(workspaceOptionsPath(root, first), first);
-    QVERIFY(workspaceDatabase(root, first) != workspaceDatabase(root, second));
-    QVERIFY(workspaceDatabase(root, first) != workspaceDatabase(root));
-    QVERIFY(workspaceClangdDirectory(root, first) != workspaceClangdDirectory(root, second));
-    QCOMPARE(QFileInfo(workspaceDatabase(root, first)).absolutePath(),
-             workspaceStorageDirectory(root, {}, first));
-    QVERIFY(WorkspaceOptionsStore::initialize(root, first).isEmpty());
-    QVERIFY(QFileInfo(workspaceStorageDirectory(root, {}, first)).isDir());
+    QCOMPARE(projectConfigurationPath(root, first), first);
+    QVERIFY(projectIndexPath(root, first) != projectIndexPath(root, second));
+    QVERIFY(projectIndexPath(root, first) != projectIndexPath(root));
+    QVERIFY(projectCompilationDirectory(root, first) != projectCompilationDirectory(root, second));
+    QCOMPARE(QFileInfo(projectIndexPath(root, first)).absolutePath(),
+             projectStateDirectory(root, {}, first));
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(root, first).isEmpty());
+    QVERIFY(QFileInfo(projectStateDirectory(root, {}, first)).isDir());
 #ifdef Q_OS_UNIX
-    const auto secondStorage = workspaceStorageDirectory(root, {}, second);
+    const auto secondStorage = projectStateDirectory(root, {}, second);
     QVERIFY(QFile::link(fixture.path, secondStorage));
-    QVERIFY(!WorkspaceOptionsStore::initialize(root, second).isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::initialize(root, second).isEmpty());
     QVERIFY(QFile::remove(secondStorage));
 #endif
-    QVERIFY(WorkspaceOptionsStore::saveOptions(root, "new-build", {"vendor"}, first).isEmpty());
-    const auto updated = WorkspaceOptionsStore::loadOptions(root, first);
+    QVERIFY(codecairn::ProjectConfigurationStore::saveOptions(root, "new-build", {"vendor"}, first)
+                .isEmpty());
+    const auto updated = codecairn::ProjectConfigurationStore::loadOptions(root, first);
     QCOMPARE(updated.name, options.name);
     QCOMPARE(updated.includedPaths, options.includedPaths);
     QCOMPARE(updated.excludedPaths, options.excludedPaths);
     QCOMPARE(updated.compilationDirectory, "new-build");
     QCOMPARE(updated.excludedDirectories.value(), QStringList{"vendor"});
-    QVERIFY(!WorkspaceOptionsStore::loadOptions(fixture.path, first).error.isEmpty());
+    QVERIFY(
+        !codecairn::ProjectConfigurationStore::loadOptions(fixture.path, first).error.isEmpty());
 }
 
 void ProjectTests::scopedMembershipAndTraversal() {
@@ -136,7 +138,7 @@ void ProjectTests::scopedMembershipAndTraversal() {
     options.includedPaths = {"src/app"};
     options.excludedPaths = {"src"};
     QVERIFY(!projectTraversesDirectory(fixture.path, fixture.path, options));
-    WorkspaceOptions folder;
+    codecairn::ProjectConfiguration folder;
     QVERIFY(projectIncludesPath(fixture.path, fixture.file("other.txt"), folder));
 }
 
@@ -147,66 +149,78 @@ void ProjectTests::invalidAndSymlinkRules() {
     for (const auto &rule :
          {"../src", "/absolute", "src/../other", "", "a//b", "C:/src", "src\\child", "./src"}) {
         auto options = selected({rule});
-        QVERIFY2(!WorkspaceOptionsStore::saveProject(descriptor, fixture.path, options).isEmpty(),
-                 rule);
+        QVERIFY2(
+            !codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, options)
+                 .isEmpty(),
+            rule);
         QVERIFY(!projectIncludesPath(fixture.path, fixture.file("src/a.cpp"), options));
     }
     auto options = selected({"."});
     options.excludedPaths = {"../escape"};
-    QVERIFY(!WorkspaceOptionsStore::saveProject(descriptor, fixture.path, options).isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, options)
+                 .isEmpty());
     options.excludedPaths.clear();
 #ifdef Q_OS_UNIX
     QVERIFY(QFile::link(fixture.file("src"), fixture.file("linked")));
     QVERIFY(!projectIncludesPath(fixture.path, fixture.file("linked/a.cpp"), options));
     QVERIFY(!projectTraversesDirectory(fixture.path, fixture.file("linked"), options));
 #endif
-    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, fixture.path, options).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, options)
+                .isEmpty());
     QFile file(descriptor);
     QVERIFY(file.open(QIODevice::ReadOnly));
     auto object = QJsonDocument::fromJson(file.readAll()).object();
     file.close();
     object["includedPaths"] = QJsonArray{"../bad"};
     fixture.write("test.cairn", QJsonDocument(object).toJson());
-    QVERIFY(!WorkspaceOptionsStore::loadProject(descriptor).error.isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::loadProject(descriptor).error.isEmpty());
 }
 
 void ProjectTests::descriptorWriteSafety() {
     ProjectFixture fixture;
     fixture.write("src/a.cpp");
     const auto descriptor = fixture.file("test.cairn");
-    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, fixture.path, selected()).isEmpty());
-    auto stale = WorkspaceOptionsStore::loadProject(descriptor).options;
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, selected())
+                .isEmpty());
+    auto stale = codecairn::ProjectConfigurationStore::loadProject(descriptor).options;
     ProjectDialog openDialog(fixture.path, stale);
     QCOMPARE(openDialog.options().projectFile, stale.projectFile);
     QCOMPARE(openDialog.options().projectDigest, stale.projectDigest);
     auto changed = stale;
     changed.name = "Changed";
-    QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, fixture.path, changed).isEmpty());
-    QVERIFY(!WorkspaceOptionsStore::saveProject(descriptor, fixture.path, stale).isEmpty());
-    QVERIFY(!WorkspaceOptionsStore::saveProject(descriptor, fixture.path, openDialog.options())
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, changed)
+                .isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, stale)
                  .isEmpty());
-    QCOMPARE(WorkspaceOptionsStore::loadProject(descriptor).options.name, "Changed");
-    auto current = WorkspaceOptionsStore::loadProject(descriptor).options;
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path,
+                                                               openDialog.options())
+                 .isEmpty());
+    QCOMPARE(codecairn::ProjectConfigurationStore::loadProject(descriptor).options.name, "Changed");
+    auto current = codecairn::ProjectConfigurationStore::loadProject(descriptor).options;
     QLockFile lock(descriptor + ".lock");
     QVERIFY(lock.tryLock(0));
-    QVERIFY(!WorkspaceOptionsStore::saveProject(descriptor, fixture.path, current).isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, current)
+                 .isEmpty());
     lock.unlock();
     fixture.write("test.cairn", "{broken");
-    QVERIFY(!WorkspaceOptionsStore::saveProject(descriptor, fixture.path, current).isEmpty());
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, current)
+                 .isEmpty());
     QFile file(descriptor);
     QVERIFY(file.open(QIODevice::ReadOnly));
     QCOMPARE(file.readAll(), QByteArray("{broken"));
     file.close();
     QVERIFY(QFile::remove(descriptor));
-    QVERIFY(!WorkspaceOptionsStore::saveProject(descriptor, fixture.path, current).isEmpty());
-    QVERIFY(WorkspaceOptionsStore::saveProject(fixture.file("copy.cairn"), fixture.path, current)
+    QVERIFY(!codecairn::ProjectConfigurationStore::saveProject(descriptor, fixture.path, current)
+                 .isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(fixture.file("copy.cairn"),
+                                                              fixture.path, current)
                 .isEmpty());
 }
 
 void ProjectTests::freshOptionsAndAncestorAliases() {
     ProjectFixture fixture;
     fixture.write("actual/base/first.c");
-    WorkspaceOptions options;
+    codecairn::ProjectConfiguration options;
     options.managed = true;
     options.name = "First subset";
     options.includedPaths = {"first.c"};
@@ -217,21 +231,21 @@ void ProjectTests::freshOptionsAndAncestorAliases() {
 #endif
     const auto root = QDir(parent).filePath("base");
     const auto descriptor = QDir(parent).filePath("first.cairn");
-    const auto error = WorkspaceOptionsStore::saveProject(descriptor, root, options);
+    const auto error = codecairn::ProjectConfigurationStore::saveProject(descriptor, root, options);
     QVERIFY2(error.isEmpty(), qPrintable(error));
-    const auto loaded = WorkspaceOptionsStore::loadProject(descriptor);
+    const auto loaded = codecairn::ProjectConfigurationStore::loadProject(descriptor);
     QVERIFY2(loaded.error.isEmpty(), qPrintable(loaded.error));
     QVERIFY(!loaded.options.excludedDirectories.has_value());
-    QCOMPARE(loaded.root, workspacePath(root));
+    QCOMPARE(loaded.root, canonicalPath(root));
     QVERIFY(projectIncludesPath(root, QDir(root).filePath("first.c"), loaded.options));
     QVERIFY(
-        projectIncludesPath(root, workspacePath(QDir(root).filePath("first.c")), loaded.options));
+        projectIncludesPath(root, canonicalPath(QDir(root).filePath("first.c")), loaded.options));
     QVERIFY(projectTraversesDirectory(root, root, loaded.options));
     ProjectDialog dialog(root);
     dialog.findChild<QPushButton *>("projectAddBase")->click();
     QTRY_COMPARE(dialog.findChild<QTreeView *>("projectIncludedFiles")->model()->rowCount(), 1);
-    const auto uiError = WorkspaceOptionsStore::saveProject(QDir(parent).filePath("ui.cairn"),
-                                                            dialog.root(), dialog.options());
+    const auto uiError = codecairn::ProjectConfigurationStore::saveProject(
+        QDir(parent).filePath("ui.cairn"), dialog.root(), dialog.options());
     QVERIFY2(uiError.isEmpty(), qPrintable(uiError));
 }
 
@@ -292,9 +306,10 @@ void ProjectTests::lazyDialogSelectionAndValidation() {
     QCOMPARE(dialog.result(), int(QDialog::Accepted));
     QCOMPARE(dialog.options().name, "Renamed");
     QCOMPARE(dialog.projectFile(), descriptor);
-    QVERIFY(
-        WorkspaceOptionsStore::saveProject(descriptor, dialog.root(), dialog.options()).isEmpty());
-    const auto saved = WorkspaceOptionsStore::loadProject(descriptor);
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(descriptor, dialog.root(),
+                                                              dialog.options())
+                .isEmpty());
+    const auto saved = codecairn::ProjectConfigurationStore::loadProject(descriptor);
     ProjectDialog edited(fixture.path, saved.options);
     QCOMPARE(edited.options().includedPaths, dialog.options().includedPaths);
     QCOMPARE(edited.options().excludedPaths, dialog.options().excludedPaths);
@@ -348,7 +363,7 @@ void ProjectTests::projectLocationSurvivesRenamingAndRootChanges() {
     fixture.write("another/other.c");
     QVERIFY(QDir().mkpath(fixture.file("projects")));
     ProjectDialog dialog(fixture.file("base"));
-    QVERIFY(!pathInWorkspace(dialog.projectFile(), fixture.file("base")));
+    QVERIFY(!pathUnderRoot(dialog.projectFile(), fixture.file("base")));
     const auto descriptor = fixture.file("projects/custom.cairn");
     auto *file = dialog.findChild<QLineEdit *>("projectFile");
     file->setText(descriptor);
@@ -365,9 +380,9 @@ void ProjectTests::projectLocationSurvivesRenamingAndRootChanges() {
     QTRY_VERIFY(!dialog.findChild<QPushButton *>("projectStopScan")->isEnabled());
     dialog.accept();
     QCOMPARE(dialog.result(), int(QDialog::Accepted));
-    QVERIFY(
-        WorkspaceOptionsStore::saveProject(dialog.projectFile(), dialog.root(), dialog.options())
-            .isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveProject(dialog.projectFile(), dialog.root(),
+                                                              dialog.options())
+                .isEmpty());
     QVERIFY(QFileInfo::exists(descriptor));
     QCOMPARE(QDir(fixture.file("another")).entryList(QDir::Files), QStringList{"other.c"});
 }

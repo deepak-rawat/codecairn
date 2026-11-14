@@ -1,8 +1,8 @@
 #include <codecairn/NavigationHistory.h>
 #include <codecairn/RuntimeLimits.h>
 
-void NavigationHistory::record(const NavigationLocation &origin,
-                               const NavigationLocation &destination) {
+void NavigationHistory::record(const codecairn::SourceLocation &origin,
+                               const codecairn::SourceLocation &destination) {
     if (destination.path.isEmpty())
         return;
     const auto samePlace = [](const auto &a, const auto &b) {
@@ -26,7 +26,7 @@ void NavigationHistory::record(const NavigationLocation &origin,
     position_ = static_cast<int>(entries_.size()) - 1;
 }
 
-NavigationLocation NavigationHistory::move(int direction) {
+codecairn::SourceLocation NavigationHistory::move(int direction) {
     if ((direction < 0 && !canBack()) || (direction > 0 && !canForward()))
         return {};
     position_ += direction < 0 ? -1 : 1;

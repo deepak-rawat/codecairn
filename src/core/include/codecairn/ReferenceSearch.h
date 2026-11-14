@@ -1,5 +1,5 @@
 #pragma once
-#include <codecairn/NavigationHistory.h>
+#include <codecairn/SourceLocation.h>
 #include <codecairn/IndexTypes.h>
 #include <codecairn/SourceCoordinates.h>
 #include <codecairn/SearchOptions.h>
@@ -7,7 +7,7 @@
 #include <functional>
 
 struct ReferenceHit {
-    NavigationLocation location;
+    codecairn::SourceLocation location;
     QString text;
     int line = 0;
     QString container;
@@ -27,7 +27,7 @@ struct ReferenceResults {
 struct ReferenceSearchRequest {
     QString query;
     QStringList paths;
-    QVector<SymbolOverlay> overlays;
+    QVector<codecairn::SymbolOverlay> overlays;
     SearchOptions options;
     QString workspaceRoot;
     int offset = 0;
@@ -66,13 +66,15 @@ bool adjustReferenceHit(ReferenceHit &hit, int position, int removed, int insert
 QStringList touchReferenceFiles(const QVector<ReferenceHit> &hits);
 
 ReferenceResults findTextOccurrences(const QStringList &paths, const QString &identifier,
-                                     const QVector<SymbolOverlay> &overlays, bool includeComments,
-                                     bool includeStrings,
+                                     const QVector<codecairn::SymbolOverlay> &overlays,
+                                     bool includeComments, bool includeStrings,
                                      const std::shared_ptr<std::atomic_bool> &cancel);
-ReferenceResults
-resolveSemanticReferences(const QVector<LspLocation> &targets, const QStringList &paths,
-                          const QString &identifier, const QVector<SymbolOverlay> &overlays,
-                          const std::shared_ptr<std::atomic_bool> &cancel, int offset = 0,
-                          int limit = RuntimeLimits::ReferenceResults, bool skipInactive = false,
-                          const QHash<QString, QByteArray> &expectedHashes = {},
-                          const QString &compilationDirectory = {});
+ReferenceResults resolveSemanticReferences(const QVector<LspLocation> &targets,
+                                           const QStringList &paths, const QString &identifier,
+                                           const QVector<codecairn::SymbolOverlay> &overlays,
+                                           const std::shared_ptr<std::atomic_bool> &cancel,
+                                           int offset = 0,
+                                           int limit = RuntimeLimits::ReferenceResults,
+                                           bool skipInactive = false,
+                                           const QHash<QString, QByteArray> &expectedHashes = {},
+                                           const QString &compilationDirectory = {});

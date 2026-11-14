@@ -3,9 +3,9 @@
 
 #include <QCryptographicHash>
 
-ResolvedNavigation resolveNavigationTarget(const NavigationLocation &location,
-                                           const QByteArray &source,
-                                           const std::optional<IndexedSymbol> &indexedTarget) {
+ResolvedNavigation
+resolveNavigationTarget(const codecairn::SourceLocation &location, const QByteArray &source,
+                        const std::optional<codecairn::IndexedSymbol> &indexedTarget) {
     ResolvedNavigation result;
     if (!location.expectedHash.isEmpty() &&
         QCryptographicHash::hash(source, QCryptographicHash::Sha256).toHex() !=

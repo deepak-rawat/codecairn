@@ -7,6 +7,8 @@
 #include <QStringList>
 #include <QVector>
 
+namespace codecairn {
+
 enum class TextStyle : unsigned char {
     Plain,
     Comment,
@@ -59,3 +61,5 @@ struct SourceAnalysis {
     QStringList diagnostics;
     bool compilerEnriched = false;
 };
+
+}

@@ -1,5 +1,5 @@
 #include <codecairn/ReferenceSearch.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QDir>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -124,7 +124,7 @@ QVector<ReferenceGroup> parseReferenceHistory(const QJsonArray &json, const QStr
                 ReferenceHit hit;
                 hit.location.path = text(h, "path", 32768);
                 if (!QDir::isAbsolutePath(hit.location.path) ||
-                    !pathInWorkspace(hit.location.path, root))
+                    !pathUnderRoot(hit.location.path, root))
                     throw std::invalid_argument(
                         "Reference history target is outside its workspace.");
                 hit.location.start = number(h, "start");

@@ -2,14 +2,7 @@
 
 #include <codecairn/FileIO.h>
 #include <codecairn/IndexTypes.h>
-#include <codecairn/NavigationHistory.h>
-
-struct DefinitionCandidates {
-    QVector<IndexedSymbol> targets;
-    int total = 0;
-    bool complete = false;
-    QString error;
-};
+#include <codecairn/SourceLocation.h>
 
 struct ResolvedNavigation {
     int start = 0;
@@ -18,9 +11,9 @@ struct ResolvedNavigation {
     bool stale = false;
 };
 
-ResolvedNavigation resolveNavigationTarget(const NavigationLocation &location,
-                                           const QByteArray &source,
-                                           const std::optional<IndexedSymbol> &indexedTarget = {});
+ResolvedNavigation
+resolveNavigationTarget(const codecairn::SourceLocation &location, const QByteArray &source,
+                        const std::optional<codecairn::IndexedSymbol> &indexedTarget = {});
 QString sourceIdentifier(const QByteArray &source, int position);
 
 struct IdentifierSelection {

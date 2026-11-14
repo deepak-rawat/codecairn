@@ -62,14 +62,15 @@ add_library(
     src/core/internal/ProjectSymbolQuery.h
     src/core/internal/ProjectFileScanner.h
     src/core/internal/LanguageServerClient.h
-    src/core/internal/NavigationService.h
-    src/core/internal/ReferenceSession.h
+    src/core/internal/DefinitionQueryExecutor.h
+    src/core/internal/SearchExecutor.h
+    src/core/internal/AnalysisScheduler.h
     src/core/Diagnostics.cpp
     src/core/ApplicationStateStore.cpp
     src/core/SourceAnalysis.cpp
     src/core/LanguageRegistry.cpp
     src/core/CompilerSymbolRecovery.cpp
-    src/core/WorkspaceOptionsStore.cpp
+    src/core/ProjectConfigurationStore.cpp
     src/core/DefinitionResolver.cpp
     src/core/SourceCoordinates.cpp
     src/core/CompilationDatabase.cpp
@@ -77,14 +78,16 @@ add_library(
     src/core/ProjectDiscovery.cpp
     src/core/ProjectSession.cpp
     src/core/NavigationTarget.cpp
-    src/core/NavigationService.cpp
-    src/core/ReferenceSession.cpp
+    src/core/DefinitionQueryExecutor.cpp
+    src/core/SearchExecutor.cpp
+    src/core/AnalysisScheduler.cpp
+    src/core/ProjectContext.cpp
     src/core/ReferenceSearch.cpp
     src/core/ReferenceQuery.cpp
     src/core/ReferenceHistory.cpp
     src/core/NavigationHistory.cpp
     src/core/ProjectIndexer.cpp
-    src/core/WorkspacePaths.cpp
+    src/core/Paths.cpp
     src/core/ProjectIndexStore.cpp
     src/core/ReferenceCandidateIndex.cpp
     src/core/ProjectFileScanner.cpp

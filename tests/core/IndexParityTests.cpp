@@ -21,17 +21,17 @@ public:
     WorkspaceFixture() {
         root = QDir::current().absoluteFilePath("index-parity-" +
                                                 QUuid::createUuid().toString(QUuid::WithoutBraces));
-        if (!QDir().mkpath(root) || !QDir().mkpath(workspaceStorageDirectory(root)))
+        if (!QDir().mkpath(root) || !QDir().mkpath(projectStateDirectory(root)))
             qFatal("Cannot create index parity fixture");
-        root = workspacePath(root);
+        root = canonicalPath(root);
     }
     ~WorkspaceFixture() { QDir(root).removeRecursively(); }
     QString path(const QString &name) const { return QDir(root).filePath(name); }
     QString root;
 };
 
-SourceSymbol symbol(const QString &name, const QString &kind, int start) {
-    SourceSymbol result;
+codecairn::SourceSymbol symbol(const QString &name, const QString &kind, int start) {
+    codecairn::SourceSymbol result;
     result.name = name;
     result.kind = kind;
     result.start = start;
@@ -49,7 +49,7 @@ SourceSymbol symbol(const QString &name, const QString &kind, int start) {
 }
 
 void persist(ProjectIndexStore &database, const QString &path,
-             const QVector<SourceSymbol> &symbols) {
+             const QVector<codecairn::SourceSymbol> &symbols) {
     IndexStatement file(database,
                         "INSERT INTO files VALUES(?,'diskhash',0,0,'indexed','','parser')");
     file.bind(1, path);
@@ -75,7 +75,8 @@ void persist(ProjectIndexStore &database, const QString &path,
     }
 }
 
-void compareSymbol(const IndexedSymbol &actual, const IndexedSymbol &expected) {
+void compareSymbol(const codecairn::IndexedSymbol &actual,
+                   const codecairn::IndexedSymbol &expected) {
     QCOMPARE(actual.path, expected.path);
     QCOMPARE(actual.hash, expected.hash);
     QCOMPARE(actual.live, expected.live);
@@ -148,7 +149,7 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
     const auto second = symbol("Same", "Function", 30);
     const auto variable = symbol("Zed", "Variable", 70);
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.ensureSchema();
         persist(database, a, {second, first});
         persist(database, m, {symbol("Same", "Function", 20)});
@@ -164,22 +165,22 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
     local.local = true;
     auto outline = symbol("HiddenOutline", "Type", 60);
     outline.outlineOnly = true;
-    SymbolOverlay overlay;
+    codecairn::SymbolOverlay overlay;
     overlay.path = m;
     overlay.source = "unsaved source";
     overlay.hash = "providedhash";
     overlay.analysis.symbols = {late, local, early, outline};
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.overlays = {overlay};
     query.includeCategorySymbols = true;
     query.limit = 500000;
-    const QVector<IndexedSymbol> expected{{m, "providedhash", early, true},
-                                          {m, "providedhash", late, true},
-                                          {a, "diskhash", first, false},
-                                          {a, "diskhash", second, false},
-                                          {z, "diskhash", variable, false}};
+    const QVector<codecairn::IndexedSymbol> expected{{m, "providedhash", early, true},
+                                                     {m, "providedhash", late, true},
+                                                     {a, "diskhash", first, false},
+                                                     {a, "diskhash", second, false},
+                                                     {z, "diskhash", variable, false}};
     const QMap<QString, int> categories{{"Functions", 4}, {"Variables", 1}};
-    auto page = queryWorkspaceSymbols(fixture.root, query);
+    auto page = queryProjectSymbols(fixture.root, query);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QVERIFY(!page.cancelled);
     QCOMPARE(page.total, 5);
@@ -192,26 +193,26 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
     }
     for (int i = 0; i < expected.size(); ++i) {
         query.anchor = expected[i];
-        const auto anchored = queryWorkspaceSymbols(fixture.root, query);
+        const auto anchored = queryProjectSymbols(fixture.root, query);
         QVERIFY2(anchored.error.isEmpty(), qPrintable(anchored.error));
         QCOMPARE(anchored.anchorRow, i);
     }
     query.anchor.reset();
     query.overlays[0].hash.clear();
-    page = queryWorkspaceSymbols(fixture.root, query);
+    page = queryProjectSymbols(fixture.root, query);
     QCOMPARE(page.symbols.first().hash,
              QCryptographicHash::hash(overlay.source, QCryptographicHash::Sha256).toHex());
     query.overlays[0].hash = overlay.hash;
     query.offset = 1;
     query.limit = 1;
-    page = queryWorkspaceSymbols(fixture.root, query);
+    page = queryProjectSymbols(fixture.root, query);
     QCOMPARE(page.total, 5);
     QCOMPARE(page.symbols.size(), 1);
     compareSymbol(page.symbols.first(), expected[1]);
     QCOMPARE(page.categorySymbols.size(), expected.size());
     query.text = "missing";
     query.category = "Variables";
-    page = queryWorkspaceSymbols(fixture.root, query);
+    page = queryProjectSymbols(fixture.root, query);
     QCOMPARE(page.total, 0);
     QVERIFY(page.symbols.isEmpty());
     QCOMPARE(page.categories, categories);
@@ -221,36 +222,36 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
     query.limit = 0;
     query.text = "scope::Same";
     query.exact = true;
-    page = queryWorkspaceSymbols(fixture.root, query);
+    page = queryProjectSymbols(fixture.root, query);
     QCOMPARE(page.total, 4);
     QVERIFY(page.symbols.isEmpty());
     QCOMPARE(page.categories, categories);
     query.text = "same";
-    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 0);
+    QCOMPARE(queryProjectSymbols(fixture.root, query).total, 0);
     query.text = "Same";
-    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 4);
+    QCOMPARE(queryProjectSymbols(fixture.root, query).total, 4);
     query.exact = false;
     query.text = "SCOPE same(";
-    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 4);
+    QCOMPARE(queryProjectSymbols(fixture.root, query).total, 4);
     query.text = "?^scope::Same$";
-    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 4);
+    QCOMPARE(queryProjectSymbols(fixture.root, query).total, 4);
     query.text = "?[";
-    page = queryWorkspaceSymbols(fixture.root, query);
+    page = queryProjectSymbols(fixture.root, query);
     QVERIFY(!page.error.isEmpty());
     QCOMPARE(page.total, 0);
     QVERIFY(page.symbols.isEmpty());
     QVERIFY(page.categories.isEmpty());
     QVERIFY(page.categorySymbols.isEmpty());
     query.text.clear();
-    SymbolOverlay empty;
+    codecairn::SymbolOverlay empty;
     empty.path = a;
     query.overlays.append(empty);
-    page = queryWorkspaceSymbols(fixture.root, query);
+    page = queryProjectSymbols(fixture.root, query);
     QCOMPARE(page.total, 3);
     QCOMPARE(page.categories.value("Functions"), 2);
     QCOMPARE(page.categories.value("Variables"), 1);
     query.cancel = std::make_shared<std::atomic_bool>(true);
-    page = queryWorkspaceSymbols(fixture.root, query);
+    page = queryProjectSymbols(fixture.root, query);
     QVERIFY(page.cancelled);
     QVERIFY(page.error.isEmpty());
     QVERIFY(page.categorySymbols.isEmpty());
@@ -267,22 +268,22 @@ void IndexParityTests::cancellationPreservesAtomicCompletedFile() {
     QVERIFY(write("int before();\n"));
     auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto initial =
-        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
     QVERIFY2(initial.error.isEmpty(), qPrintable(initial.error));
-    const auto before = queryWorkspaceSymbols(fixture.root, {});
+    const auto before = queryProjectSymbols(fixture.root, {});
     QCOMPARE(before.total, 1);
     QVERIFY(write("int after_cancelled();\n"));
-    IndexResult cancelled;
+    codecairn::IndexResult cancelled;
     {
         CancelDuringWrite hook(*cancel);
-        cancelled =
-            buildWorkspaceIndex(fixture.root, IndexRefresh::RebuildFilesAndSymbols, {}, cancel);
+        cancelled = buildProjectIndex(fixture.root, codecairn::IndexUpdate::RebuildFilesAndSymbols,
+                                      {}, cancel);
     }
     QVERIFY(cancel->load());
     QVERIFY(cancelled.cancelled);
     QVERIFY2(cancelled.error.isEmpty(), qPrintable(cancelled.error));
     QCOMPARE(cancelled.parsed, 1);
-    const auto after = queryWorkspaceSymbols(fixture.root, {});
+    const auto after = queryProjectSymbols(fixture.root, {});
     QVERIFY2(after.error.isEmpty(), qPrintable(after.error));
     QCOMPARE(after.total, before.total);
     QCOMPARE(after.categories, before.categories);
@@ -294,12 +295,12 @@ void IndexParityTests::cancellationPreservesAtomicCompletedFile() {
     QVERIFY(after.symbols.first().hash != before.symbols.first().hash);
     cancel->store(false);
     const auto resumed =
-        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
     QVERIFY2(resumed.error.isEmpty(), qPrintable(resumed.error));
     QCOMPARE(resumed.parsed, 0);
     QCOMPARE(resumed.reused, 1);
-    compareSymbol(queryWorkspaceSymbols(fixture.root, {}).symbols.first(), after.symbols.first());
-    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
+    compareSymbol(queryProjectSymbols(fixture.root, {}).symbols.first(), after.symbols.first());
+    ProjectIndexStore database(projectIndexPath(fixture.root), false);
     IndexStatement row(database, "SELECT parser FROM files");
     QVERIFY(row.next());
     QCOMPARE(row.text(0), QString::fromLatin1(ParserVersion));
@@ -314,23 +315,23 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
     file.close();
     auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto initial =
-        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
     QVERIFY2(initial.error.isEmpty(), qPrintable(initial.error));
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.exec("UPDATE files SET parser='codecairn-multilanguage-syntax-v14';"
                       "UPDATE symbols SET generated=1,provider='compiler';");
     }
     const auto refreshed =
-        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
     QVERIFY2(refreshed.error.isEmpty(), qPrintable(refreshed.error));
     QCOMPARE(refreshed.parsed, 1);
     QCOMPARE(refreshed.reused, 0);
-    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
+    ProjectIndexStore database(projectIndexPath(fixture.root), false);
     IndexStatement row(database, "SELECT parser FROM files");
     QVERIFY(row.next());
     QCOMPARE(row.text(0), QString::fromLatin1(ParserVersion));
-    const auto symbols = queryWorkspaceSymbols(fixture.root, {});
+    const auto symbols = queryProjectSymbols(fixture.root, {});
     QVERIFY2(symbols.error.isEmpty(), qPrintable(symbols.error));
     QCOMPARE(symbols.total, 1);
     QCOMPARE(symbols.symbols.first().symbol.name, QString("preserved"));
@@ -341,7 +342,7 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
 void IndexParityTests::unicodeAndLiteralFiltersKeepTheirSemantics() {
     WorkspaceFixture fixture;
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.ensureSchema();
         persist(database, fixture.path("names.c"),
                 {symbol(QString::fromUtf8("CAF\xc3\x89"), "Variable", 10),
@@ -350,24 +351,24 @@ void IndexParityTests::unicodeAndLiteralFiltersKeepTheirSemantics() {
                         "Variable", 30),
                  symbol("literal%name", "Variable", 50)});
     }
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.text = QString::fromUtf8("caf\xc3\xa9");
-    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 1);
+    QCOMPARE(queryProjectSymbols(fixture.root, query).total, 1);
     query.text = "kelvin";
-    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 1);
+    QCOMPARE(queryProjectSymbols(fixture.root, query).total, 1);
     query.text = "%";
-    const auto literal = queryWorkspaceSymbols(fixture.root, query);
+    const auto literal = queryProjectSymbols(fixture.root, query);
     QCOMPARE(literal.total, 1);
     QCOMPARE(literal.symbols.first().symbol.name, QString("literal%name"));
     query.text = "?^scope::literal";
-    QCOMPARE(queryWorkspaceSymbols(fixture.root, query).total, 1);
+    QCOMPARE(queryProjectSymbols(fixture.root, query).total, 1);
 }
 
 void IndexParityTests::coveringIndexUpgradePreservesSymbolsAndAvoidsSorting() {
     WorkspaceFixture fixture;
     const auto path = fixture.path("source.cpp");
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.ensureSchema();
         persist(database, path, {symbol("preserved", "Function", 10)});
         database.exec("DROP INDEX symbol_catalog; DROP INDEX symbol_categories;"
@@ -376,10 +377,10 @@ void IndexParityTests::coveringIndexUpgradePreservesSymbolsAndAvoidsSorting() {
                       "CREATE INDEX symbol_categories ON symbols(kind,category,definition,path) "
                       "WHERE name IS NOT NULL AND name<>'' AND name_end>name_start AND end>start;");
     }
-    const auto before = queryWorkspaceSymbols(fixture.root, {});
+    const auto before = queryProjectSymbols(fixture.root, {});
     QCOMPARE(before.total, 1);
     {
-        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(projectIndexPath(fixture.root), true);
         database.ensureSchema();
         IndexStatement plan(
             database, "EXPLAIN QUERY PLAN SELECT rowid FROM symbols INDEXED BY symbol_catalog "
@@ -393,7 +394,7 @@ void IndexParityTests::coveringIndexUpgradePreservesSymbolsAndAvoidsSorting() {
         }
         QVERIFY(covering);
     }
-    const auto after = queryWorkspaceSymbols(fixture.root, {});
+    const auto after = queryProjectSymbols(fixture.root, {});
     QVERIFY2(after.error.isEmpty(), qPrintable(after.error));
     QCOMPARE(after.total, before.total);
     compareSymbol(after.symbols.first(), before.symbols.first());
@@ -406,23 +407,23 @@ void IndexParityTests::invalidCachedNamesAreNeverBrowsed() {
     auto missing = symbol({}, "Variable", 30);
     auto emptyRange = symbol("missing", "Variable", 50);
     emptyRange.nameEnd = emptyRange.nameStart;
-    ProjectIndexStore database(workspaceDatabase(fixture.root), true);
+    ProjectIndexStore database(projectIndexPath(fixture.root), true);
     database.ensureSchema();
     persist(database, path, {valid, missing, emptyRange});
     for (bool categories : {false, true}) {
-        SymbolQuery query;
+        codecairn::SymbolCatalogQuery query;
         query.includeCategorySymbols = categories;
-        const auto page = queryWorkspaceSymbols(fixture.root, query);
+        const auto page = queryProjectSymbols(fixture.root, query);
         QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
         QCOMPARE(page.total, 1);
         QCOMPARE(page.symbols.size(), 1);
         QCOMPARE(page.symbols.first().symbol.name, QString("valid"));
         QCOMPARE(page.categories.value("Variables"), 1);
     }
-    SymbolQuery live;
-    live.overlays = {{path, {}, SourceAnalysis{}, "livehash"}};
+    codecairn::SymbolCatalogQuery live;
+    live.overlays = {{path, {}, codecairn::SourceAnalysis{}, "livehash"}};
     live.overlays[0].analysis.symbols = {valid, missing, emptyRange};
-    const auto page = queryWorkspaceSymbols(fixture.root, live);
+    const auto page = queryProjectSymbols(fixture.root, live);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QCOMPARE(page.total, 1);
     QCOMPARE(page.symbols.first().symbol.name, QString("valid"));
@@ -453,9 +454,9 @@ void IndexParityTests::bulkHasherResetsAndPreservesFreshness() {
     QVERIFY(write(empty, {}));
     expected.insert(empty, QCryptographicHash::hash({}, QCryptographicHash::Sha256).toHex());
     const auto cancel = std::make_shared<std::atomic_bool>(false);
-    const auto check = [&](const IndexResult &result) {
+    const auto check = [&](const codecairn::IndexResult &result) {
         QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
-        ProjectIndexStore database(workspaceDatabase(fixture.root), false);
+        ProjectIndexStore database(projectIndexPath(fixture.root), false);
         IndexStatement rows(database, "SELECT f.path,f.hash,r.hash FROM files f "
                                       "JOIN reference_occurrence_files r ON r.path=f.path");
         int count = 0;
@@ -472,11 +473,11 @@ void IndexParityTests::bulkHasherResetsAndPreservesFreshness() {
         QCOMPARE(count, expected.size());
     };
     const auto initial =
-        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
     QCOMPARE(initial.parsed, 40);
     check(initial);
     const auto cached =
-        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
     QCOMPARE(cached.parsed, 0);
     QCOMPARE(cached.reused, 40);
     QVERIFY(!cached.changed);
@@ -495,7 +496,7 @@ void IndexParityTests::bulkHasherResetsAndPreservesFreshness() {
     expected[changed] =
         QCryptographicHash::hash(replacement.mid(3), QCryptographicHash::Sha256).toHex();
     const auto refreshed =
-        buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
+        buildProjectIndex(fixture.root, codecairn::IndexUpdate::DiscoverChanges, {}, cancel);
     QCOMPARE(refreshed.parsed, 1);
     QCOMPARE(refreshed.reused, 39);
     check(refreshed);

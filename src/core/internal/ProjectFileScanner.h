@@ -1,7 +1,7 @@
 #pragma once
 
 #include <codecairn/IndexTypes.h>
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include <QFileInfo>
 
 namespace codecairn::detail {
@@ -14,7 +14,8 @@ QByteArray directorySnapshot(const QFileInfoList &entries, const QStringList &ex
 QStringList scanProjectFiles(ProjectIndexStore &database, const QString &root, bool rescan,
                              const QStringList &excludes,
                              const std::shared_ptr<std::atomic_bool> &cancel,
-                             const std::shared_ptr<IndexProgress> &progress, IndexResult &result,
-                             const WorkspaceOptions &options);
+                             const std::shared_ptr<codecairn::IndexProgress> &progress,
+                             codecairn::IndexResult &result,
+                             const codecairn::ProjectConfiguration &options);
 
 }

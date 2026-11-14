@@ -1,5 +1,5 @@
 #include <codecairn/ApplicationStateStore.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include "TestStorage.h"
 #include <QDir>
 #include <QCryptographicHash>
@@ -102,7 +102,7 @@ void ApplicationStateTests::managedSessionRootsRemainIndependent() {
     QCOMPARE(restored.loadSession(second.path(), projectFile).session->activeFile,
              replacement.activeFile);
     const auto legacy =
-        QDir(workspaceStorageDirectory(first.path(), directory.filePath("state"), projectFile))
+        QDir(projectStateDirectory(first.path(), directory.filePath("state"), projectFile))
             .filePath("session.json");
     QVERIFY(QFile::rename(restored.sessionPath(first.path(), projectFile), legacy));
     ApplicationStateStore oldReader(directory.filePath("state"));
@@ -132,7 +132,7 @@ void ApplicationStateTests::defaultPathsHaveOneApplicationComponent() {
 #endif
     QTemporaryDir source;
     const auto hash =
-        QCryptographicHash::hash(workspacePath(source.path()).toUtf8(), QCryptographicHash::Sha256)
+        QCryptographicHash::hash(canonicalPath(source.path()).toUtf8(), QCryptographicHash::Sha256)
             .toHex();
     ApplicationStateStore store(state);
     QCOMPARE(store.sessionPath(source.path()),
@@ -192,10 +192,10 @@ void ApplicationStateTests::sessionsAreOrderedAndWorkspaceSpecific() {
     const auto path = store.sessionPath(directory.path());
     QCOMPARE(path, store.sessionPath(QDir(directory.path()).filePath(".")));
     QVERIFY(path != store.sessionPath(other.path()));
-    QVERIFY(pathInWorkspace(path, directory.filePath("state")));
+    QVERIFY(pathUnderRoot(path, directory.filePath("state")));
     const auto object = QJsonDocument::fromJson(read(path)).object();
     QCOMPARE(object.value("schemaVersion").toInt(), 1);
-    QCOMPARE(object.value("workspaceRoot").toString(), workspacePath(directory.path()));
+    QCOMPARE(object.value("workspaceRoot").toString(), canonicalPath(directory.path()));
     ApplicationStateStore restored(directory.filePath("state"));
     const auto loaded = restored.loadSession(directory.path());
     QVERIFY2(loaded.session.has_value(), qPrintable(loaded.error));
@@ -218,13 +218,13 @@ void ApplicationStateTests::missingFilesUseCanonicalParent() {
     QVERIFY(QDir().mkpath(root));
     QVERIFY(QFile::link(root, alias));
     const auto missing = QDir(alias).filePath("nested/missing.cpp");
-    QCOMPARE(workspacePath(missing), QDir(workspacePath(root)).filePath("nested/missing.cpp"));
-    QVERIFY(pathInWorkspace(missing, root));
-    QVERIFY(!pathInWorkspace(directory.filePath("outside.cpp"), root));
+    QCOMPARE(canonicalPath(missing), QDir(canonicalPath(root)).filePath("nested/missing.cpp"));
+    QVERIFY(pathUnderRoot(missing, root));
+    QVERIFY(!pathUnderRoot(directory.filePath("outside.cpp"), root));
     const auto outside = directory.filePath("outside");
     QVERIFY(QDir().mkpath(outside));
     QVERIFY(QFile::link(outside, QDir(root).filePath("escape")));
-    QVERIFY(!pathInWorkspace(QDir(root).filePath("escape/missing.cpp"), root));
+    QVERIFY(!pathUnderRoot(QDir(root).filePath("escape/missing.cpp"), root));
     ApplicationStateStore store(directory.filePath("state"));
     QVERIFY(store.loadSession(root).session.has_value());
     WorkspaceSession session;
@@ -235,7 +235,7 @@ void ApplicationStateTests::missingFilesUseCanonicalParent() {
     QVERIFY(store.loadSession(root).session.has_value());
     QVERIFY(QDir().mkpath(QDir(root).filePath("nested")));
     write(missing, "int value;\n");
-    QCOMPARE(workspacePath(missing), QDir(workspacePath(root)).filePath("nested/missing.cpp"));
+    QCOMPARE(canonicalPath(missing), QDir(canonicalPath(root)).filePath("nested/missing.cpp"));
 #endif
 }
 

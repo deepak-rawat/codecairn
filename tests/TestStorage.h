@@ -1,6 +1,6 @@
 #pragma once
 
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>

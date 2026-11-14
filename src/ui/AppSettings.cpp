@@ -199,7 +199,7 @@ AppSettings decode(const QJsonObject &root) {
                        integer(behavior, "contextDebounceMs", 50, 2000, "behavior"),
                        integer(behavior, "searchDebounceMs", 50, 2000, "behavior"),
                        integer(behavior, "workspaceRefreshMinutes", 1,
-                               RuntimeLimits::MaximumWorkspaceRefreshMinutes, "behavior")};
+                               RuntimeLimits::MaximumProjectRefreshMinutes, "behavior")};
     const auto panels = root.value("panels").toObject();
     for (auto it = panels.begin(); it != panels.end(); ++it) {
         const auto object = it.value().toObject();
@@ -247,8 +247,8 @@ QByteArray fingerprint(const QByteArray &bytes) {
 }
 }
 
-const std::array<const char *, static_cast<size_t>(TextStyle::Count)> &syntaxNames() {
-    static const std::array<const char *, static_cast<size_t>(TextStyle::Count)> names{
+const std::array<const char *, static_cast<size_t>(codecairn::TextStyle::Count)> &syntaxNames() {
+    static const std::array<const char *, static_cast<size_t>(codecairn::TextStyle::Count)> names{
         "plain",
         "comment",
         "keyword",

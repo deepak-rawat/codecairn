@@ -4,7 +4,7 @@
 #include "CompilerSymbolRecovery.h"
 #include <codecairn/FileIO.h>
 #include <codecairn/SourceAnalysis.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -242,8 +242,8 @@ bool evaluate(const Node &node, const std::vector<QVector<Match>> &matches, int 
     return found != hits.cend() && found->line <= last;
 }
 
-QString container(const SourceAnalysis &analysis, int start, int end) {
-    const SourceSymbol *best = nullptr;
+QString container(const codecairn::SourceAnalysis &analysis, int start, int end) {
+    const codecairn::SourceSymbol *best = nullptr;
     for (const auto &symbol : analysis.symbols)
         if (!symbol.outlineOnly && symbol.definition && symbol.start <= start &&
             symbol.end >= end &&
@@ -254,15 +254,17 @@ QString container(const SourceAnalysis &analysis, int start, int end) {
     return best ? (best->qualifiedName.isEmpty() ? best->name : best->qualifiedName) : QString{};
 }
 
-bool allowed(const SourceAnalysis &analysis, const SearchOptions &options,
+bool allowed(const codecairn::SourceAnalysis &analysis, const SearchOptions &options,
              const QVector<QPair<int, int>> &inactive, int start, int end) {
     // A multi-byte or multi-line match must satisfy filters over its entire range.
     for (int p = start; p < qMax(start + 1, end); ++p) {
-        const auto style = p < analysis.styles.size() ? static_cast<TextStyle>(analysis.styles[p])
-                                                      : TextStyle::Plain;
-        if ((options.comments == CommentSearch::Exclude && style == TextStyle::Comment) ||
-            (options.comments == CommentSearch::Only && style != TextStyle::Comment) ||
-            (!options.strings && style == TextStyle::String))
+        const auto style = p < analysis.styles.size()
+                               ? static_cast<codecairn::TextStyle>(analysis.styles[p])
+                               : codecairn::TextStyle::Plain;
+        if ((options.comments == CommentSearch::Exclude &&
+             style == codecairn::TextStyle::Comment) ||
+            (options.comments == CommentSearch::Only && style != codecairn::TextStyle::Comment) ||
+            (!options.strings && style == codecairn::TextStyle::String))
             return false;
     }
     for (const auto &range : inactive)
@@ -271,9 +273,9 @@ bool allowed(const SourceAnalysis &analysis, const SearchOptions &options,
     return true;
 }
 
-QVector<Match> matches(const RE2 &regex, const QByteArray &source, const SourceAnalysis &analysis,
-                       const SearchOptions &options, bool words,
-                       const QVector<QPair<int, int>> &inactive,
+QVector<Match> matches(const RE2 &regex, const QByteArray &source,
+                       const codecairn::SourceAnalysis &analysis, const SearchOptions &options,
+                       bool words, const QVector<QPair<int, int>> &inactive,
                        const std::shared_ptr<std::atomic_bool> &cancel, int maximum,
                        bool onePerLine = false) {
     QVector<Match> result;
@@ -364,10 +366,10 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
     else
         regex = expression(request.query, options.method == SearchMethod::RegularExpression,
                            options.caseSensitive);
-    QHash<QString, const SymbolOverlay *> overlays;
+    QHash<QString, const codecairn::SymbolOverlay *> overlays;
     for (const auto &overlay : request.overlays)
-        if (!overlays.contains(workspacePath(overlay.path)))
-            overlays.insert(workspacePath(overlay.path), &overlay);
+        if (!overlays.contains(canonicalPath(overlay.path)))
+            overlays.insert(canonicalPath(overlay.path), &overlay);
     const auto patterns =
         options.filePatterns.split(QRegularExpression("[;\\s]+"), Qt::SkipEmptyParts);
     int consumed = 0;
@@ -396,26 +398,26 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
             }
         QSet<QString> allowedPaths;
         for (const auto &path : candidates.files)
-            allowedPaths.insert(workspacePath(path));
+            allowedPaths.insert(canonicalPath(path));
         for (const auto &overlay : request.overlays)
-            allowedPaths.insert(workspacePath(overlay.path));
+            allowedPaths.insert(canonicalPath(overlay.path));
         // Preserve original ordering so pagination stays deterministic.
         paths.removeIf(
-            [&](const auto &path) { return !allowedPaths.contains(workspacePath(path)); });
+            [&](const auto &path) { return !allowedPaths.contains(canonicalPath(path)); });
     }
     for (const auto &path : paths) {
         if (cancel && cancel->load()) {
             results.cancelled = true;
             break;
         }
-        const auto identity = workspacePath(path);
+        const auto identity = canonicalPath(path);
         if (visited.contains(identity))
             continue;
         visited.insert(identity);
         if (!patterns.isEmpty() && !QDir::match(patterns, QFileInfo(path).fileName()))
             continue;
         FileContents file;
-        SourceAnalysis analysis;
+        codecairn::SourceAnalysis analysis;
         if (const auto *overlay = overlays.value(identity, nullptr)) {
             file.bytes = overlay->source;
             analysis = overlay->analysis;
@@ -455,7 +457,7 @@ ReferenceResults searchReferences(const ReferenceSearchRequest &request,
                 path, file.bytes, request.overlays,
                 request.workspaceRoot.isEmpty()
                     ? QString{}
-                    : workspaceClangdDirectory(request.workspaceRoot, request.projectFile));
+                    : projectCompilationDirectory(request.workspaceRoot, request.projectFile));
             inactive = regions.ranges;
             if (!regions.error.isEmpty())
                 results.warnings << path + ": " + regions.error;
@@ -572,7 +574,7 @@ QStringList touchReferenceFiles(const QVector<ReferenceHit> &hits) {
     QSet<QString> visited;
     const auto now = QDateTime::currentDateTimeUtc();
     for (const auto &hit : hits) {
-        const auto path = workspacePath(hit.location.path);
+        const auto path = canonicalPath(hit.location.path);
         if (visited.contains(path))
             continue;
         visited.insert(path);

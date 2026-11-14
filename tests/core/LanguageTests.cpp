@@ -18,7 +18,7 @@
 #include <tuple>
 
 namespace {
-void verifySymbolRanges(const QByteArray &source, const SourceAnalysis &analysis) {
+void verifySymbolRanges(const QByteArray &source, const codecairn::SourceAnalysis &analysis) {
     for (int i = 0; i < analysis.symbols.size(); ++i) {
         const auto &symbol = analysis.symbols[i];
         QVERIFY2(!symbol.name.isEmpty(), qPrintable(symbol.kind));
@@ -43,7 +43,7 @@ void verifySymbolRanges(const QByteArray &source, const SourceAnalysis &analysis
     }
 }
 
-void compareSymbol(const SourceSymbol &actual, const SourceSymbol &expected) {
+void compareSymbol(const codecairn::SourceSymbol &actual, const codecairn::SourceSymbol &expected) {
     QCOMPARE(actual.name, expected.name);
     QCOMPARE(actual.kind, expected.kind);
     QCOMPARE(actual.qualifiedName, expected.qualifiedName);
@@ -355,17 +355,17 @@ void LanguageTests::publicMixedLanguageIndexParity() {
     QSignalSpy engineAnalyses(&engine, &codecairn::Engine::analysisReady);
     QSignalSpy projectAnalyses(project, &codecairn::Project::analysisReady);
     QSignalSpy reads(&engine, &codecairn::Engine::sourceReady);
-    const auto coldRequest = project->refreshIndex(IndexRefresh::DiscoverChanges);
+    const auto coldRequest = project->refreshIndex(codecairn::IndexUpdate::DiscoverChanges);
     QTRY_COMPARE_WITH_TIMEOUT(indexed.size(), 1, 30000);
     QCOMPARE(qvariant_cast<codecairn::RequestId>(indexed[0][0]), coldRequest);
-    const auto cold = qvariant_cast<IndexResult>(indexed[0][1]);
+    const auto cold = qvariant_cast<codecairn::IndexResult>(indexed[0][1]);
     QVERIFY2(cold.error.isEmpty(), qPrintable(cold.error));
     QVERIFY(!cold.cancelled);
     QCOMPARE(cold.files.size(), files.size());
     QCOMPARE(cold.parsed, files.size());
     QCOMPARE(cold.reused, 0);
 
-    QVector<IndexedSymbol> expected;
+    QVector<codecairn::IndexedSymbol> expected;
     for (const auto &snapshot : snapshots) {
         engineAnalyses.clear();
         const auto editorRequest = engine.analyze(snapshot);
@@ -419,7 +419,7 @@ void LanguageTests::publicMixedLanguageIndexParity() {
     const auto firstRequest = project->findSymbols(all);
     QTRY_COMPARE(queried.size(), 1);
     QCOMPARE(qvariant_cast<codecairn::RequestId>(queried[0][0]), firstRequest);
-    const auto first = qvariant_cast<SymbolPage>(queried[0][1]);
+    const auto first = qvariant_cast<codecairn::SymbolPage>(queried[0][1]);
     QVERIFY2(first.error.isEmpty(), qPrintable(first.error));
     QVERIFY(!first.cancelled);
     QCOMPARE(first.total, expected.size());
@@ -451,10 +451,10 @@ void LanguageTests::publicMixedLanguageIndexParity() {
                  actual.symbol.generated ? QByteArray("DECLARE") : actual.symbol.name.toUtf8());
     }
 
-    const auto warmRequest = project->refreshIndex(IndexRefresh::DiscoverChanges);
+    const auto warmRequest = project->refreshIndex(codecairn::IndexUpdate::DiscoverChanges);
     QTRY_COMPARE_WITH_TIMEOUT(indexed.size(), 2, 30000);
     QCOMPARE(qvariant_cast<codecairn::RequestId>(indexed[1][0]), warmRequest);
-    const auto warm = qvariant_cast<IndexResult>(indexed[1][1]);
+    const auto warm = qvariant_cast<codecairn::IndexResult>(indexed[1][1]);
     QVERIFY2(warm.error.isEmpty(), qPrintable(warm.error));
     QVERIFY(!warm.cancelled);
     QCOMPARE(warm.parsed, 0);
@@ -464,7 +464,7 @@ void LanguageTests::publicMixedLanguageIndexParity() {
     queried.clear();
     project->findSymbols(all);
     QTRY_COMPARE(queried.size(), 1);
-    const auto repeated = qvariant_cast<SymbolPage>(queried[0][1]);
+    const auto repeated = qvariant_cast<codecairn::SymbolPage>(queried[0][1]);
     QVERIFY2(repeated.error.isEmpty(), qPrintable(repeated.error));
     QCOMPARE(repeated.total, first.total);
     QCOMPARE(repeated.categories, first.categories);
@@ -481,7 +481,7 @@ void LanguageTests::publicMixedLanguageIndexParity() {
         queried.clear();
         project->findSymbols(query);
         QTRY_COMPARE(queried.size(), 1);
-        const auto page = qvariant_cast<SymbolPage>(queried[0][1]);
+        const auto page = qvariant_cast<codecairn::SymbolPage>(queried[0][1]);
         QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
         QCOMPARE(page.total, first.total);
         QCOMPARE(page.symbols.size(), qMin(2, static_cast<int>(expected.size()) - offset));
@@ -496,7 +496,7 @@ void LanguageTests::publicMixedLanguageIndexParity() {
     queried.clear();
     project->findSymbols(exact);
     QTRY_COMPARE(queried.size(), 1);
-    const auto match = qvariant_cast<SymbolPage>(queried[0][1]);
+    const auto match = qvariant_cast<codecairn::SymbolPage>(queried[0][1]);
     QVERIFY2(match.error.isEmpty(), qPrintable(match.error));
     QCOMPARE(match.total, 1);
     QCOMPARE(match.symbols.size(), 1);
@@ -788,7 +788,7 @@ void LanguageTests::anonymousCompilerRecordsKeepOnlyNamedSymbols() {
                               "#define FIXED_ENUM enum FixedEnum { FixedValue };\n"
                               "FIXED_ENUM\n";
     QVERIFY(writeSourceFile(path, source, false).isEmpty());
-    SourceAnalysis compiler;
+    codecairn::SourceAnalysis compiler;
     compiler.language = LanguageId::C;
     recoverCompilerSymbols(compiler, source, path);
     QVERIFY(compiler.compilerEnriched);
@@ -823,7 +823,7 @@ void LanguageTests::compilerAndSyntaxCategoriesAgree() {
     QVERIFY(writeSourceFile(path, source, false).isEmpty());
     const auto syntax = analyzeSource(source, path);
     QVERIFY(!syntax.syntaxErrors);
-    SourceAnalysis compiler;
+    codecairn::SourceAnalysis compiler;
     compiler.language = syntax.language;
     recoverCompilerSymbols(compiler, source, path);
     QVERIFY(compiler.compilerEnriched);
@@ -856,7 +856,7 @@ void LanguageTests::anonymousEnumTypedefsAreEnumerations() {
             QVERIFY(symbol.parent >= 0);
             QCOMPARE(syntax.symbols[symbol.parent].name, "State");
         }
-    SourceAnalysis compiler;
+    codecairn::SourceAnalysis compiler;
     compiler.language = syntax.language;
     recoverCompilerSymbols(compiler, source, path);
     QVERIFY(compiler.compilerEnriched);
@@ -866,7 +866,7 @@ void LanguageTests::anonymousEnumTypedefsAreEnumerations() {
         {"TagAlias", "Type Definitions"},   {"Record", "Type Definitions"},
         {"Ready", "Enum Constants"},        {"Busy", "Enum Constants"},
         {"Tagged", "Enum Constants"}};
-    const SourceAnalysis *analyses[]{&syntax, &compiler, &recovered};
+    const codecairn::SourceAnalysis *analyses[]{&syntax, &compiler, &recovered};
     for (const auto *analysis : analyses) {
         for (auto it = expected.cbegin(); it != expected.cend(); ++it) {
             const auto found =
@@ -909,16 +909,16 @@ void LanguageTests::includedMacrosGenerateFunctionDefinitions() {
     for (const auto &entry : result.symbols)
         if (entry.kind == "Function")
             QVERIFY(entry.name != "first" && entry.name != "second");
-    const auto built = buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {},
-                                           std::make_shared<std::atomic_bool>(false));
+    const auto built = buildProjectIndex(directory.path(), codecairn::IndexUpdate::DiscoverChanges,
+                                         {}, std::make_shared<std::atomic_bool>(false));
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.text = "test_";
-    auto page = queryWorkspaceSymbols(directory.path(), query);
+    auto page = queryProjectSymbols(directory.path(), query);
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QCOMPARE(page.total, 2);
     query.overlays = {{path, source, result, sourceContentHash(source)}};
-    page = queryWorkspaceSymbols(directory.path(), query);
+    page = queryProjectSymbols(directory.path(), query);
     QCOMPARE(page.total, 2);
     for (const auto &entry : page.symbols) {
         QVERIFY(entry.symbol.generated);
@@ -934,18 +934,18 @@ void LanguageTests::workspaceLanguagesAndCancellation() {
     QVERIFY(
         writeSourceFile(directory.filePath("run"), "#!/bin/bash\ngreet() { echo hello; }\n", false)
             .isEmpty());
-    const auto result = buildWorkspaceIndex(directory.path(), IndexRefresh::DiscoverChanges, {},
-                                            std::make_shared<std::atomic_bool>(false));
+    const auto result = buildProjectIndex(directory.path(), codecairn::IndexUpdate::DiscoverChanges,
+                                          {}, std::make_shared<std::atomic_bool>(false));
     QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
     QCOMPARE(result.parsed, 2);
-    const auto page = queryWorkspaceSymbols(directory.path(), {});
+    const auto page = queryProjectSymbols(directory.path(), {});
     QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
     QCOMPARE(page.total, 2);
     for (const auto &entry : page.symbols)
         QVERIFY(!entry.symbol.local);
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.cancel = std::make_shared<std::atomic_bool>(true);
-    const auto cancelled = queryWorkspaceSymbols(directory.path(), query);
+    const auto cancelled = queryProjectSymbols(directory.path(), query);
     QVERIFY(cancelled.cancelled);
     QVERIFY(cancelled.error.isEmpty());
 }
@@ -1073,8 +1073,8 @@ void LanguageTests::externalWorkspaceCompilerCoverage() {
         QString path;
         QString error;
         QByteArray source;
-        SourceAnalysis syntax;
-        SourceAnalysis compiler;
+        codecairn::SourceAnalysis syntax;
+        codecairn::SourceAnalysis compiler;
     };
     QThreadPool pool;
     pool.setMaxThreadCount(4);
@@ -1121,8 +1121,8 @@ void LanguageTests::externalWorkspaceCompilerCoverage() {
         while (definitions.hasNext()) {
             const auto definition = definitions.next();
             const auto offset = definition.capturedStart(1);
-            const auto style = static_cast<TextStyle>(result.syntax.styles[offset]);
-            if (style == TextStyle::Comment || style == TextStyle::String)
+            const auto style = static_cast<codecairn::TextStyle>(result.syntax.styles[offset]);
+            if (style == codecairn::TextStyle::Comment || style == codecairn::TextStyle::String)
                 continue;
             ++macros;
             const auto key = definition.captured(1) + ':' + QString::number(offset);

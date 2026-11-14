@@ -3,7 +3,7 @@
 
 #include <codecairn/FileIO.h>
 #include "ProjectIndexStore.h"
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 
 #include <QDateTime>
 #include <QFileInfo>
@@ -147,10 +147,10 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
     }
     if (paths.isEmpty() || !acceleratedIdentifier(identifier))
         return result;
-    if (!QFileInfo::exists(workspaceDatabase(root, projectFile)))
+    if (!QFileInfo::exists(projectIndexPath(root, projectFile)))
         return result;
     try {
-        ProjectIndexStore database(workspaceDatabase(root, projectFile), false);
+        ProjectIndexStore database(projectIndexPath(root, projectFile), false);
         database.exec("BEGIN;");
         {
             IndexStatement version(database, "PRAGMA user_version");
@@ -179,7 +179,7 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
                 result.cancelled = true;
                 return result;
             }
-            const auto identity = workspacePath(path);
+            const auto identity = canonicalPath(path);
             metadata.bind(1, identity);
             const bool found = metadata.next();
             const auto hash = found ? metadata.text(0) : QString{};
@@ -206,7 +206,7 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
             QByteArray sourceHash;
             if (content.error.isEmpty()) {
                 sourceHash = sourceContentHash(content.bytes);
-                result.sourceHashes.insert(workspacePath(path), sourceHash);
+                result.sourceHashes.insert(canonicalPath(path), sourceHash);
             }
             if (!content.error.isEmpty() || before.size() != after.size() ||
                 before.lastModified() != after.lastModified() ||

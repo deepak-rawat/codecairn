@@ -29,7 +29,7 @@ struct ProjectOptions {
 enum class AnalysisDetail { Symbols, StylesAndSymbols };
 struct AnalysisResult {
     SourceSnapshot source;
-    SourceAnalysis analysis;
+    codecairn::SourceAnalysis analysis;
 };
 
 class Engine final : public QObject {
@@ -51,7 +51,7 @@ public:
     RequestId analyze(const SourceSnapshot &snapshot,
                       AnalysisDetail detail = AnalysisDetail::StylesAndSymbols);
     RequestId readSource(const SourceLocation &location,
-                         const std::optional<IndexedSymbol> &symbol = {});
+                         const std::optional<codecairn::IndexedSymbol> &symbol = {});
     void cancel(RequestId request);
 
 signals:
@@ -62,9 +62,10 @@ signals:
 private:
     friend class Project;
     RequestId nextRequest();
-    QVector<SymbolOverlay> overlays(const Project *project) const;
+    QVector<codecairn::SymbolOverlay> overlays(const Project *project) const;
     RequestId analyzeFor(Project *project, const SourceSnapshot &snapshot, AnalysisDetail detail);
     void cancelFor(Project *project);
+    void cancelFor(Project *project, RequestId request);
     void startRead();
     struct State;
     std::unique_ptr<State> state_;

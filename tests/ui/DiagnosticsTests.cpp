@@ -8,7 +8,7 @@
 #include <codecairn/ReferenceSearch.h>
 #include <codecairn/SourceAnalysis.h>
 #include <codecairn/Indexing.h>
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 #include "TestStorage.h"
 #include <QCoreApplication>
 #include <QDir>
@@ -557,7 +557,8 @@ void DiagnosticsTests::fileAndStorageFailuresAreLogged() {
         writeSourceFile(state.sessionPath(root.path()), "{\"schemaVersion\":99}", false).isEmpty());
     QVERIFY(!state.loadSession(root.path()).error.isEmpty());
     QVERIFY(!state.saveSession(root.path(), {}).isEmpty());
-    QVERIFY(!WorkspaceOptionsStore::initialize(root.filePath("no-workspace")).isEmpty());
+    QVERIFY(
+        !codecairn::ProjectConfigurationStore::initialize(root.filePath("no-workspace")).isEmpty());
     QVERIFY(diagnostics.finish(0).isEmpty());
     const QStringList events{"file.read_failed",
                              "file.write_failed",
@@ -597,12 +598,12 @@ void DiagnosticsTests::searchAndCompilerFailuresAreLogged() {
     request.options.method = SearchMethod::RegularExpression;
     QVERIFY(!searchReferences(request, {}).error.isEmpty());
     QVERIFY(!resolveSemanticReferences({}, {}, "symbol", {}, {}, -1).error.isEmpty());
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.text = "?[";
-    QVERIFY(!queryWorkspaceSymbols({}, query).error.isEmpty());
+    QVERIFY(!queryProjectSymbols({}, query).error.isEmpty());
     const auto cancel = std::make_shared<std::atomic_bool>(false);
-    QVERIFY(!buildWorkspaceIndex(root.filePath("missing"), IndexRefresh::DiscoverChanges, {},
-                                 cancel, {})
+    QVERIFY(!buildProjectIndex(root.filePath("missing"), codecairn::IndexUpdate::DiscoverChanges,
+                               {}, cancel, {})
                  .error.isEmpty());
     QVERIFY(diagnostics.finish(0).isEmpty());
     const QStringList events{"analysis.inactive_failed", "lsp.compilation_failed", "search.failed",
@@ -635,15 +636,15 @@ void DiagnosticsTests::expectedOutcomesAreNotWarnings() {
     QVERIFY(result.error.isEmpty() && result.hits.isEmpty());
     const auto cancel = std::make_shared<std::atomic_bool>(true);
     QVERIFY(searchReferences(request, cancel).cancelled);
-    SymbolQuery query;
+    codecairn::SymbolCatalogQuery query;
     query.cancel = cancel;
-    QVERIFY(queryWorkspaceSymbols(root.path(), query).cancelled);
+    QVERIFY(queryProjectSymbols(root.path(), query).cancelled);
     const auto catalog = root.filePath("catalog");
     QVERIFY(QDir().mkpath(catalog));
     const auto asset = QDir(catalog).filePath("image.png");
     QVERIFY(writeSourceFile(asset, QByteArray(1, '\0') + "BINARY_ASSET", false).isEmpty());
-    const auto index = buildWorkspaceIndex(catalog, IndexRefresh::DiscoverChanges, {},
-                                           std::make_shared<std::atomic_bool>(false), {});
+    const auto index = buildProjectIndex(catalog, codecairn::IndexUpdate::DiscoverChanges, {},
+                                         std::make_shared<std::atomic_bool>(false), {});
     QVERIFY(index.error.isEmpty() && index.warnings.isEmpty());
     QCOMPARE(index.files.size(), 1);
     QCOMPARE(index.parsed, 0);

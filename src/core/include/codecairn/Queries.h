@@ -50,13 +50,16 @@ struct TextQuery {
 };
 
 class Project;
+namespace detail {
+class SearchExecutor;
+}
 class SearchCursor {
 public:
     explicit operator bool() const { return search_ != 0; }
     bool operator==(const SearchCursor &) const = default;
 
 private:
-    friend class Project;
+    friend class detail::SearchExecutor;
     SearchCursor(quint64 search, int offset, bool references)
         : search_(search), offset_(offset), references_(references) {}
     quint64 search_ = 0;

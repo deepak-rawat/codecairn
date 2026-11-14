@@ -79,7 +79,7 @@ public:
         background_ = settings.color("source.background");
         foreground_ = settings.color("source.foreground");
         gutter_ = settings.color("ui.background");
-        heading_ = settings.syntax[static_cast<size_t>(TextStyle::Field)].foreground;
+        heading_ = settings.syntax[static_cast<size_t>(codecairn::TextStyle::Field)].foreground;
     }
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override {
         const QFontMetrics metrics(option.font);
@@ -341,7 +341,7 @@ void MainWindow::rebuildReferenceResults() {
         if (heading) {
             QSet<QString> files;
             for (const auto &hit : group.hits)
-                files.insert(workspacePath(hit.location.path));
+                files.insert(canonicalPath(hit.location.path));
             heading->setData(0, ReferenceItemRole::Heading, true);
             heading->setData(0, ReferenceItemRole::Query, query);
             heading->setData(0, ReferenceItemRole::DisplayText,
@@ -481,11 +481,11 @@ void MainWindow::showReferenceResults(int index) {
 
 void MainWindow::updateReferenceMarkers() {
     for (const auto &doc : documents_) {
-        const auto identity = workspacePath(doc->path());
+        const auto identity = canonicalPath(doc->path());
         QByteArray sourceHash;
         QSet<int> lines;
         for (const auto &hit : referenceHits_) {
-            if (!hit.linked || hit.stale || workspacePath(hit.location.path) != identity)
+            if (!hit.linked || hit.stale || canonicalPath(hit.location.path) != identity)
                 continue;
             if (sourceHash.isEmpty())
                 sourceHash = hash(snapshot(doc.get()));
@@ -497,7 +497,7 @@ void MainWindow::updateReferenceMarkers() {
 }
 
 void MainWindow::returnToReferenceResults(const QString &path, int line) {
-    const auto identity = workspacePath(path);
+    const auto identity = canonicalPath(path);
     auto *doc = findDocument(path);
     if (!doc)
         return;
@@ -505,7 +505,7 @@ void MainWindow::returnToReferenceResults(const QString &path, int line) {
     const auto matches = [&](int i) {
         const auto &hit = referenceHits_[i];
         return hit.linked && !hit.stale && hit.line == line &&
-               workspacePath(hit.location.path) == identity &&
+               canonicalPath(hit.location.path) == identity &&
                hit.location.expectedHash == sourceHash;
     };
     if (selectedReferenceIndex_ >= 0 && selectedReferenceIndex_ < referenceHits_.size() &&
@@ -555,7 +555,7 @@ void MainWindow::activateReferenceResult(bool open) {
         location.wholeLine = true;
         navigateTo(location, true, true);
     } else {
-        SourceSymbol symbol;
+        codecairn::SourceSymbol symbol;
         symbol.name =
             hit.container.isEmpty() ? QFileInfo(hit.location.path).fileName() : hit.container;
         symbol.start = symbol.nameStart = hit.location.start;
@@ -959,12 +959,12 @@ void MainWindow::lookupReferences(CodeEditor *editor, bool projectSearch, const 
         if (auto *origin = findDocument(path);
             origin && std::none_of(referenceOverlays_.cbegin(), referenceOverlays_.cend(),
                                    [&](const auto &overlay) {
-                                       return workspacePath(overlay.path) == workspacePath(path);
+                                       return canonicalPath(overlay.path) == canonicalPath(path);
                                    }))
             referenceOverlays_.append({path, snapshot(origin),
                                        origin->analyzedRevision == origin->revision()
                                            ? origin->analysis
-                                           : SourceAnalysis{},
+                                           : codecairn::SourceAnalysis{},
                                        origin->snapshotHash()});
         referencesScope_ = scope->currentText();
         codecairn::SearchFiles searchFiles;
@@ -1086,7 +1086,7 @@ void MainWindow::displayReferenceHits(const ReferenceResults &results, bool sema
         }
         hit.linked = group.output.links;
         if (group.output.file && !group.output.line && !group.output.text) {
-            const auto identity = workspacePath(hit.location.path);
+            const auto identity = canonicalPath(hit.location.path);
             if (listed.contains(identity))
                 continue;
             listed.insert(identity);
@@ -1203,12 +1203,12 @@ void MainWindow::trackReferenceEdit(const QString &path, int position, int remov
                                     const QByteArray &beforeHash, const QByteArray &source) {
     if (referenceGroups_.isEmpty())
         return;
-    const auto identity = workspacePath(path);
+    const auto identity = canonicalPath(path);
     const auto afterHash = hash(source);
     int row = 0;
     for (auto &group : referenceGroups_)
         for (auto &hit : group.hits) {
-            if (workspacePath(hit.location.path) == identity) {
+            if (canonicalPath(hit.location.path) == identity) {
                 adjustReferenceHit(hit, position, removed, inserted, beforeHash, source, afterHash);
                 referenceHits_[row] = hit;
                 if (referencesList_) {

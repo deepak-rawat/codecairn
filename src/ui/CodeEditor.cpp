@@ -159,8 +159,8 @@ void CodeEditor::applyConfiguration(const AppSettings &settings) {
     send(SCI_STYLECLEARALL);
     for (size_t i = 0; i < settings_.syntax.size(); ++i) {
         const auto &style = settings_.syntax[i];
-        const bool declaration = i == static_cast<size_t>(TextStyle::Type) ||
-                                 i == static_cast<size_t>(TextStyle::Function);
+        const bool declaration = i == static_cast<size_t>(codecairn::TextStyle::Type) ||
+                                 i == static_cast<size_t>(codecairn::TextStyle::Function);
         const double sizeScale =
             typography.uniform ? 1.0
                                : style.scale * (declaration ? typography.declarationScale : 1.0);

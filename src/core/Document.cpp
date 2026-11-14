@@ -1,6 +1,6 @@
 #include <codecairn/Document.h>
 #include <codecairn/FileIO.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <QThread>
 #include <algorithm>
 #include <limits>
@@ -9,7 +9,7 @@
 namespace codecairn {
 
 Document::Document(const QString &path, const QByteArray &bytes, bool hasUtf8Bom, QObject *parent)
-    : QObject(parent), path_(path.startsWith(":/") ? path : workspacePath(path)), bytes_(bytes) {
+    : QObject(parent), path_(path.startsWith(":/") ? path : canonicalPath(path)), bytes_(bytes) {
     setSavedContents(bytes, hasUtf8Bom);
 }
 
@@ -54,7 +54,7 @@ bool Document::modified() const {
 
 void Document::setPath(QString path) {
     assertOwnerThread();
-    path = path.startsWith(":/") ? path : workspacePath(path);
+    path = path.startsWith(":/") ? path : canonicalPath(path);
     if (path_ == path)
         return;
     path_ = std::move(path);

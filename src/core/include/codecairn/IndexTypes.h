@@ -9,6 +9,8 @@
 #include <functional>
 #include <optional>
 
+namespace codecairn {
+
 struct IndexedSymbol {
     QString path;
     QByteArray hash;
@@ -57,7 +59,7 @@ struct SymbolOverlay {
     QByteArray hash{};
 };
 
-struct SymbolQuery {
+struct SymbolCatalogQuery {
     QString text;
     QString category;
     QVector<SymbolOverlay> overlays;
@@ -73,7 +75,6 @@ struct SymbolQuery {
     int categoryLimit = -1;
     std::optional<IndexedSymbol> anchor;
 };
-
 struct SymbolPage {
     QVector<IndexedSymbol> symbols;
     QMap<QString, int> categories;
@@ -84,3 +85,5 @@ struct SymbolPage {
     int anchorRow = -1;
     std::optional<IndexedSymbol> anchor;
 };
+
+}

@@ -157,7 +157,7 @@ QString fixturePath(const Fixture &fixture) {
     return path.startsWith("$ROOT/") ? QDir::root().filePath(path.mid(6)) : path;
 }
 
-QByteArray snapshot(const SourceAnalysis &analysis) {
+QByteArray snapshot(const codecairn::SourceAnalysis &analysis) {
     QJsonArray symbols;
     for (const auto &symbol : analysis.symbols)
         symbols.append(QJsonObject{{"name", symbol.name},
@@ -241,7 +241,8 @@ void AnalysisParityTests::sizeLimit() {
 
 void AnalysisParityTests::maximumSizeAccepted() {
     const auto actual = analyzeSource(QByteArray(MaximumDocumentBytes, 'x'), ":/parity.txt");
-    QCOMPARE(actual.styles, QByteArray(MaximumDocumentBytes, static_cast<char>(TextStyle::Plain)));
+    QCOMPARE(actual.styles,
+             QByteArray(MaximumDocumentBytes, static_cast<char>(codecairn::TextStyle::Plain)));
     QCOMPARE(
         snapshot(actual),
         QByteArray("{\"compilerEnriched\":false,\"diagnostics\":[],\"error\":\"\","

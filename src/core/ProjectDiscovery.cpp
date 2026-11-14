@@ -1,6 +1,6 @@
 #include <codecairn/ProjectDiscovery.h>
 #include <codecairn/Diagnostics.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include "ProjectFileScanner.h"
 
 #include <QCoreApplication>
@@ -17,12 +17,12 @@ bool covers(const QString &ancestor, const QString &path) {
 }
 }
 
-QString includeProjectPaths(const QString &root, WorkspaceOptions &options,
+QString includeProjectPaths(const QString &root, codecairn::ProjectConfiguration &options,
                             const QStringList &paths) {
     auto next = options;
     for (const auto &path : paths) {
         const auto absolute = QDir(root).filePath(path);
-        if (!pathInWorkspace(absolute, root) || QFileInfo(absolute).isSymLink())
+        if (!pathUnderRoot(absolute, root) || QFileInfo(absolute).isSymLink())
             continue;
         for (const auto &excluded : next.excludedPaths)
             if (excluded != path && covers(excluded, path))
@@ -43,7 +43,7 @@ QString includeProjectPaths(const QString &root, WorkspaceOptions &options,
     return {};
 }
 
-void excludeProjectPaths(WorkspaceOptions &options, const QStringList &paths) {
+void excludeProjectPaths(codecairn::ProjectConfiguration &options, const QStringList &paths) {
     for (const auto &path : paths) {
         options.includedPaths.removeAll(path);
         if (std::any_of(options.includedPaths.cbegin(), options.includedPaths.cend(),
@@ -53,11 +53,10 @@ void excludeProjectPaths(WorkspaceOptions &options, const QStringList &paths) {
     }
 }
 
-ProjectScanResult discoverProjectFiles(const QString &root, const WorkspaceOptions &options,
-                                       quint64 generation,
-                                       const std::shared_ptr<std::atomic_bool> &cancel,
-                                       const std::shared_ptr<ProjectScanProgress> &progress,
-                                       ProjectFileScope scope) {
+ProjectScanResult
+discoverProjectFiles(const QString &root, const codecairn::ProjectConfiguration &options,
+                     quint64 generation, const std::shared_ptr<std::atomic_bool> &cancel,
+                     const std::shared_ptr<ProjectScanProgress> &progress, ProjectFileScope scope) {
     ProjectScanResult result;
     result.generation = generation;
     QStringList directories;

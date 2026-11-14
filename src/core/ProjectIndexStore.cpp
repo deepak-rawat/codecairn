@@ -242,7 +242,8 @@ void ProjectIndexWriter::updateMetadata(const FileIndexRecord &file) {
     transaction.commit();
 }
 
-bool ProjectIndexWriter::replace(const FileIndexRecord &file, const QVector<SourceSymbol> &symbols,
+bool ProjectIndexWriter::replace(const FileIndexRecord &file,
+                                 const QVector<codecairn::SourceSymbol> &symbols,
                                  const std::shared_ptr<std::atomic_bool> &cancel) {
     if (cancel && cancel->load())
         return false;

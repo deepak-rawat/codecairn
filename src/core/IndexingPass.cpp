@@ -4,7 +4,7 @@
 #include "ReferenceCandidateIndex.h"
 #include "ProjectIndexStore.h"
 #include "ProjectFileScanner.h"
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 
 #include <QDateTime>
 #include <QDir>
@@ -24,7 +24,7 @@ namespace {
 struct PreparedFile {
     QString path;
     QFileInfo info;
-    SourceAnalysis analysis;
+    codecairn::SourceAnalysis analysis;
     QByteArray hash;
     QString error;
     QString oldState;
@@ -35,7 +35,7 @@ struct PreparedFile {
     bool parsed = false;
 };
 
-void warning(IndexResult &result, const QString &message) {
+void warning(codecairn::IndexResult &result, const QString &message) {
     if (result.warnings.size() < 100)
         result.warnings.append(message);
     else
@@ -44,7 +44,7 @@ void warning(IndexResult &result, const QString &message) {
 
 PreparedFile prepareFile(PreparedFile file, const QString &oldHash, const QString &oldParser,
                          bool force, const std::shared_ptr<std::atomic_bool> &cancel,
-                         const std::shared_ptr<IndexProgress> &progress,
+                         const std::shared_ptr<codecairn::IndexProgress> &progress,
                          const QString &compilationDirectory) {
     if (cancel->load())
         return file;
@@ -98,16 +98,17 @@ namespace codecairn::detail {
 
 class IndexingPass {
 public:
-    IndexingPass(ProjectIndexStore &database, const QString &root, IndexRefresh mode,
+    IndexingPass(ProjectIndexStore &database, const QString &root, codecairn::IndexUpdate mode,
                  const QStringList &excludes, const std::shared_ptr<std::atomic_bool> &cancel,
-                 const std::shared_ptr<IndexProgress> &progress, const WorkspaceOptions &options,
-                 const QString &compilationDirectory, IndexResult &result)
+                 const std::shared_ptr<codecairn::IndexProgress> &progress,
+                 const codecairn::ProjectConfiguration &options,
+                 const QString &compilationDirectory, codecairn::IndexResult &result)
         : database_(database), writer_(database), root_(root), excludes_(excludes), cancel_(cancel),
           progress_(progress), options_(options), compilationDirectory_(compilationDirectory),
-          result_(result), force_(mode == IndexRefresh::ReparseKnownFiles ||
-                                  mode == IndexRefresh::RebuildFilesAndSymbols),
-          rescan_(mode == IndexRefresh::DiscoverChanges ||
-                  mode == IndexRefresh::RebuildFilesAndSymbols) {
+          result_(result), force_(mode == codecairn::IndexUpdate::ReparseKnownFiles ||
+                                  mode == codecairn::IndexUpdate::RebuildFilesAndSymbols),
+          rescan_(mode == codecairn::IndexUpdate::DiscoverChanges ||
+                  mode == codecairn::IndexUpdate::RebuildFilesAndSymbols) {
         pool_.setMaxThreadCount(workers_);
         pool_.setThreadPriority(QThread::LowPriority);
     }
@@ -151,7 +152,7 @@ private:
         // Discovery must finish before deleting anything. Parsing never owns catalog membership.
         result_.changed = writer_.reconcile(paths_, cancel_) || result_.changed;
         if (!stopped() && progress_) {
-            progress_->phase.store(IndexPhase::Symbols);
+            progress_->phase.store(codecairn::IndexPhase::Symbols);
             if (progress_->catalogReady)
                 progress_->catalogReady(paths_);
         }
@@ -252,7 +253,7 @@ private:
     void references() {
         // Optional postings are a later phase. Missing/stale postings retain the full-search fallback.
         if (progress_)
-            progress_->phase.store(IndexPhase::References);
+            progress_->phase.store(codecairn::IndexPhase::References);
         ReferenceIndexWriter writer(database_);
         for (qsizetype start = 0; start < paths_.size() && !cancel_->load();
              start += workers_ * 2) {
@@ -292,10 +293,10 @@ private:
     const QString &root_;
     const QStringList &excludes_;
     const std::shared_ptr<std::atomic_bool> &cancel_;
-    const std::shared_ptr<IndexProgress> &progress_;
-    const WorkspaceOptions &options_;
+    const std::shared_ptr<codecairn::IndexProgress> &progress_;
+    const codecairn::ProjectConfiguration &options_;
     const QString &compilationDirectory_;
-    IndexResult &result_;
+    codecairn::IndexResult &result_;
     const bool force_;
     const bool rescan_;
     QStringList paths_;
@@ -305,28 +306,29 @@ private:
 
 }
 
-IndexResult buildWorkspaceIndex(const QString &requestedRoot, IndexRefresh mode,
-                                const QStringList &excludes,
-                                const std::shared_ptr<std::atomic_bool> &cancel,
-                                const std::shared_ptr<IndexProgress> &progress,
-                                const QString &projectFile) {
-    IndexResult result;
+codecairn::IndexResult buildProjectIndex(const QString &requestedRoot, codecairn::IndexUpdate mode,
+                                         const QStringList &excludes,
+                                         const std::shared_ptr<std::atomic_bool> &cancel,
+                                         const std::shared_ptr<codecairn::IndexProgress> &progress,
+                                         const QString &projectFile) {
+    codecairn::IndexResult result;
     const auto root =
-        QDir::isAbsolutePath(requestedRoot) ? workspacePath(requestedRoot) : requestedRoot;
+        QDir::isAbsolutePath(requestedRoot) ? canonicalPath(requestedRoot) : requestedRoot;
     result.root = root;
     try {
         if (!QFileInfo(root).isDir())
             throw std::runtime_error("Workspace folder does not exist.");
-        const auto storageError = WorkspaceOptionsStore::initialize(root, projectFile);
+        const auto storageError =
+            codecairn::ProjectConfigurationStore::initialize(root, projectFile);
         if (!storageError.isEmpty())
             throw std::runtime_error(storageError.toStdString());
-        const auto options = WorkspaceOptionsStore::loadOptions(root, projectFile);
+        const auto options = codecairn::ProjectConfigurationStore::loadOptions(root, projectFile);
         if (!options.error.isEmpty())
             throw std::runtime_error(options.error.toStdString());
-        const auto metadata = workspaceStorageDirectory(root, {}, projectFile);
-        const auto database = workspaceDatabase(root, projectFile);
+        const auto metadata = projectStateDirectory(root, {}, projectFile);
+        const auto database = projectIndexPath(root, projectFile);
         const auto compilationDirectory =
-            projectFile.isEmpty() ? QString{} : workspaceClangdDirectory(root, projectFile);
+            projectFile.isEmpty() ? QString{} : projectCompilationDirectory(root, projectFile);
         for (const auto &suffix : {"", "-wal", "-shm"})
             if (QFileInfo(database + suffix).isSymLink())
                 throw std::runtime_error("Refusing a symlinked workspace database or journal.");

@@ -109,7 +109,7 @@ struct AppSettings {
     ReferenceSettings references;
     ReferenceSettings searchProject;
     QMap<QString, QColor> colors;
-    std::array<SyntaxSettings, static_cast<size_t>(TextStyle::Count)> syntax{};
+    std::array<SyntaxSettings, static_cast<size_t>(codecairn::TextStyle::Count)> syntax{};
 
     QColor color(const QString &role) const;
 };
@@ -120,7 +120,7 @@ struct SettingsResult {
 };
 
 const AppSettings &defaultAppSettings();
-const std::array<const char *, static_cast<size_t>(TextStyle::Count)> &syntaxNames();
+const std::array<const char *, static_cast<size_t>(codecairn::TextStyle::Count)> &syntaxNames();
 SettingsResult parseSettings(const QByteArray &json);
 QJsonObject settingsToJson(const AppSettings &settings);
 QString defaultSettingsPath();

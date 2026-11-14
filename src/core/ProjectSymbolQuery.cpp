@@ -1,17 +1,20 @@
 #include "ProjectSymbolQuery.h"
 #include <codecairn/Indexing.h>
 #include <QSignalBlocker>
+#include <QPointer>
 #include <QtConcurrentRun>
 
 namespace codecairn::detail {
 
 ProjectSymbolQuery::ProjectSymbolQuery(QObject *parent) : QObject(parent), job_(this) {
     pool_.setMaxThreadCount(1);
-    connect(&job_, &QFutureWatcher<SymbolPage>::finished, this, [this] {
+    connect(&job_, &QFutureWatcher<codecairn::SymbolPage>::finished, this, [this] {
         busy_ = false;
+        const QPointer<ProjectSymbolQuery> alive(this);
         if (runningGeneration_ == generation_)
             emit ready(job_.result());
-        startPending();
+        if (alive)
+            startPending();
     });
 }
 
@@ -40,7 +43,7 @@ void ProjectSymbolQuery::waitForFinished() {
     busy_ = false;
 }
 
-void ProjectSymbolQuery::search(const ::SymbolQuery &query) {
+void ProjectSymbolQuery::search(const ::codecairn::SymbolCatalogQuery &query) {
     const auto sameOverlays = [&] {
         if (query.overlays.size() != pending_.overlays.size())
             return false;
@@ -89,7 +92,7 @@ void ProjectSymbolQuery::startPending() {
     auto query = pending_;
     query.allowPendingSchema = indexing_;
     job_.setFuture(QtConcurrent::run(
-        &pool_, [root = root_, query] { return queryWorkspaceSymbols(root, query); }));
+        &pool_, [root = root_, query] { return queryProjectSymbols(root, query); }));
 }
 
 }

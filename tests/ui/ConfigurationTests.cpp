@@ -72,19 +72,20 @@ void ConfigurationTests::referenceDefaultsAndRoundTrip() {
     QCOMPARE(defaults.color("source.background"), QColor("#202020"));
     QVERIFY(!defaults.editor.lineNumbers);
     QVERIFY(!UiAppearance::styleSheet(defaults).contains('@'));
-    QVERIFY(defaults.syntax[static_cast<size_t>(TextStyle::Function)].bold);
-    const auto &parameter = defaults.syntax[static_cast<size_t>(TextStyle::Parameter)];
+    QVERIFY(defaults.syntax[static_cast<size_t>(codecairn::TextStyle::Function)].bold);
+    const auto &parameter = defaults.syntax[static_cast<size_t>(codecairn::TextStyle::Parameter)];
     QCOMPARE(parameter.foreground, QColor("#d09030"));
     QVERIFY(parameter.bold);
-    const auto &variable = defaults.syntax[static_cast<size_t>(TextStyle::Variable)];
+    const auto &variable = defaults.syntax[static_cast<size_t>(codecairn::TextStyle::Variable)];
     QCOMPARE(variable.foreground, QColor("#00a6df"));
     QVERIFY(!variable.bold);
-    QVERIFY(defaults.syntax[static_cast<size_t>(TextStyle::VariableDeclaration)].bold);
-    QCOMPARE(defaults.syntax[static_cast<size_t>(TextStyle::Constant)].foreground,
+    QVERIFY(defaults.syntax[static_cast<size_t>(codecairn::TextStyle::VariableDeclaration)].bold);
+    QCOMPARE(defaults.syntax[static_cast<size_t>(codecairn::TextStyle::Constant)].foreground,
              QColor("#e04040"));
-    QCOMPARE(defaults.syntax[static_cast<size_t>(TextStyle::Number)].foreground, QColor("#e04040"));
-    QVERIFY(defaults.syntax[static_cast<size_t>(TextStyle::Field)].italic);
-    QCOMPARE(defaults.syntax[static_cast<size_t>(TextStyle::Punctuation)].foreground,
+    QCOMPARE(defaults.syntax[static_cast<size_t>(codecairn::TextStyle::Number)].foreground,
+             QColor("#e04040"));
+    QVERIFY(defaults.syntax[static_cast<size_t>(codecairn::TextStyle::Field)].italic);
+    QCOMPARE(defaults.syntax[static_cast<size_t>(codecairn::TextStyle::Punctuation)].foreground,
              QColor("#d4cc72"));
     const auto encoded = settingsToJson(defaults);
     const auto decoded = parseSettings(QJsonDocument(encoded).toJson());
@@ -116,12 +117,14 @@ void ConfigurationTests::sourceFontUsesWindowsScale() {
     QVERIFY(openTypographyFixture(window));
     for (auto *view : {window.activeEditor(), window.contextEditor()}) {
         const auto pixels = sourcePixels * (view == window.contextEditor() ? contextScale : 1.0);
-        for (const int style : {STYLE_DEFAULT, STYLE_LINENUMBER, static_cast<int>(TextStyle::Plain),
-                                static_cast<int>(TextStyle::Function)}) {
+        for (const int style :
+             {STYLE_DEFAULT, STYLE_LINENUMBER, static_cast<int>(codecairn::TextStyle::Plain),
+              static_cast<int>(codecairn::TextStyle::Function)}) {
             auto font = QFont(UiAppearance::sourceFont());
-            const auto scale = style == static_cast<int>(TextStyle::Function) ? 1.2 : 1.0;
+            const auto scale =
+                style == static_cast<int>(codecairn::TextStyle::Function) ? 1.2 : 1.0;
             font.setPointSizeF(pixels * scale * 72.0 / view->logicalDpiY());
-            font.setBold(style == static_cast<int>(TextStyle::Function));
+            font.setBold(style == static_cast<int>(codecairn::TextStyle::Function));
             const auto expectedWidth = QFontMetricsF(font, view).horizontalAdvance("MMMMMMMMMM");
             const auto width = view->sends(SCI_TEXTWIDTH, style, "MMMMMMMMMM");
             QVERIFY2(qAbs(width - expectedWidth) <= 1.0,
@@ -246,7 +249,7 @@ void ConfigurationTests::partialOverrides() {
     QCOMPARE(settings.editor.typography.pointSize,
              defaultAppSettings().editor.typography.pointSize);
     QCOMPARE(settings.color("source.background"), QColor("#102030"));
-    QVERIFY(settings.syntax[static_cast<size_t>(TextStyle::Comment)].italic);
+    QVERIFY(settings.syntax[static_cast<size_t>(codecairn::TextStyle::Comment)].italic);
     QCOMPARE(settings.behavior.contextDebounceMs, 250);
     QCOMPARE(settings.behavior.workspaceRefreshMinutes, 360);
     const auto explicitSize = parseSettings(R"({"editor":{"fontSizePt":8.25}})");
@@ -278,8 +281,8 @@ void ConfigurationTests::workspaceRefreshConfiguration() {
     index->setRefreshIntervalMinutes(0);
     QCOMPARE(failed.count(), 1);
     QCOMPARE(index->refreshIntervalMinutes(), 360);
-    index->setRefreshIntervalMinutes(RuntimeLimits::MaximumWorkspaceRefreshMinutes);
-    QCOMPARE(index->refreshIntervalMinutes(), RuntimeLimits::MaximumWorkspaceRefreshMinutes);
+    index->setRefreshIntervalMinutes(RuntimeLimits::MaximumProjectRefreshMinutes);
+    QCOMPARE(index->refreshIntervalMinutes(), RuntimeLimits::MaximumProjectRefreshMinutes);
 }
 
 void ConfigurationTests::invalidConfiguration_data() {
@@ -419,9 +422,11 @@ void ConfigurationTests::reloadUpdatesBothViewsWithoutEditing() {
     QVERIFY(window.reloadConfiguration());
     for (auto *view : {editor, window.contextEditor()}) {
         QCOMPARE(view->send(SCI_STYLEGETBACK, STYLE_DEFAULT), 0x302010);
-        QCOMPARE(view->send(SCI_STYLEGETFORE, static_cast<int>(TextStyle::Function)), 0xefcdab);
-        QCOMPARE(view->send(SCI_STYLEGETITALIC, static_cast<int>(TextStyle::Function)), 1);
-        QCOMPARE(view->send(SCI_STYLEGETBOLD, static_cast<int>(TextStyle::Function)), 0);
+        QCOMPARE(view->send(SCI_STYLEGETFORE, static_cast<int>(codecairn::TextStyle::Function)),
+                 0xefcdab);
+        QCOMPARE(view->send(SCI_STYLEGETITALIC, static_cast<int>(codecairn::TextStyle::Function)),
+                 1);
+        QCOMPARE(view->send(SCI_STYLEGETBOLD, static_cast<int>(codecairn::TextStyle::Function)), 0);
         for (size_t i = 0; i < window.configuration().syntax.size(); ++i) {
             const auto &style = window.configuration().syntax[i];
             const auto foreground = style.foreground;
@@ -484,20 +489,23 @@ void ConfigurationTests::uiSettingsPersistInJson() {
 
 void ConfigurationTests::uniformSizesOverrideSyntaxScaling() {
     auto settings = defaultAppSettings();
-    settings.syntax[static_cast<size_t>(TextStyle::Comment)].scale = 1.5;
+    settings.syntax[static_cast<size_t>(codecairn::TextStyle::Comment)].scale = 1.5;
     settings.editor.typography.uniform = true;
     CodeEditor editor;
     editor.applyConfiguration(settings);
     const auto baseSize = settings.editor.typography.pointSize * SC_FONT_SIZE_MULTIPLIER * 96.0 /
                           editor.logicalDpiY();
-    QCOMPARE(editor.send(SCI_STYLEGETSIZEFRACTIONAL, static_cast<int>(TextStyle::Comment)),
-             qRound(baseSize));
-    QCOMPARE(editor.send(SCI_STYLEGETSIZEFRACTIONAL, static_cast<int>(TextStyle::Function)),
-             qRound(baseSize));
+    QCOMPARE(
+        editor.send(SCI_STYLEGETSIZEFRACTIONAL, static_cast<int>(codecairn::TextStyle::Comment)),
+        qRound(baseSize));
+    QCOMPARE(
+        editor.send(SCI_STYLEGETSIZEFRACTIONAL, static_cast<int>(codecairn::TextStyle::Function)),
+        qRound(baseSize));
     settings.editor.typography.uniform = false;
     editor.applyConfiguration(settings);
-    QCOMPARE(editor.send(SCI_STYLEGETSIZEFRACTIONAL, static_cast<int>(TextStyle::Comment)),
-             qRound(baseSize * 1.5));
+    QCOMPARE(
+        editor.send(SCI_STYLEGETSIZEFRACTIONAL, static_cast<int>(codecairn::TextStyle::Comment)),
+        qRound(baseSize * 1.5));
 }
 
 QTEST_MAIN(ConfigurationTests)

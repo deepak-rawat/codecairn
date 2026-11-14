@@ -19,7 +19,7 @@ QString SymbolCatalogModel::Request::key() const {
 SymbolCatalogModel::SymbolCatalogModel(bool categories, QObject *parent)
     : QAbstractItemModel(parent), grouped_(categories), job_(this) {
     pool_.setMaxThreadCount(1);
-    connect(&job_, &QFutureWatcher<SymbolPage>::finished, this, [this] {
+    connect(&job_, &QFutureWatcher<codecairn::SymbolPage>::finished, this, [this] {
         busy_ = false;
         if (running_.generation == generation_)
             queued_.remove(running_.key());
@@ -34,7 +34,7 @@ SymbolCatalogModel::SymbolCatalogModel(bool categories, QObject *parent)
                                        1, parentIndex));
                 emit failed(page.error);
             } else {
-                pages_.insert(running_.key(), new QVector<IndexedSymbol>(page.symbols));
+                pages_.insert(running_.key(), new QVector<codecairn::IndexedSymbol>(page.symbols));
                 const int group = categories_.indexOf(running_.category);
                 const auto parentIndex = grouped_ && group >= 0 ? index(group, 0) : QModelIndex{};
                 if (!page.symbols.isEmpty() && (!grouped_ || group >= 0) &&
@@ -69,8 +69,8 @@ void SymbolCatalogModel::clear() {
     setCatalog({}, {}, {});
 }
 
-void SymbolCatalogModel::setCatalog(const QString &root, const SymbolQuery &query,
-                                    const SymbolPage &summary) {
+void SymbolCatalogModel::setCatalog(const QString &root, const codecairn::SymbolCatalogQuery &query,
+                                    const codecairn::SymbolPage &summary) {
     bool sameOverlays = query_.overlays.size() == query.overlays.size();
     for (qsizetype i = 0; sameOverlays && i < query.overlays.size(); ++i)
         sameOverlays =
@@ -105,7 +105,7 @@ void SymbolCatalogModel::setCatalog(const QString &root, const SymbolQuery &quer
     total_ = summary.total;
     if (!grouped_ && !summary.symbols.isEmpty())
         pages_.insert(Request{{}, 0, generation_}.key(),
-                      new QVector<IndexedSymbol>(summary.symbols.mid(0, PageSize)));
+                      new QVector<codecairn::IndexedSymbol>(summary.symbols.mid(0, PageSize)));
     endResetModel();
 }
 
@@ -159,7 +159,7 @@ QString SymbolCatalogModel::category(const QModelIndex &index) const {
     return group >= 0 && group < categories_.size() ? categories_[group] : QString{};
 }
 
-std::optional<IndexedSymbol> SymbolCatalogModel::entry(const QModelIndex &index) const {
+std::optional<codecairn::IndexedSymbol> SymbolCatalogModel::entry(const QModelIndex &index) const {
     if (!index.isValid() || (grouped_ && index.internalId() == 0))
         return {};
     const int offset = index.row() / PageSize * PageSize;
@@ -263,7 +263,7 @@ void SymbolCatalogModel::startNext() {
     query.cancel = cancelled_;
     busy_ = true;
     job_.setFuture(QtConcurrent::run(
-        &pool_, [root = root_, query] { return queryWorkspaceSymbols(root, query); }));
+        &pool_, [root = root_, query] { return queryProjectSymbols(root, query); }));
 }
 
 int SymbolCatalogModel::cachedRows() const {

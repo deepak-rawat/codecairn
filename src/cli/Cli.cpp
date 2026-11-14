@@ -83,7 +83,7 @@ private:
 #endif
 };
 
-QJsonObject symbolJson(const SourceSymbol &symbol) {
+QJsonObject symbolJson(const codecairn::SourceSymbol &symbol) {
     return {{"name", symbol.name},
             {"qualifiedName", symbol.qualifiedName},
             {"kind", symbol.kind},
@@ -102,7 +102,7 @@ QJsonObject symbolJson(const SourceSymbol &symbol) {
             {"provider", symbol.provider}};
 }
 
-QJsonObject indexedJson(const IndexedSymbol &entry) {
+QJsonObject indexedJson(const codecairn::IndexedSymbol &entry) {
     auto result = symbolJson(entry.symbol);
     result.insert("path", entry.path);
     result.insert("hash", QString::fromLatin1(entry.hash));
@@ -350,13 +350,13 @@ int main(int argc, char **argv) {
         filePath = positional[1];
     }
     if (!filePath.isEmpty())
-        filePath = workspacePath(filePath);
+        filePath = canonicalPath(filePath);
     QHash<QString, FileContents> overlaySources;
     for (const auto &specification : parser.values("overlay")) {
         const auto separator = specification.indexOf('=');
         if (separator <= 0 || separator == specification.size() - 1)
             return fail("Expected --overlay PATH=FILE with nonempty paths.");
-        const auto path = workspacePath(specification.left(separator));
+        const auto path = canonicalPath(specification.left(separator));
         if (overlaySources.contains(path))
             return fail("Duplicate overlay source identity: " + path);
         const auto source = readSourceFile(specification.mid(separator + 1));
@@ -367,7 +367,7 @@ int main(int argc, char **argv) {
             return stopped();
     }
     const auto sourceForPath = [&](const QString &path) {
-        const auto found = overlaySources.constFind(workspacePath(path));
+        const auto found = overlaySources.constFind(canonicalPath(path));
         return found == overlaySources.cend() ? readSourceFile(path) : *found;
     };
     codecairn::Engine engine;
@@ -429,8 +429,8 @@ int main(int argc, char **argv) {
     QString root = parser.value("root");
     QString projectFile = parser.value("project");
     if (!projectFile.isEmpty()) {
-        projectFile = workspacePath(projectFile);
-        const auto loaded = WorkspaceOptionsStore::loadProject(projectFile);
+        projectFile = canonicalPath(projectFile);
+        const auto loaded = codecairn::ProjectConfigurationStore::loadProject(projectFile);
         if (!loaded.error.isEmpty())
             return fail(loaded.error, 1);
         root = loaded.root;
@@ -480,12 +480,13 @@ int main(int argc, char **argv) {
     }
     if (command == "index") {
         const auto excludes =
-            project.info().configuration.excludedDirectories.value_or(defaultWorkspaceExcludes());
+            project.info().configuration.excludedDirectories.value_or(defaultExcludedDirectories());
         const auto indexed = operation.result(
             QtConcurrent::run([&] {
-                const auto mode = parser.isSet("force") ? IndexRefresh::RebuildFilesAndSymbols
-                                                        : IndexRefresh::DiscoverChanges;
-                return buildWorkspaceIndex(root, mode, excludes, cancel, {}, projectFile);
+                const auto mode = parser.isSet("force")
+                                      ? codecairn::IndexUpdate::RebuildFilesAndSymbols
+                                      : codecairn::IndexUpdate::DiscoverChanges;
+                return buildProjectIndex(root, mode, excludes, cancel, {}, projectFile);
             }),
             cancel);
         if (operation.stopCode())
@@ -508,10 +509,10 @@ int main(int argc, char **argv) {
         query.includeCategories = false;
         QEventLoop loop;
         codecairn::RequestId request;
-        SymbolPage page;
+        codecairn::SymbolPage page;
         bool finished = false;
         QObject::connect(&project, &codecairn::Project::symbolsReady, &loop,
-                         [&](codecairn::RequestId id, const SymbolPage &reply) {
+                         [&](codecairn::RequestId id, const codecairn::SymbolPage &reply) {
                              if (id == request) {
                                  page = reply;
                                  finished = true;
@@ -585,7 +586,7 @@ int main(int argc, char **argv) {
         if (!definitions.error.isEmpty())
             return fail(definitions.error, 1);
         const auto readTarget = [&](const codecairn::SourceLocation &location,
-                                    const std::optional<IndexedSymbol> &indexed = {}) {
+                                    const std::optional<codecairn::IndexedSymbol> &indexed = {}) {
             QEventLoop readLoop;
             codecairn::RequestId readRequest;
             codecairn::SourceRead read;

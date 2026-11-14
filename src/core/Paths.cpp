@@ -1,4 +1,4 @@
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 
 #include <QDir>
 #include <QFileInfo>
@@ -32,7 +32,7 @@ QString defaultSettingsPath() {
         .filePath("settings.json");
 }
 
-QString workspacePath(const QString &path) {
+QString canonicalPath(const QString &path) {
     const QFileInfo info(path);
     const auto canonical = info.canonicalFilePath();
     if (!canonical.isEmpty())
@@ -52,42 +52,42 @@ QString workspacePath(const QString &path) {
     }
 }
 
-bool pathInWorkspace(const QString &path, const QString &root) {
+bool pathUnderRoot(const QString &path, const QString &root) {
     if (root.isEmpty() || path.startsWith(":/"))
         return false;
-    const auto relative = QDir(workspacePath(root)).relativeFilePath(workspacePath(path));
+    const auto relative = QDir(canonicalPath(root)).relativeFilePath(canonicalPath(path));
     return relative != ".." && !relative.startsWith("../") && !QDir::isAbsolutePath(relative);
 }
 
-QString workspaceStorageDirectory(const QString &root, const QString &stateDirectory,
-                                  const QString &projectFile) {
+QString projectStateDirectory(const QString &root, const QString &stateDirectory,
+                              const QString &projectFile) {
     const auto state = stateDirectory.isEmpty() ? defaultStateDirectory() : stateDirectory;
     if (root.isEmpty() || !QDir::isAbsolutePath(root) || state.isEmpty())
         return {};
     const auto identity =
-        projectFile.isEmpty() ? workspacePath(root) : "project:" + workspacePath(projectFile);
+        projectFile.isEmpty() ? canonicalPath(root) : "project:" + canonicalPath(projectFile);
     const auto hash =
         QCryptographicHash::hash(identity.toUtf8(), QCryptographicHash::Sha256).toHex();
     return QDir(state).filePath("workspaces/" + QString::fromLatin1(hash));
 }
 
-QString workspaceOptionsPath(const QString &root, const QString &projectFile) {
+QString projectConfigurationPath(const QString &root, const QString &projectFile) {
     if (!projectFile.isEmpty())
-        return workspacePath(projectFile);
-    const auto directory = workspaceStorageDirectory(root);
+        return canonicalPath(projectFile);
+    const auto directory = projectStateDirectory(root);
     return directory.isEmpty() ? QString{} : QDir(directory).filePath("workspace.json");
 }
 
-QString workspaceClangdDirectory(const QString &root, const QString &projectFile) {
-    const auto directory = workspaceStorageDirectory(root, {}, projectFile);
+QString projectCompilationDirectory(const QString &root, const QString &projectFile) {
+    const auto directory = projectStateDirectory(root, {}, projectFile);
     return directory.isEmpty() ? QString{} : QDir(directory).filePath("clangd");
 }
 
-QString workspaceDatabase(const QString &root, const QString &projectFile) {
-    const auto directory = workspaceStorageDirectory(root, {}, projectFile);
+QString projectIndexPath(const QString &root, const QString &projectFile) {
+    const auto directory = projectStateDirectory(root, {}, projectFile);
     return directory.isEmpty() ? QString{} : QDir(directory).filePath("index.sqlite3");
 }
 
-QStringList defaultWorkspaceExcludes() {
+QStringList defaultExcludedDirectories() {
     return {".git", ".svn", "build", "node_modules", "target"};
 }

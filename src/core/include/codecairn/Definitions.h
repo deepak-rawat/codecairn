@@ -7,7 +7,6 @@
 
 namespace codecairn {
 
-using SourceLocation = NavigationLocation;
 enum class DefinitionResolution { SyntaxOnly, SemanticOnly, SemanticPreferred };
 enum class DefinitionOrigin { Include, ExcludeUnresolvedSelf };
 
@@ -20,7 +19,7 @@ struct DefinitionQuery {
 
 struct Definition {
     SourceLocation location;
-    std::optional<IndexedSymbol> symbol;
+    std::optional<codecairn::IndexedSymbol> symbol;
 };
 
 struct DefinitionPage {

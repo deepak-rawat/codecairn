@@ -1,7 +1,7 @@
 #include <codecairn/CompilationDatabase.h>
 #include <codecairn/Diagnostics.h>
-#include <codecairn/WorkspaceOptionsStore.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/ProjectConfiguration.h>
+#include <codecairn/Paths.h>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -21,10 +21,10 @@ CompilationDatabaseResult prepareCompilationDatabase(const QString &root, const 
         result.error = error;
         return result;
     };
-    const auto storageError = WorkspaceOptionsStore::initialize(root, projectFile);
+    const auto storageError = codecairn::ProjectConfigurationStore::initialize(root, projectFile);
     if (!storageError.isEmpty())
         return fail(storageError);
-    const auto metadata = workspaceClangdDirectory(root, projectFile);
+    const auto metadata = projectCompilationDirectory(root, projectFile);
     if (QFileInfo(metadata).isSymLink() ||
         (!QDir().mkpath(metadata) && !QFileInfo(metadata).isDir()))
         return fail("Cannot create clangd storage: " + metadata);
@@ -64,9 +64,9 @@ CompilationDatabaseResult prepareCompilationDatabase(const QString &root, const 
             return fail("Compilation database entry has no directory/file.");
         if (QDir::isRelativePath(working))
             working = QFileInfo(source).dir().absoluteFilePath(working);
-        entry["directory"] = workspacePath(working);
+        entry["directory"] = canonicalPath(working);
         entry["file"] =
-            workspacePath(QDir::isRelativePath(file) ? QDir(working).absoluteFilePath(file) : file);
+            canonicalPath(QDir::isRelativePath(file) ? QDir(working).absoluteFilePath(file) : file);
         normalized.append(entry);
     }
     QSaveFile output(target);

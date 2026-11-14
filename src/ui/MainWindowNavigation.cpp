@@ -94,7 +94,7 @@ void MainWindow::initializeNavigation() {
     });
 }
 
-NavigationLocation MainWindow::currentLocation() const {
+codecairn::SourceLocation MainWindow::currentLocation() const {
     const auto *doc = currentDocument();
     if (!doc)
         return {};
@@ -112,8 +112,9 @@ void MainWindow::pinDocument(Document *document) {
     updateTab(document);
 }
 
-void MainWindow::navigateTo(const NavigationLocation &location, bool pin, bool focus, bool record,
-                            const std::optional<IndexedSymbol> &indexedTarget) {
+void MainWindow::navigateTo(const codecairn::SourceLocation &location, bool pin, bool focus,
+                            bool record,
+                            const std::optional<codecairn::IndexedSymbol> &indexedTarget) {
     if (location.path.isEmpty())
         return;
     qCDebug(navigationLog) << "navigation.requested" << "path=" << location.path
@@ -133,11 +134,11 @@ void MainWindow::navigateTo(const NavigationLocation &location, bool pin, bool f
     sourceReadRequest_ = engine_->readSource(location, indexedTarget);
 }
 
-void MainWindow::commitNavigation(const NavigationLocation &location, const FileContents &file,
-                                  bool pin, bool focus, bool record,
-                                  const NavigationLocation &origin,
+void MainWindow::commitNavigation(const codecairn::SourceLocation &location,
+                                  const FileContents &file, bool pin, bool focus, bool record,
+                                  const codecairn::SourceLocation &origin,
                                   const QPointer<QWidget> &previousFocus,
-                                  const std::optional<IndexedSymbol> &indexedTarget,
+                                  const std::optional<codecairn::IndexedSymbol> &indexedTarget,
                                   const std::optional<ResolvedNavigation> &resolvedRange) {
     const auto resolved = resolvedRange
                               ? *resolvedRange

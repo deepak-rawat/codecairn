@@ -7,7 +7,7 @@
 #include "UiAppearance.h"
 #include "TestFixtures.h"
 #include "TestStorage.h"
-#include <codecairn/WorkspaceOptionsStore.h>
+#include <codecairn/ProjectConfiguration.h>
 
 #include <QCheckBox>
 #include <QAction>
@@ -230,41 +230,42 @@ void PrototypeTests::referenceSyntaxRoles() {
     CodeEditor editor;
     editor.loadBytes(source);
     editor.applyStyles(analysis.styles);
-    const auto check = [&](const QByteArray &context, const QByteArray &token, TextStyle expected) {
+    const auto check = [&](const QByteArray &context, const QByteArray &token,
+                           codecairn::TextStyle expected) {
         const auto start = source.indexOf(context);
         QVERIFY2(start >= 0, context.constData());
         const auto offset = context.indexOf(token);
         QVERIFY2(offset >= 0, token.constData());
         for (qsizetype i = 0; i < token.size(); ++i) {
             const auto position = start + offset + i;
-            QCOMPARE(static_cast<TextStyle>(analysis.styles[position]), expected);
+            QCOMPARE(static_cast<codecairn::TextStyle>(analysis.styles[position]), expected);
             QCOMPARE(editor.send(SCI_GETSTYLEAT, position), static_cast<int>(expected));
         }
     };
-    check("#define ENABLED", "#define", TextStyle::Preprocessor);
-    check("static Transport", "static", TextStyle::Primitive);
-    check("rtc_transport_create(", "rtc_transport_create", TextStyle::Function);
-    check("Transport *worker", "worker", TextStyle::Parameter);
-    check("!worker", "worker", TextStyle::Parameter);
-    check("const Transport *cfg", "cfg", TextStyle::Parameter);
-    check("cfg->timer", "cfg", TextStyle::Parameter);
-    check("Transport *transport =", "transport", TextStyle::VariableDeclaration);
-    check("return transport;", "transport", TextStyle::Variable);
-    check("transport->timer", "timer", TextStyle::Field);
-    check("RTC_WORKER_TIMER_INVALID", "RTC_WORKER_TIMER_INVALID", TextStyle::Constant);
-    check("return NULL", "NULL", TextStyle::Constant);
-    check("mode = Ready", "Ready", TextStyle::Constant);
-    check("calloc(1", "1", TextStyle::Number);
-    check("calloc(1", "calloc", TextStyle::LibraryFunction);
-    check("free(transport)", "free", TextStyle::LibraryFunction);
-    check("sizeof(*transport)", "sizeof", TextStyle::Primitive);
-    check("rtc_init(transport", "rtc_init", TextStyle::FunctionReference);
-    check("if (!worker", "if", TextStyle::Keyword);
-    check("!worker ||", "||", TextStyle::Operator);
-    check("cfg->timer", "->", TextStyle::Operator);
-    check("free(transport);", ";", TextStyle::Punctuation);
-    check("// worker transport RTC_OK", "RTC_OK", TextStyle::Comment);
-    check("\"worker RTC_OK\"", "RTC_OK", TextStyle::String);
+    check("#define ENABLED", "#define", codecairn::TextStyle::Preprocessor);
+    check("static Transport", "static", codecairn::TextStyle::Primitive);
+    check("rtc_transport_create(", "rtc_transport_create", codecairn::TextStyle::Function);
+    check("Transport *worker", "worker", codecairn::TextStyle::Parameter);
+    check("!worker", "worker", codecairn::TextStyle::Parameter);
+    check("const Transport *cfg", "cfg", codecairn::TextStyle::Parameter);
+    check("cfg->timer", "cfg", codecairn::TextStyle::Parameter);
+    check("Transport *transport =", "transport", codecairn::TextStyle::VariableDeclaration);
+    check("return transport;", "transport", codecairn::TextStyle::Variable);
+    check("transport->timer", "timer", codecairn::TextStyle::Field);
+    check("RTC_WORKER_TIMER_INVALID", "RTC_WORKER_TIMER_INVALID", codecairn::TextStyle::Constant);
+    check("return NULL", "NULL", codecairn::TextStyle::Constant);
+    check("mode = Ready", "Ready", codecairn::TextStyle::Constant);
+    check("calloc(1", "1", codecairn::TextStyle::Number);
+    check("calloc(1", "calloc", codecairn::TextStyle::LibraryFunction);
+    check("free(transport)", "free", codecairn::TextStyle::LibraryFunction);
+    check("sizeof(*transport)", "sizeof", codecairn::TextStyle::Primitive);
+    check("rtc_init(transport", "rtc_init", codecairn::TextStyle::FunctionReference);
+    check("if (!worker", "if", codecairn::TextStyle::Keyword);
+    check("!worker ||", "||", codecairn::TextStyle::Operator);
+    check("cfg->timer", "->", codecairn::TextStyle::Operator);
+    check("free(transport);", ";", codecairn::TextStyle::Punctuation);
+    check("// worker transport RTC_OK", "RTC_OK", codecairn::TextStyle::Comment);
+    check("\"worker RTC_OK\"", "RTC_OK", codecairn::TextStyle::String);
     QVERIFY(!editor.isModified());
 }
 
@@ -283,18 +284,18 @@ void PrototypeTests::referenceBindingsRespectScopes() {
     const auto analysis = analyzeSource(source, "scopes.cpp");
     QVERIFY(!analysis.syntaxErrors);
     const auto styleAt = [&](const QByteArray &context, const QByteArray &token) {
-        return static_cast<TextStyle>(
+        return static_cast<codecairn::TextStyle>(
             analysis.styles[source.indexOf(context) + context.indexOf(token)]);
     };
-    QCOMPARE(styleAt("callback(value)", "callback"), TextStyle::Parameter);
-    QCOMPARE(styleAt("callback(value)", "value"), TextStyle::Parameter);
-    QCOMPARE(styleAt("use(value); }", "value"), TextStyle::Variable);
-    QCOMPARE(styleAt("    use(value);", "value"), TextStyle::Parameter);
-    QCOMPARE(styleAt("use(nested)", "nested"), TextStyle::Plain);
-    QCOMPARE(styleAt("++index", "index"), TextStyle::Variable);
-    QCOMPARE(styleAt("    use(index);", "index"), TextStyle::Plain);
-    QCOMPARE(styleAt("use(RTC_OK)", "RTC_OK"), TextStyle::Variable);
-    QCOMPARE(styleAt("third(void) { use(value)", "value"), TextStyle::Plain);
+    QCOMPARE(styleAt("callback(value)", "callback"), codecairn::TextStyle::Parameter);
+    QCOMPARE(styleAt("callback(value)", "value"), codecairn::TextStyle::Parameter);
+    QCOMPARE(styleAt("use(value); }", "value"), codecairn::TextStyle::Variable);
+    QCOMPARE(styleAt("    use(value);", "value"), codecairn::TextStyle::Parameter);
+    QCOMPARE(styleAt("use(nested)", "nested"), codecairn::TextStyle::Plain);
+    QCOMPARE(styleAt("++index", "index"), codecairn::TextStyle::Variable);
+    QCOMPARE(styleAt("    use(index);", "index"), codecairn::TextStyle::Plain);
+    QCOMPARE(styleAt("use(RTC_OK)", "RTC_OK"), codecairn::TextStyle::Variable);
+    QCOMPARE(styleAt("third(void) { use(value)", "value"), codecairn::TextStyle::Plain);
 }
 
 void PrototypeTests::uniformLineHeightIsExplicit() {
@@ -446,8 +447,10 @@ void PrototypeTests::referenceLayoutAndTypography() {
     auto *editor = window.activeEditor();
     QCOMPARE(editor->send(SCI_GETMARGINWIDTHN, 0), 0);
     QCOMPARE(editor->send(SCI_STYLEGETBACK, STYLE_DEFAULT), 0x202020);
-    QCOMPARE(editor->send(SCI_STYLEGETFORE, static_cast<int>(TextStyle::Type)), 0x00ffff);
-    QCOMPARE(editor->send(SCI_STYLEGETFORE, static_cast<int>(TextStyle::Function)), 0xffffff);
+    QCOMPARE(editor->send(SCI_STYLEGETFORE, static_cast<int>(codecairn::TextStyle::Type)),
+             0x00ffff);
+    QCOMPARE(editor->send(SCI_STYLEGETFORE, static_cast<int>(codecairn::TextStyle::Function)),
+             0xffffff);
     QCOMPARE(editor->send(SCI_STYLEGETSIZEFRACTIONAL, STYLE_DEFAULT),
              qRound(825.0 * 96.0 / editor->logicalDpiY()));
     QCOMPARE(editor->send(SCI_TEXTHEIGHT, 0), editor->send(SCI_TEXTHEIGHT, 1));
@@ -737,8 +740,9 @@ void PrototypeTests::capturesTypographyPrototype() {
     QVERIFY(writeSourceFile(compilation.filePath("compile_commands.json"),
                             QJsonDocument(commands).toJson(), false)
                 .isEmpty());
-    QVERIFY(WorkspaceOptionsStore::initialize(dir.path()).isEmpty());
-    QVERIFY(WorkspaceOptionsStore::saveOptions(dir.path(), compilation.path(), {}).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::initialize(dir.path()).isEmpty());
+    QVERIFY(codecairn::ProjectConfigurationStore::saveOptions(dir.path(), compilation.path(), {})
+                .isEmpty());
     MainWindow window(false);
     window.resize(1446, 742);
     window.show();
@@ -757,7 +761,7 @@ void PrototypeTests::capturesTypographyPrototype() {
     QTRY_VERIFY_WITH_TIMEOUT(service->available(), 15000);
     QVERIFY(service->hasCompilationDatabase());
     QTRY_VERIFY_WITH_TIMEOUT(!indexed.isEmpty(), 15000);
-    const auto result = qvariant_cast<IndexResult>(indexed.last().first());
+    const auto result = qvariant_cast<codecairn::IndexResult>(indexed.last().first());
     QVERIFY2(result.warnings.isEmpty(), qPrintable(result.warnings.join('\n')));
     auto *files = window.findChild<QTreeWidget *>("fileList");
     QTRY_COMPARE_WITH_TIMEOUT(files->topLevelItemCount(), 2, 10000);

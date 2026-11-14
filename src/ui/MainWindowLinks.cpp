@@ -113,26 +113,24 @@ void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
         return;
     }
     if (!result.semantic) {
-        DefinitionCandidates candidates;
-        candidates.total = result.total;
-        candidates.complete = result.complete;
-        for (const auto &definition : result.definitions)
-            if (definition.symbol)
-                candidates.targets.append(*definition.symbol);
+        const auto &targets = result.definitions;
         if (!activate) {
-            editor->setLinkAvailable(hoverPosition_, !candidates.targets.isEmpty());
+            editor->setLinkAvailable(hoverPosition_, !targets.isEmpty());
             return;
         }
-        if (candidates.targets.isEmpty()) {
+        if (targets.isEmpty()) {
             statusBar()->showMessage("No definition found for " + jumpName_, 6000);
             return;
         }
         int choice = 0;
-        if (candidates.targets.size() > 1 || !candidates.complete) {
+        if (targets.size() > 1 || !result.complete) {
             QStringList names;
-            for (const auto &entry : candidates.targets)
-                names << entry.symbol.qualifiedName + " - " + entry.path + ':' +
-                             QString::number(entry.symbol.line + 1);
+            for (const auto &definition : targets)
+                names << (definition.symbol
+                              ? definition.symbol->symbol.qualifiedName + " - " +
+                                    definition.location.path + ':' +
+                                    QString::number(definition.symbol->symbol.line + 1)
+                              : definition.location.path);
             bool accepted = false;
             const auto selected = QInputDialog::getItem(
                 this, "Choose syntax candidate",
@@ -143,9 +141,7 @@ void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
             if (choice < 0)
                 return;
         }
-        const auto &entry = candidates.targets[choice];
-        navigateTo({entry.path, entry.symbol.nameStart, entry.symbol.nameEnd, -1, entry.hash}, true,
-                   true);
+        navigateTo(targets[choice].location, true, true);
         return;
     }
     const auto &targets = result.definitions;
@@ -170,14 +166,4 @@ void MainWindow::handleDefinitionResult(quint64 token, const QString &channel,
             return;
     }
     navigateTo(targets[choice].location, true, true);
-}
-
-void MainWindow::navigateDefinition(const LspLocation &target) {
-    NavigationLocation location;
-    location.path = target.path;
-    location.line = target.line;
-    location.character = target.character;
-    location.endLine = target.endLine;
-    location.endCharacter = target.endCharacter;
-    navigateTo(location, true, true);
 }

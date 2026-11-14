@@ -1,7 +1,7 @@
 #include "CompilerSymbolRecovery.h"
 #include <codecairn/Diagnostics.h>
 #include <codecairn/LanguageRegistry.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 #include <clang-c/Index.h>
 #include <clang-c/CXCompilationDatabase.h>
 #include <QDir>
@@ -46,7 +46,7 @@ QStringList arguments(const QString &path, LanguageId language, bool *configured
         if (!compilationDirectory.isEmpty())
             candidates.append(compilationDirectory);
         else {
-            candidates.append(workspaceClangdDirectory(directory.absolutePath()));
+            candidates.append(projectCompilationDirectory(directory.absolutePath()));
             for (const auto &relative : {".", "build", "build/ucrt64", "build/desktop"})
                 candidates.append(directory.filePath(relative));
         }
@@ -107,7 +107,7 @@ QStringList arguments(const QString &path, LanguageId language, bool *configured
 struct Visitor {
     QString path;
     QByteArray source;
-    QVector<SourceSymbol> symbols;
+    QVector<codecairn::SourceSymbol> symbols;
     LanguageId language;
 };
 
@@ -175,7 +175,7 @@ CXChildVisitResult collect(CXCursor cursor, CXCursor, CXClientData user) {
     const auto name = string(clang_getCursorSpelling(cursor));
     if (name.isEmpty() || anonymousTag(cursor, data))
         return CXChildVisit_Recurse;
-    SourceSymbol symbol;
+    codecairn::SourceSymbol symbol;
     symbol.name = name;
     symbol.kind = type;
     symbol.category = kind == CXCursor_ClassDecl                                       ? "Class"
@@ -250,8 +250,8 @@ CXChildVisitResult collect(CXCursor cursor, CXCursor, CXClientData user) {
 }
 }
 
-void recoverCompilerSymbols(SourceAnalysis &analysis, const QByteArray &source, const QString &path,
-                            const QString &compilationDirectory) {
+void recoverCompilerSymbols(codecairn::SourceAnalysis &analysis, const QByteArray &source,
+                            const QString &path, const QString &compilationDirectory) {
     const auto language = analysis.language;
     if (!isCFamily(language))
         return;
@@ -366,7 +366,7 @@ void recoverCompilerSymbols(SourceAnalysis &analysis, const QByteArray &source, 
 }
 
 InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray &source,
-                                          const QVector<SymbolOverlay> &overlays,
+                                          const QVector<codecairn::SymbolOverlay> &overlays,
                                           const QString &compilationDirectory) {
     InactiveCodeRanges result;
     const auto fail = [&](const QString &error) {
@@ -404,10 +404,10 @@ InactiveCodeRanges compilerInactiveRanges(const QString &path, const QByteArray 
     for (const auto &arg : encoded)
         raw.append(arg.constData());
     QVector<QByteArray> overlayNames;
-    QVector<const SymbolOverlay *> included;
+    QVector<const codecairn::SymbolOverlay *> included;
     for (const auto &overlay : overlays)
         if (QDir::isAbsolutePath(overlay.path) &&
-            workspacePath(overlay.path) != workspacePath(path)) {
+            canonicalPath(overlay.path) != canonicalPath(path)) {
             overlayNames.append(QFileInfo(overlay.path).absoluteFilePath().toUtf8());
             included.append(&overlay);
         }

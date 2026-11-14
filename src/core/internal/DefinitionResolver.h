@@ -5,14 +5,21 @@
 #include <QObject>
 #include <optional>
 
-DefinitionCandidates definitionCandidates(const SymbolPage &page, int offset = 0);
+struct DefinitionCandidates {
+    QVector<codecairn::IndexedSymbol> targets;
+    int total = 0;
+    bool complete = false;
+    QString error;
+};
+
+DefinitionCandidates definitionCandidates(const codecairn::SymbolPage &page, int offset = 0);
 
 class DefinitionResolver final : public QObject {
     Q_OBJECT
 public:
     explicit DefinitionResolver(QObject *parent = nullptr);
     ~DefinitionResolver() override;
-    void request(const QString &root, const SymbolQuery &query, quint64 token);
+    void request(const QString &root, const codecairn::SymbolCatalogQuery &query, quint64 token);
     void discard();
 
 signals:
@@ -21,12 +28,13 @@ signals:
 private:
     struct Request {
         QString root;
-        SymbolQuery query;
+        codecairn::SymbolCatalogQuery query;
         quint64 token;
     };
     void startPending();
-    QFutureWatcher<SymbolPage> watcher_;
+    QFutureWatcher<codecairn::SymbolPage> watcher_;
     std::optional<Request> pending_;
+    std::shared_ptr<std::atomic_bool> runningCancel_;
     quint64 runningToken_ = 0;
     int runningOffset_ = 0;
     bool busy_ = false;

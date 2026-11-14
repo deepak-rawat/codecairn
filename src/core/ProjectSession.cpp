@@ -1,22 +1,22 @@
 #include <codecairn/ProjectSession.h>
 #include <codecairn/CompilationDatabase.h>
-#include <codecairn/WorkspacePaths.h>
+#include <codecairn/Paths.h>
 
 #include <QFileInfo>
 
 PreparedProject prepareProject(const QString &root, const QString &projectFile) {
     PreparedProject project;
-    project.root = workspacePath(root);
+    project.root = canonicalPath(root);
     project.projectFile = projectFile;
     const QFileInfo folder(project.root);
     if (!folder.isDir() || !folder.isReadable()) {
         project.error = "Workspace folder is missing or unreadable: " + root;
         return project;
     }
-    project.error = WorkspaceOptionsStore::initialize(project.root, projectFile);
+    project.error = codecairn::ProjectConfigurationStore::initialize(project.root, projectFile);
     if (!project.error.isEmpty())
         return project;
-    project.options = WorkspaceOptionsStore::loadOptions(project.root, projectFile);
+    project.options = codecairn::ProjectConfigurationStore::loadOptions(project.root, projectFile);
     project.error = project.options.error;
     if (!project.error.isEmpty())
         return project;
