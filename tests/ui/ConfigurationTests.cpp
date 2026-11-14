@@ -22,7 +22,7 @@
 #include <QTest>
 #include <QTreeWidget>
 
-#include "WorkspaceIndex.h"
+#include "ProjectIndexer.h"
 namespace {
 void writeJson(const QString &path, const QByteArray &bytes) {
     QFile file(path);
@@ -259,7 +259,7 @@ void ConfigurationTests::workspaceRefreshConfiguration() {
     const auto path = dir.filePath("settings.json");
     writeJson(path, R"({"behavior":{"workspaceRefreshMinutes":720}})");
     MainWindow window(false, nullptr, path);
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     QCOMPARE(index->refreshIntervalMinutes(), 720);
     writeJson(path, R"({"behavior":{"workspaceRefreshMinutes":60}})");
     QVERIFY(window.reloadConfiguration());
@@ -274,7 +274,7 @@ void ConfigurationTests::workspaceRefreshConfiguration() {
     writeJson(path, "{}");
     QVERIFY(window.reloadConfiguration());
     QCOMPARE(index->refreshIntervalMinutes(), 360);
-    QSignalSpy failed(index, &WorkspaceIndex::failed);
+    QSignalSpy failed(index, &ProjectIndexer::failed);
     index->setRefreshIntervalMinutes(0);
     QCOMPARE(failed.count(), 1);
     QCOMPARE(index->refreshIntervalMinutes(), 360);

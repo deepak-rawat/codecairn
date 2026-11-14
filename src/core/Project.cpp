@@ -2,6 +2,9 @@
 #include <codecairn/Diagnostics.h>
 #include "NavigationService.h"
 #include "ReferenceSession.h"
+#include "ProjectIndexer.h"
+#include "ProjectSymbolQuery.h"
+#include <QFileInfo>
 #include <QTimer>
 #include <QSet>
 #include <utility>
@@ -10,9 +13,11 @@
 namespace codecairn {
 
 struct Project::State {
-    explicit State(Engine *engine) : engine(engine), navigation(&services) {}
+    explicit State(Engine *engine) : engine(engine), navigation(&languages) {}
     Engine *engine;
-    WorkspaceServices services;
+    ProjectIndexer indexer;
+    detail::ProjectSymbolQuery symbols;
+    detail::ProjectLanguages languages;
     ProjectInfo info;
     NavigationService navigation;
     RequestId indexRequest;
@@ -34,46 +39,39 @@ struct Project::State {
 };
 
 Project::Project(Engine *engine) : QObject(engine), state_(std::make_unique<State>(engine)) {
-    state_->services.setParent(this);
+    state_->indexer.setParent(this);
+    state_->symbols.setParent(this);
+    state_->languages.setParent(this);
     state_->navigation.setParent(this);
-    connect(&state_->services, &WorkspaceServices::projectAboutToChange, this, [this] {
-        state_->engine->cancelFor(this);
-        state_->navigation.cancelLookups();
-        state_->definitions.clear();
-        state_->deliveries.clear();
-        state_->analyses.clear();
-        state_->membership.clear();
-        for (const auto &search : std::as_const(state_->searches)) {
-            search.session->retire();
-        }
-        state_->searches.clear();
-    });
-    auto *index = state_->services.index();
-    connect(index, &WorkspaceIndex::catalogReady, this, &Project::catalogReady);
-    connect(index, &WorkspaceIndex::batchReady, this, &Project::indexBatchReady);
-    connect(index, &WorkspaceIndex::busyChanged, this, &Project::indexingChanged);
-    connect(index, &WorkspaceIndex::failed, this, &Project::failed);
-    connect(index, &WorkspaceIndex::status, this, &Project::status);
-    connect(index, &WorkspaceIndex::ready, this, [this](const IndexResult &result) {
+    auto *index = &state_->indexer;
+    connect(index, &ProjectIndexer::catalogReady, this, &Project::catalogReady);
+    connect(index, &ProjectIndexer::batchReady, this, &Project::indexBatchReady);
+    connect(index, &ProjectIndexer::busyChanged, this, &Project::indexingChanged);
+    connect(index, &ProjectIndexer::busyChanged, &state_->symbols,
+            &detail::ProjectSymbolQuery::setIndexing);
+    connect(index, &ProjectIndexer::failed, this, &Project::failed);
+    connect(index, &ProjectIndexer::status, this, &Project::status);
+    connect(index, &ProjectIndexer::ready, this, [this](const IndexResult &result) {
         if (result.changed)
             state_->membership.clear();
         const auto request = std::exchange(state_->indexRequest, {});
         emit indexReady(request, result);
     });
-    connect(index, &WorkspaceIndex::symbolsReady, this, [this](const SymbolPage &page) {
-        const auto request = std::exchange(state_->symbolRequest, {});
-        emit symbolsReady(request, page);
-    });
+    connect(&state_->symbols, &detail::ProjectSymbolQuery::ready, this,
+            [this](const SymbolPage &page) {
+                const auto request = std::exchange(state_->symbolRequest, {});
+                emit symbolsReady(request, page);
+            });
     const auto observe = [this](LanguageServerClient *service) {
         connect(service, &LanguageServerClient::status, this, &Project::status);
         connect(service, &LanguageServerClient::ready, this, &Project::languageReady);
     };
-    observe(state_->services.cppService());
-    connect(&state_->services, &WorkspaceServices::serviceCreated, this, observe);
+    observe(state_->languages.cpp());
+    connect(&state_->languages, &detail::ProjectLanguages::serviceCreated, this, observe);
     connect(engine, &Engine::documentClosed, this, [this](const QString &path) {
         state_->analyses.remove(path);
         state_->membership.remove(path);
-        state_->services.closeDocument(path);
+        state_->languages.closeDocument(path);
     });
     connect(this, &Project::analysisReady, this, [this](RequestId, const AnalysisResult &result) {
         auto *live = state_->engine->document(result.source.path);
@@ -142,30 +140,51 @@ const ProjectInfo &Project::info() const {
 }
 
 Result<void> Project::open(const PreparedProject &prepared, const ProjectOptions &options) {
-    if (!prepared.error.isEmpty()) {
-        qCWarning(storageLog) << "project.open_failed" << prepared.error;
-        return Result<void>::failure(ErrorCode::InvalidArgument, prepared.error);
+    if (!prepared.error.isEmpty() || prepared.root.isEmpty() || !QFileInfo(prepared.root).isDir() ||
+        !QFileInfo(prepared.root).isReadable()) {
+        const auto error = prepared.error.isEmpty()
+                               ? "Project folder is missing or unreadable: " + prepared.root
+                               : prepared.error;
+        qCWarning(storageLog) << "project.open_failed" << error;
+        return Result<void>::failure(ErrorCode::InvalidArgument, error);
     }
+    const bool switching =
+        info().root != prepared.root || info().projectFile != prepared.projectFile;
     const bool contextChanged =
         info().root != prepared.root || info().projectFile != prepared.projectFile ||
         info().configuration.compilationDirectory != prepared.options.compilationDirectory ||
         info().configuration.projectDigest != prepared.options.projectDigest;
-    const ProjectOpenOptions startup{
-        options.indexing == IndexStartup::Automatic ? ::IndexStartup::Automatic
-                                                    : ::IndexStartup::Manual,
-        options.languages == LanguageStartup::Automatic ? ::LanguageStartup::Automatic
-                                                        : ::LanguageStartup::Manual};
-    const auto error = state_->services.commitProject(prepared, startup);
-    if (!error.isEmpty())
-        return Result<void>::failure(ErrorCode::Io, error);
+    if (switching || options.indexing == IndexStartup::Automatic ||
+        options.languages == LanguageStartup::Automatic)
+        invalidateOperations();
+    if (switching)
+        state_->languages.stop();
     state_->info = {prepared.root, prepared.projectFile, prepared.name, prepared.options};
     state_->synchronizeLanguages = options.languages == LanguageStartup::Automatic;
+    if (switching || options.indexing == IndexStartup::Automatic) {
+        state_->symbols.open(info().root, info().projectFile);
+        state_->indexer.open(info().root, info().projectFile,
+                             options.indexing == IndexStartup::Automatic
+                                 ? ProjectIndexer::OpenMode::IndexAndWatch
+                                 : ProjectIndexer::OpenMode::QueryOnly);
+    }
+    if (options.languages == LanguageStartup::Automatic)
+        state_->languages.start(info().root, info().configuration.compilationDirectory,
+                                info().projectFile);
     if (contextChanged)
         emit this->contextChanged();
     return Result<void>::success();
 }
 
 void Project::close() {
+    invalidateOperations();
+    state_->symbols.open({}, {});
+    state_->indexer.close();
+    state_->languages.stop();
+    state_->info = {};
+}
+
+void Project::invalidateOperations() {
     state_->engine->cancelFor(this);
     state_->navigation.cancelLookups();
     state_->navigation.cancelRead();
@@ -176,16 +195,20 @@ void Project::close() {
     state_->searches.clear();
     state_->analyses.clear();
     state_->membership.clear();
-    state_->services.closeProject();
-    state_->info = {};
+    state_->indexRequest = {};
+    state_->symbolRequest = {};
 }
 
 Result<void> Project::reloadOptions() {
     const auto previous = info().configuration;
-    const auto error = state_->services.reloadProjectOptions();
-    if (!error.isEmpty())
-        return Result<void>::failure(ErrorCode::Io, error);
-    state_->info.configuration = state_->services.project().options;
+    const auto loaded = WorkspaceOptionsStore::loadOptions(info().root, info().projectFile);
+    if (!loaded.error.isEmpty()) {
+        qCWarning(storageLog) << "project.options_failed" << loaded.error;
+        return Result<void>::failure(ErrorCode::Io, loaded.error);
+    }
+    state_->info.configuration = loaded;
+    if (loaded.excludedDirectories)
+        state_->indexer.setExcludes(*loaded.excludedDirectories);
     state_->membership.clear();
     if (previous.compilationDirectory != info().configuration.compilationDirectory ||
         previous.projectDigest != info().configuration.projectDigest) {
@@ -213,25 +236,25 @@ bool Project::contains(const QString &path) const {
     return included;
 }
 bool Project::indexing() const {
-    return state_->services.index()->busy();
+    return state_->indexer.busy();
 }
 QStringList Project::files() const {
-    return state_->services.index()->files();
+    return state_->indexer.files();
 }
 QStringList Project::excludedDirectories() const {
-    return state_->services.index()->excludes();
+    return state_->indexer.excludes();
 }
 void Project::setExcludedDirectories(const QStringList &names) {
     state_->info.configuration.excludedDirectories = names;
     state_->membership.clear();
-    state_->services.index()->setExcludes(names);
+    state_->indexer.setExcludes(names);
 }
 void Project::setRefreshIntervalMinutes(int minutes) {
-    state_->services.index()->setRefreshIntervalMinutes(minutes);
+    state_->indexer.setRefreshIntervalMinutes(minutes);
 }
 RequestId Project::refreshIndex(IndexRefresh mode) {
     state_->indexRequest = state_->engine->nextRequest();
-    state_->services.index()->refresh(mode);
+    state_->indexer.refresh(mode);
     return state_->indexRequest;
 }
 RequestId Project::findSymbols(const SymbolQuery &query) {
@@ -254,14 +277,14 @@ RequestId Project::findSymbols(const SymbolQuery &query) {
         return document && !document->modified() && !overlay.analysis.supported;
     });
     state_->symbolRequest = state_->engine->nextRequest();
-    state_->services.index()->search(captured);
+    state_->symbols.search(captured);
     return state_->symbolRequest;
 }
 void Project::cancelIndexing() {
-    state_->services.index()->cancel();
+    state_->indexer.cancel();
 }
 void Project::cancelSymbolQuery() {
-    state_->services.index()->invalidateSearch();
+    state_->symbols.cancel();
 }
 
 SourceAnalysis Project::cachedAnalysis(const SourceSnapshot &snapshot) const {
@@ -316,8 +339,7 @@ RequestId Project::analyze(const SourceSnapshot &snapshot, AnalysisDetail detail
 void Project::synchronizeDocument(const SourceSnapshot &snapshot) {
     if (info().root.isEmpty() || !state_->synchronizeLanguages)
         return;
-    if (auto *service =
-            state_->services.languageService(info().root, snapshot.path, snapshot.bytes))
+    if (auto *service = state_->languages.serviceFor(snapshot.path, snapshot.bytes))
         service->syncDocument(snapshot.path, snapshot.bytes, static_cast<int>(snapshot.revision));
 }
 
@@ -327,8 +349,8 @@ void Project::restartLanguageServices() {
     state_->definitions.clear();
     state_->analyses.clear();
     state_->engine->cancelFor(this);
-    state_->services.restartLanguageServices(info().root, info().configuration.compilationDirectory,
-                                             info().projectFile);
+    state_->languages.start(info().root, info().configuration.compilationDirectory,
+                            info().projectFile);
     for (const auto &overlay : state_->engine->overlays(this))
         if (auto *doc = state_->engine->document(overlay.path))
             synchronizeDocument(doc->snapshot());
@@ -336,7 +358,9 @@ void Project::restartLanguageServices() {
 }
 
 Result<void> Project::recreateIndex() {
-    const auto error = state_->services.index()->recreateDatabase();
+    state_->symbols.cancel();
+    state_->symbols.waitForFinished();
+    const auto error = state_->indexer.recreateDatabase();
     if (!error.isEmpty()) {
         qCWarning(storageLog) << "project.index_recreate_failed" << error;
         return Result<void>::failure(ErrorCode::Io, error);
@@ -368,7 +392,7 @@ RequestId Project::startSearch(ReferenceSearchRequest request,
                                const std::optional<SourcePosition> &origin, bool references,
                                bool declarations) {
     const auto id = state_->engine->nextRequest();
-    auto *session = new ReferenceSession(&state_->services, this);
+    auto *session = new ReferenceSession(&state_->languages, this);
     session->setSnapshotProvider([this](const QString &path) -> std::optional<QByteArray> {
         if (auto *doc = state_->engine->document(path))
             return doc->snapshot().bytes;

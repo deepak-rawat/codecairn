@@ -16,6 +16,8 @@ struct IndexedSymbol {
     bool live = false;
 };
 
+enum class IndexPhase { Discovery, Symbols, References };
+
 struct IndexProgress {
     std::atomic_int discovered{0};
     std::atomic_int parsed{0};
@@ -25,7 +27,7 @@ struct IndexProgress {
     // Called on the coordinator thread, never a parser worker.
     std::function<void(const QStringList &)> catalogReady;
     std::function<void()> batchReady;
-    std::atomic_int phase{0}; // discovery, symbols, reference acceleration
+    std::atomic<IndexPhase> phase{IndexPhase::Discovery};
 };
 
 struct IndexResult {

@@ -1,8 +1,9 @@
 #include "MainWindow.h"
+#include "ProjectSymbolQuery.h"
 #include <codecairn/Diagnostics.h>
 #include "LanguageServerClient.h"
 #include "SymbolCatalogModel.h"
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
 #include "TestStorage.h"
 #include <codecairn/Indexing.h>
 #include <codecairn/WorkspaceOptionsStore.h>
@@ -22,8 +23,8 @@
 #include <QTreeWidget>
 #include <sqlite3.h>
 
-#include "WorkspaceIndex.h"
-using namespace WorkspaceIndexDetail;
+#include "ProjectIndexer.h"
+using namespace codecairn::detail;
 
 class SymbolScalingTests : public QObject {
     Q_OBJECT
@@ -43,7 +44,7 @@ private slots:
         const int requested = qEnvironmentVariableIntValue("CODECAIRN_SYMBOL_SCALE");
         const int count = requested > 0 ? requested : 100000;
         {
-            SymbolIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(workspaceDatabase(root), true);
             db.ensureSchema();
             db.exec("BEGIN; DELETE FROM symbols;");
             const auto sql =
@@ -63,7 +64,7 @@ private slots:
         MainWindow window(false);
         window.show();
         window.openProject(root);
-        auto *index = window.findChild<WorkspaceIndex *>();
+        auto *index = window.findChild<ProjectIndexer *>();
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
         index->cancel();
         SymbolQuery summaryQuery;
@@ -108,10 +109,11 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(changing.entry(changing.index(count - 1, 0)).has_value(), 10000);
         countChanges.stop();
 
-        QSignalSpy replies(index, &WorkspaceIndex::symbolsReady);
+        auto *queries = window.findChild<codecairn::detail::ProjectSymbolQuery *>();
+        QSignalSpy replies(queries, &codecairn::detail::ProjectSymbolQuery::ready);
         QTimer refreshes;
         refreshes.setInterval(5);
-        connect(&refreshes, &QTimer::timeout, &window, [&] { index->search(summaryQuery); });
+        connect(&refreshes, &QTimer::timeout, &window, [&] { queries->search(summaryQuery); });
         refreshes.start();
         QTRY_VERIFY_WITH_TIMEOUT(!replies.isEmpty(), 10000);
         refreshes.stop();
@@ -175,7 +177,7 @@ private slots:
                                     std::make_shared<std::atomic_bool>(false))
                     .error.isEmpty());
         {
-            SymbolIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(workspaceDatabase(root), true);
             db.exec("BEGIN; DELETE FROM symbols;"
                     "WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<299)"
                     "INSERT INTO symbols SELECT path,printf('name_%03d',i),'Variable','','',1,"
@@ -190,7 +192,7 @@ private slots:
         QTRY_VERIFY(model.entry(model.index(299, 0)).has_value());
         QCOMPARE(model.entry(model.index(299, 0))->symbol.name, QString("name_299"));
         {
-            SymbolIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(workspaceDatabase(root), true);
             db.exec("INSERT INTO symbols SELECT path,'zzz_new','Variable','','',1,"
                     "0,11,4,10,0,'Variable',0,'syntax' FROM files;");
         }
@@ -200,7 +202,7 @@ private slots:
         QTRY_VERIFY(model.entry(model.index(300, 0)).has_value());
         QCOMPARE(model.entry(model.index(300, 0))->symbol.name, QString("zzz_new"));
         {
-            SymbolIndexStore db(workspaceDatabase(root), true);
+            ProjectIndexStore db(workspaceDatabase(root), true);
             db.exec("INSERT INTO symbols SELECT path,'aaa_new','Variable','','',1,"
                     "0,11,4,10,0,'Variable',0,'syntax' FROM files;");
         }
@@ -222,7 +224,7 @@ private slots:
         window.show();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         window.openProject(directory.path());
-        auto *index = window.findChild<WorkspaceIndex *>();
+        auto *index = window.findChild<ProjectIndexer *>();
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
         window.findChild<QTabWidget *>("browserTabs")->setCurrentIndex(1);
         auto *view = window.findChild<QTreeView *>("virtualSymbolList");
@@ -266,8 +268,8 @@ private slots:
         QVERIFY(WorkspaceOptionsStore::saveProject(projectFile, root, options).isEmpty());
         QVERIFY(WorkspaceOptionsStore::initialize(root, projectFile).isEmpty());
         {
-            SymbolIndexStore source(snapshot, false);
-            SymbolIndexStore target(workspaceDatabase(root, projectFile), true);
+            ProjectIndexStore source(snapshot, false);
+            ProjectIndexStore target(workspaceDatabase(root, projectFile), true);
             auto *backup = sqlite3_backup_init(target.handle(), "main", source.handle(), "main");
             QVERIFY2(backup, sqlite3_errmsg(target.handle()));
             const int copied = sqlite3_backup_step(backup, -1);
@@ -289,7 +291,7 @@ private slots:
         MainWindow window(false);
         window.show();
         window.openManagedProject(projectFile);
-        auto *index = window.findChild<WorkspaceIndex *>();
+        auto *index = window.findChild<ProjectIndexer *>();
         index->cancel();
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 30000);
         auto *view = window.findChild<QTreeView *>("virtualSymbolList");
@@ -368,8 +370,8 @@ private slots:
         QVERIFY(WorkspaceOptionsStore::saveProject(projectFile, root, options).isEmpty());
         QVERIFY(WorkspaceOptionsStore::initialize(root, projectFile).isEmpty());
         {
-            SymbolIndexStore source(snapshot, false);
-            SymbolIndexStore target(workspaceDatabase(root, projectFile), true);
+            ProjectIndexStore source(snapshot, false);
+            ProjectIndexStore target(workspaceDatabase(root, projectFile), true);
             auto *backup = sqlite3_backup_init(target.handle(), "main", source.handle(), "main");
             QVERIFY(backup);
             const auto code = sqlite3_backup_step(backup, -1);
@@ -380,7 +382,7 @@ private slots:
         window.show();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
         window.openManagedProject(projectFile);
-        auto *index = window.findChild<WorkspaceIndex *>();
+        auto *index = window.findChild<ProjectIndexer *>();
         index->cancel();
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 30000);
         const auto path = QDir(root).filePath("drivers/gpu/drm/hyperv/hyperv_drm_modeset.c");

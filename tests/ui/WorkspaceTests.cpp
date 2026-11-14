@@ -6,7 +6,7 @@
 #include <codecairn/WorkspaceOptionsStore.h>
 #include <codecairn/CompilationDatabase.h>
 #include "CompilerSymbolRecovery.h"
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
 #include "SymbolBrowser.h"
 #include "SymbolCatalogModel.h"
 
@@ -37,7 +37,7 @@
 #include <QTabWidget>
 #include <QtConcurrentRun>
 
-#include "WorkspaceIndex.h"
+#include "ProjectIndexer.h"
 namespace {
 IndexResult index(const QString &root, bool force = false, bool rescan = true) {
     const auto mode =
@@ -359,14 +359,14 @@ void WorkspaceTests::unsupportedSchemaRequiresExplicitRecreation() {
     write(dir.filePath("one.cpp"), "int one();\n");
     QVERIFY(index(dir.path()).error.isEmpty());
     {
-        WorkspaceIndexDetail::SymbolIndexStore database(workspaceDatabase(dir.path()), true);
+        codecairn::detail::ProjectIndexStore database(workspaceDatabase(dir.path()), true);
         database.exec("PRAGMA user_version=1;");
     }
     QVERIFY(index(dir.path()).error.contains("Unsupported workspace database version"));
     QVERIFY(queryWorkspaceSymbols(dir.path(), {})
                 .error.contains("Unsupported workspace database version"));
-    WorkspaceIndexDetail::SymbolIndexStore database(workspaceDatabase(dir.path()), false);
-    WorkspaceIndexDetail::IndexStatement count(database, "SELECT count(*) FROM symbols");
+    codecairn::detail::ProjectIndexStore database(workspaceDatabase(dir.path()), false);
+    codecairn::detail::IndexStatement count(database, "SELECT count(*) FROM symbols");
     QVERIFY(count.next());
     QCOMPARE(count.integer(0), 1);
 }
@@ -377,11 +377,11 @@ void WorkspaceTests::databaseRecreationArchivesAndHonorsLock() {
     QVERIFY(WorkspaceOptionsStore::initialize(dir.path()).isEmpty());
     const auto database = workspaceDatabase(dir.path());
     write(database, "broken database");
-    WorkspaceIndex workspace;
-    QSignalSpy failed(&workspace, &WorkspaceIndex::failed);
-    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
-    QSignalSpy catalog(&workspace, &WorkspaceIndex::catalogReady);
-    QSignalSpy batches(&workspace, &WorkspaceIndex::batchReady);
+    ProjectIndexer workspace;
+    QSignalSpy failed(&workspace, &ProjectIndexer::failed);
+    QSignalSpy ready(&workspace, &ProjectIndexer::ready);
+    QSignalSpy catalog(&workspace, &ProjectIndexer::catalogReady);
+    QSignalSpy batches(&workspace, &ProjectIndexer::batchReady);
     workspace.open(dir.path());
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 10000);
     QLockFile lock(QDir(workspaceStorageDirectory(dir.path())).filePath("index.lock"));
@@ -481,15 +481,15 @@ void WorkspaceTests::parallelParsersOverlapAndPublishWhileBusy() {
     QVERIFY(progress->peakParsers.load() <= 8);
     QCOMPARE(progress->activeParsers.load(), 0);
 
-    WorkspaceIndex workspace;
-    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
+    ProjectIndexer workspace;
+    QSignalSpy ready(&workspace, &ProjectIndexer::ready);
     bool catalogWhileBusy = false;
     bool queriedWhileBusy = false;
-    connect(&workspace, &WorkspaceIndex::catalogReady, this, [&](const QStringList &paths) {
+    connect(&workspace, &ProjectIndexer::catalogReady, this, [&](const QStringList &paths) {
         catalogWhileBusy = workspace.busy();
         QCOMPARE(paths.size(), 12);
     });
-    connect(&workspace, &WorkspaceIndex::batchReady, this, [&] {
+    connect(&workspace, &ProjectIndexer::batchReady, this, [&] {
         if (queriedWhileBusy)
             return;
         const auto page = queryWorkspaceSymbols(dir.path(), {});
@@ -514,8 +514,8 @@ void WorkspaceTests::resourceLoggingReportsStartAndCompletion() {
     };
     QTest::ignoreMessage(QtInfoMsg, record("start"));
     QTest::ignoreMessage(QtInfoMsg, record("complete"));
-    WorkspaceIndex workspace;
-    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
+    ProjectIndexer workspace;
+    QSignalSpy ready(&workspace, &ProjectIndexer::ready);
     workspace.open(dir.path());
     QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
 }
@@ -525,9 +525,9 @@ void WorkspaceTests::initialPassUsesConfiguredExclusions() {
     QVERIFY(QDir(dir.path()).mkpath("build"));
     write(dir.filePath("build/one.cpp"), "int included_on_first_pass();\n");
     QVERIFY(WorkspaceOptionsStore::saveOptions(workspacePath(dir.path()), {}, {".git"}).isEmpty());
-    WorkspaceIndex workspace;
-    QSignalSpy ready(&workspace, &WorkspaceIndex::ready);
-    QSignalSpy catalog(&workspace, &WorkspaceIndex::catalogReady);
+    ProjectIndexer workspace;
+    QSignalSpy ready(&workspace, &ProjectIndexer::ready);
+    QSignalSpy catalog(&workspace, &ProjectIndexer::catalogReady);
     workspace.open(dir.path());
     QCOMPARE(workspace.excludes(), QStringList{".git"});
     QTRY_COMPARE_WITH_TIMEOUT(ready.size(), 1, 10000);
@@ -543,7 +543,7 @@ void WorkspaceTests::pendingInitialSchemaDoesNotMaskUnsupportedDatabases() {
     QTemporaryDir dir;
     const auto root = workspacePath(dir.path());
     QVERIFY(WorkspaceOptionsStore::initialize(root).isEmpty());
-    WorkspaceIndexDetail::SymbolIndexStore writer(workspaceDatabase(root), true);
+    codecairn::detail::ProjectIndexStore writer(workspaceDatabase(root), true);
     writer.exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;"
                 "CREATE TABLE files(path TEXT PRIMARY KEY);");
     SymbolQuery query;
@@ -593,16 +593,15 @@ void WorkspaceTests::missingSchemaIsNotSilentlyRecreated() {
     write(directory.filePath("one.c"), "int preserved;\n");
     QVERIFY(index(directory.path()).error.isEmpty());
     {
-        WorkspaceIndexDetail::SymbolIndexStore db(workspaceDatabase(directory.path()), true);
+        codecairn::detail::ProjectIndexStore db(workspaceDatabase(directory.path()), true);
         db.exec("DROP TABLE symbols;");
     }
     const auto result = index(directory.path());
     QVERIFY(result.error.contains("no such table"));
     const auto page = queryWorkspaceSymbols(directory.path(), {});
     QVERIFY(page.error.contains("no such table"));
-    WorkspaceIndexDetail::SymbolIndexStore db(workspaceDatabase(directory.path()), false);
-    WorkspaceIndexDetail::IndexStatement table(db,
-                                               "SELECT 1 FROM sqlite_master WHERE name='symbols'");
+    codecairn::detail::ProjectIndexStore db(workspaceDatabase(directory.path()), false);
+    codecairn::detail::IndexStatement table(db, "SELECT 1 FROM sqlite_master WHERE name='symbols'");
     QVERIFY(!table.next());
 }
 
@@ -873,8 +872,8 @@ void WorkspaceTests::watcherRefreshAndWorkspaceSwitch() {
     QTemporaryDir first, second;
     write(first.filePath("one.cpp"), "int one();\n");
     write(second.filePath("two.cpp"), "int two();\n");
-    WorkspaceIndex service;
-    QSignalSpy ready(&service, &WorkspaceIndex::ready);
+    ProjectIndexer service;
+    QSignalSpy ready(&service, &ProjectIndexer::ready);
     service.open(first.path());
     QTRY_VERIFY_WITH_TIMEOUT(ready.count() >= 1, 10000);
     write(first.filePath("added.cpp"), "int added();\n");
@@ -903,8 +902,8 @@ void WorkspaceTests::automaticRefreshIgnoresMetadata() {
     QTemporaryDir dir;
     QVERIFY(QDir(dir.path()).mkpath("build"));
     write(dir.filePath("one.cpp"), "int one();\n");
-    WorkspaceIndex service;
-    QSignalSpy ready(&service, &WorkspaceIndex::ready);
+    ProjectIndexer service;
+    QSignalSpy ready(&service, &ProjectIndexer::ready);
     service.open(dir.path());
     QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty() && !service.busy(), 10000);
     ready.clear();
@@ -929,7 +928,7 @@ void WorkspaceTests::unchangedAutomaticRefreshIsQuiet() {
     MainWindow window(false);
     QSignalSpy ready(&window, &MainWindow::indexReady);
     window.openProject(dir.path());
-    auto *service = window.findChild<WorkspaceIndex *>();
+    auto *service = window.findChild<ProjectIndexer *>();
     QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty() && !service->busy(), 10000);
     window.findChild<LanguageServerClient *>()->stop();
     ready.clear();
@@ -959,9 +958,9 @@ void WorkspaceTests::unchangedAutomaticRefreshIsQuiet() {
 void WorkspaceTests::refreshesCoalesceWithoutCancelling() {
     QTemporaryDir dir;
     write(dir.filePath("one.cpp"), "int one();\n");
-    WorkspaceIndex service;
-    QSignalSpy ready(&service, &WorkspaceIndex::ready);
-    QSignalSpy failed(&service, &WorkspaceIndex::failed);
+    ProjectIndexer service;
+    QSignalSpy ready(&service, &ProjectIndexer::ready);
+    QSignalSpy failed(&service, &ProjectIndexer::failed);
     service.open(dir.path());
     QVERIFY(service.busy());
     for (int i = 0; i < 10; ++i)
@@ -983,7 +982,7 @@ void WorkspaceTests::refreshPreservesBrowserState() {
     window.show();
     QSignalSpy ready(&window, &MainWindow::indexReady);
     window.openProject(dir.path());
-    auto *service = window.findChild<WorkspaceIndex *>();
+    auto *service = window.findChild<ProjectIndexer *>();
     auto *files = window.findChild<QTreeWidget *>("fileList");
     auto *folders = window.findChild<QTreeWidget *>("folderTree");
     QTRY_VERIFY_WITH_TIMEOUT(ready.count() > 0 && !service->busy(), 15000);
@@ -1024,8 +1023,8 @@ void WorkspaceTests::indexingDoesNotWaitForEditorWorkers() {
         release.acquire();
     });
     started.acquire();
-    WorkspaceIndex service;
-    QSignalSpy ready(&service, &WorkspaceIndex::ready);
+    ProjectIndexer service;
+    QSignalSpy ready(&service, &ProjectIndexer::ready);
     service.open(dir.path());
     const bool completed = ready.wait(10000);
     release.release();
@@ -1086,7 +1085,7 @@ void WorkspaceTests::compilerGeneratedProjectSymbolsPreviewDefinitions() {
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     window.openProject(dir.path());
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     auto *symbols = window.findChild<QTreeWidget *>("symbolList");
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
     QTRY_COMPARE_WITH_TIMEOUT(symbols->topLevelItemCount(), 3, 10000);
@@ -1120,7 +1119,7 @@ void WorkspaceTests::largeFileRefreshPreservesBrowserState() {
         write(directory.filePath(QString("nested/file_%1.txt").arg(i)), "notes\n");
     MainWindow window(false);
     window.openProject(directory.path());
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 30000);
     auto *files = window.findChild<QTreeWidget *>("fileList");
     auto *folders = window.findChild<QTreeWidget *>("folderTree");
@@ -1135,7 +1134,7 @@ void WorkspaceTests::largeFileRefreshPreservesBrowserState() {
     QVERIFY(nested->childCount() > 0);
     folders->setCurrentItem(nested);
     const auto nestedName = nested->text(0);
-    QSignalSpy ready(index, &WorkspaceIndex::ready);
+    QSignalSpy ready(index, &ProjectIndexer::ready);
     write(directory.filePath("new.txt"), "new\n");
     index->refresh();
     QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty() && !index->busy(), 30000);
@@ -1161,7 +1160,7 @@ void WorkspaceTests::editedExclusionsUpdateOpenBufferMembership() {
     QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, directory.path(), options).isEmpty());
     MainWindow window(false);
     window.openManagedProject(descriptor);
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
     QSignalSpy analyzed(&window, &MainWindow::analysisReady);
     QVERIFY(window.openFile(directory.filePath("sub/one.c")));
@@ -1261,7 +1260,7 @@ void WorkspaceTests::externalWorkspaceSymbolPreviews() {
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     window.openProject(root);
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     auto *symbols = window.findChild<QTreeWidget *>("symbolList");
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 30000);
     SymbolQuery query;

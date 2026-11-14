@@ -1,5 +1,6 @@
 #include "ReferenceSession.h"
 #include <codecairn/FileIO.h>
+#include <codecairn/WorkspacePaths.h>
 #include <codecairn/Diagnostics.h>
 
 #include <QDir>
@@ -36,8 +37,8 @@ QStringList referenceSearchPaths(const QStringList &catalog, const QVector<Symbo
     return paths;
 }
 
-ReferenceSession::ReferenceSession(WorkspaceServices *services, QObject *parent)
-    : QObject(parent), services_(services) {
+ReferenceSession::ReferenceSession(codecairn::detail::ProjectLanguages *languages, QObject *parent)
+    : QObject(parent), languages_(languages) {
 }
 
 ReferenceSession::~ReferenceSession() {
@@ -121,7 +122,7 @@ void ReferenceSession::start(const ReferenceSearchRequest &request, quint64 toke
         fail(token, "Select a source symbol for semantic reference matching.");
         return;
     }
-    service_ = services_->languageService(request.workspaceRoot, origin->path, origin->source);
+    service_ = languages_->serviceFor(origin->path, origin->source);
     if (!service_) {
         fail(token, "No semantic provider is available. Select a text search explicitly.");
         return;
@@ -152,8 +153,7 @@ void ReferenceSession::start(const ReferenceSearchRequest &request, quint64 toke
         });
     busy_ = true;
     for (const auto &overlay : request.overlays)
-        if (services_->languageService(request.workspaceRoot, overlay.path, overlay.source) ==
-            service_)
+        if (languages_->serviceFor(overlay.path, overlay.source) == service_)
             service_->syncDocument(overlay.path, overlay.source,
                                    origin->versions.value(overlay.path, 0));
     service_->locations(origin->path, origin->source, origin->version, origin->position, token,

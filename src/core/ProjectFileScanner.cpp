@@ -1,6 +1,6 @@
-#include "WorkspaceScanner.h"
+#include "ProjectFileScanner.h"
 #include <codecairn/LanguageRegistry.h>
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
 #include <codecairn/WorkspacePaths.h>
 
 #include <QDataStream>
@@ -8,7 +8,7 @@
 #include <QDir>
 #include <QFile>
 
-namespace WorkspaceIndexDetail {
+namespace codecairn::detail {
 
 bool sourceLanguage(const QString &path) {
     if (languageForFile(path).grammar)
@@ -43,11 +43,11 @@ QByteArray directorySnapshot(const QFileInfoList &entries, const QStringList &ex
     return snapshot;
 }
 
-QStringList scanWorkspaceFiles(SymbolIndexStore &database, const QString &root, bool rescan,
-                               const QStringList &excludes,
-                               const std::shared_ptr<std::atomic_bool> &cancel,
-                               const std::shared_ptr<IndexProgress> &progress, IndexResult &result,
-                               const WorkspaceOptions &options) {
+QStringList scanProjectFiles(ProjectIndexStore &database, const QString &root, bool rescan,
+                             const QStringList &excludes,
+                             const std::shared_ptr<std::atomic_bool> &cancel,
+                             const std::shared_ptr<IndexProgress> &progress, IndexResult &result,
+                             const WorkspaceOptions &options) {
     auto membership = options;
     membership.excludedDirectories = excludes;
     QStringList paths;

@@ -1,7 +1,7 @@
 #include <codecairn/ProjectDiscovery.h>
 #include <codecairn/Diagnostics.h>
 #include <codecairn/WorkspacePaths.h>
-#include "WorkspaceScanner.h"
+#include "ProjectFileScanner.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -72,7 +72,7 @@ ProjectScanResult discoverProjectFiles(const QString &root, const WorkspaceOptio
     const auto addFile = [&](const QString &path) {
         if (!projectIncludesPath(root, path, options))
             return;
-        if (scope == ProjectFileScope::SourceFiles && !WorkspaceIndexDetail::sourceLanguage(path))
+        if (scope == ProjectFileScope::SourceFiles && !codecairn::detail::sourceLanguage(path))
             return;
         const auto relative = QDir(root).relativeFilePath(path);
         if (seen.contains(relative))

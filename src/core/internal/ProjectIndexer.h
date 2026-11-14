@@ -11,12 +11,12 @@
 #include <atomic>
 #include <memory>
 
-class WorkspaceIndex final : public QObject {
+class ProjectIndexer final : public QObject {
     Q_OBJECT
 public:
     enum class OpenMode { IndexAndWatch, QueryOnly };
-    explicit WorkspaceIndex(QObject *parent = nullptr);
-    ~WorkspaceIndex() override;
+    explicit ProjectIndexer(QObject *parent = nullptr);
+    ~ProjectIndexer() override;
     void open(const QString &root, const QString &projectFile = {},
               OpenMode mode = OpenMode::IndexAndWatch);
     void close();
@@ -30,19 +30,11 @@ public:
     void setExcludes(const QStringList &names);
     void setRefreshIntervalMinutes(int minutes);
     int refreshIntervalMinutes() const { return pollTimer_.interval() / 60000; }
-    void search(const SymbolQuery &query);
-    void invalidateSearch() {
-        ++queryGeneration_;
-        queryPending_ = false;
-        if (queryCancelled_)
-            queryCancelled_->store(true);
-    }
 signals:
     void ready(const IndexResult &result);
     void status(const QString &message);
     void failed(const QString &message);
     void busyChanged(bool busy);
-    void symbolsReady(const SymbolPage &page);
     void catalogReady(const QStringList &files);
     void batchReady();
 
@@ -58,8 +50,6 @@ private:
     QStringList excludes_ = defaultWorkspaceExcludes();
     QFutureWatcher<IndexResult> indexJob_;
     QThreadPool indexPool_;
-    QThreadPool queryPool_;
-    QFutureWatcher<SymbolPage> queryJob_;
     QFileSystemWatcher watcher_;
     QTimer refreshTimer_;
     QTimer pollTimer_;
@@ -67,15 +57,9 @@ private:
     QTimer resourceTimer_;
     QElapsedTimer resourceElapsed_;
     std::shared_ptr<std::atomic_bool> cancelled_;
-    std::shared_ptr<std::atomic_bool> queryCancelled_;
     std::shared_ptr<IndexProgress> progress_;
     quint64 generation_ = 0;
     quint64 runningGeneration_ = 0;
-    quint64 queryGeneration_ = 0;
-    quint64 runningQueryGeneration_ = 0;
-    SymbolQuery pendingQuery_;
-    bool queryPending_ = false;
-    bool queryBusy_ = false;
     bool busy_ = false;
     bool pending_ = false;
     bool force_ = false;
@@ -85,5 +69,4 @@ private:
     bool pendingAutomatic_ = false;
     bool verifyContents_ = false;
     bool runningAutomatic_ = false;
-    void startQuery();
 };

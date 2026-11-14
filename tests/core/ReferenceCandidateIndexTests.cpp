@@ -1,8 +1,9 @@
 #include <codecairn/FileIO.h>
 #include "ReferenceCandidateIndex.h"
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
 #include "TestStorage.h"
 #include <codecairn/Indexing.h>
+#include <codecairn/ReferenceSearch.h>
 
 #include <QDateTime>
 #include <QCryptographicHash>
@@ -11,7 +12,7 @@
 #include <QTest>
 #include <QUuid>
 
-using namespace WorkspaceIndexDetail;
+using namespace codecairn::detail;
 
 namespace {
 class Fixture {
@@ -53,7 +54,51 @@ private slots:
     void unchangedInvalidUtf8RefreshIsQuiet();
     void cancellationAndAtomicRefresh();
     void symbolsCommitBeforeReferenceAcceleration();
+    void accelerationMatchesFullSearchAcrossLanguages();
 };
+
+void ReferenceCandidateIndexTests::accelerationMatchesFullSearchAcrossLanguages() {
+    Fixture fixture;
+    fixture.write("a.py", "# Needle\nvalue = 'Needle'\ndef Needle(): pass\n");
+    fixture.write("b.cpp", "// Needle\nint Needle(void) { return 1; }\n");
+    fixture.write("c.js", "const Needle = 'Needle';\n");
+    fixture.write("d.go", "package sample\nfunc Needle() {}\n");
+    fixture.write("absent.rs", "fn other() {}\n");
+    auto built = fixture.build();
+    QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
+    const auto cancel = std::make_shared<std::atomic_bool>(false);
+    ReferenceSearchRequest request;
+    request.paths = built.files;
+    request.query = "Needle";
+    request.options.method = SearchMethod::Occurrences;
+    request.options.smartMatching = false;
+    request.options.comments = CommentSearch::Include;
+    request.options.strings = true;
+    const auto compare = [&] {
+        request.workspaceRoot.clear();
+        const auto full = searchReferences(request, cancel);
+        request.workspaceRoot = fixture.root;
+        const auto accelerated = searchReferences(request, cancel);
+        QVERIFY2(full.error.isEmpty(), qPrintable(full.error));
+        QVERIFY2(accelerated.error.isEmpty(), qPrintable(accelerated.error));
+        QCOMPARE(accelerated.hits.size(), full.hits.size());
+        for (int i = 0; i < full.hits.size(); ++i) {
+            QCOMPARE(accelerated.hits[i].location, full.hits[i].location);
+            QCOMPARE(accelerated.hits[i].text, full.hits[i].text);
+        }
+    };
+    compare();
+    request.options.comments = CommentSearch::Exclude;
+    request.options.strings = false;
+    compare();
+    fixture.write("absent.rs", "fn Needle() {}\n");
+    compare();
+    request.overlays = {{fixture.path("a.py"), "def other(): pass\n", {}, {}}};
+    compare();
+    built = fixture.build();
+    QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
+    compare();
+}
 
 void ReferenceCandidateIndexTests::allTextAndExactCase() {
     Fixture fixture;
@@ -168,7 +213,7 @@ void ReferenceCandidateIndexTests::incrementalRefreshAndDeletion() {
     QVERIFY(QFile::remove(paths[0]));
     built = fixture.build();
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
-    SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
     IndexStatement count(database,
                          "SELECT (SELECT count(*) FROM reference_occurrence_files WHERE path=?) + "
                          "(SELECT count(*) FROM reference_occurrences WHERE path=?)");
@@ -184,7 +229,7 @@ void ReferenceCandidateIndexTests::initialSchemaIsNotVisibleUntilCommit() {
     const QStringList paths{fixture.path("a.cpp")};
     QVERIFY(QDir().mkpath(QFileInfo(workspaceDatabase(fixture.root)).absolutePath()));
     {
-        SymbolIndexStore writer(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore writer(workspaceDatabase(fixture.root), true);
         writer.exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;"
                     "CREATE TABLE files(path TEXT PRIMARY KEY);");
         const auto pending = referenceCandidateFiles(fixture.root, paths, "Needle", true);
@@ -216,7 +261,7 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     auto built = fixture.build();
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.exec("UPDATE reference_occurrence_files SET version=0;");
     }
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
@@ -225,7 +270,7 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     QVERIFY(built.reused > 0);
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, QStringList{});
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.exec("PRAGMA foreign_keys=ON; DELETE FROM reference_occurrence_files;");
     }
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
@@ -233,7 +278,7 @@ void ReferenceCandidateIndexTests::missingLegacyAndVersionedPostings() {
     QVERIFY2(built.error.isEmpty(), qPrintable(built.error));
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, QStringList{});
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.exec("DROP TABLE reference_occurrences; DROP TABLE reference_occurrence_files;");
     }
     auto result = referenceCandidateFiles(fixture.root, paths, "Needle", true);
@@ -270,7 +315,7 @@ void ReferenceCandidateIndexTests::unsupportedAndUnreadableContent() {
     const auto refreshed = fixture.build();
     QVERIFY2(refreshed.error.isEmpty(), qPrintable(refreshed.error));
     QCOMPARE(referenceCandidateFiles(fixture.root, empty, "Needle", true).files, empty);
-    SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
     IndexStatement invalidated(database,
                                "SELECT count(*) FROM reference_occurrence_files WHERE path=?");
     invalidated.bind(1, empty[0]);
@@ -309,7 +354,7 @@ void ReferenceCandidateIndexTests::cancellationAndAtomicRefresh() {
     QCOMPARE(referenceCandidateFiles(fixture.root, paths, "Needle", true).files, paths);
     cancel->store(false);
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.exec("PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;");
         updateReferenceOccurrences(database, paths[0], "// Needle\n", "uncommitted", cancel);
         // A concurrent reader sees the old, complete snapshot, not half-written postings.
@@ -317,7 +362,7 @@ void ReferenceCandidateIndexTests::cancellationAndAtomicRefresh() {
         // Closing without COMMIT must roll back the postings and their completeness marker.
     }
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), false);
         IndexStatement posting(database, "SELECT count(*) FROM reference_occurrences "
                                          "WHERE identifier='Needle'");
         QVERIFY(posting.next());
@@ -336,7 +381,7 @@ void ReferenceCandidateIndexTests::symbolsCommitBeforeReferenceAcceleration() {
         QVERIFY2(symbols.error.isEmpty(), qPrintable(symbols.error));
         QCOMPARE(symbols.total, 1);
         QCOMPARE(symbols.symbols.first().symbol.name, "Needle");
-        SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), false);
         IndexStatement count(database, "SELECT count(*) FROM reference_occurrence_files");
         QVERIFY(count.next());
         QCOMPARE(count.integer(0), 0);

@@ -1,12 +1,13 @@
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
+#include <codecairn/Diagnostics.h>
 
 #include <QStringList>
 #include <sqlite3.h>
 #include <stdexcept>
 
-namespace WorkspaceIndexDetail {
+namespace codecairn::detail {
 
-SymbolIndexStore::SymbolIndexStore(const QString &path, bool write) {
+ProjectIndexStore::ProjectIndexStore(const QString &path, bool write) {
     const auto bytes = path.toUtf8();
     if (sqlite3_open_v2(bytes.constData(), &database_,
                         write ? SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE : SQLITE_OPEN_READONLY,
@@ -21,11 +22,11 @@ SymbolIndexStore::SymbolIndexStore(const QString &path, bool write) {
     sqlite3_busy_timeout(database_, 1500);
 }
 
-SymbolIndexStore::~SymbolIndexStore() {
+ProjectIndexStore::~ProjectIndexStore() {
     sqlite3_close(database_);
 }
 
-void SymbolIndexStore::exec(const char *sql) {
+void ProjectIndexStore::exec(const char *sql) {
     char *message = nullptr;
     const int code = sqlite3_exec(database_, sql, nullptr, nullptr, &message);
     const QString error = message ? QString::fromUtf8(message) : QString{};
@@ -34,7 +35,7 @@ void SymbolIndexStore::exec(const char *sql) {
         throw std::runtime_error(error.toStdString());
 }
 
-void SymbolIndexStore::ensureSchema() {
+void ProjectIndexStore::ensureSchema() {
     qint64 value;
     {
         IndexStatement version(*this, "PRAGMA user_version");
@@ -104,7 +105,7 @@ void SymbolIndexStore::ensureSchema() {
         "PRAGMA user_version=2; COMMIT;");
 }
 
-void SymbolIndexStore::validateSchema() {
+void ProjectIndexStore::validateSchema() {
     IndexStatement version(*this, "PRAGMA user_version");
     version.next();
     if (version.integer(0) != 2)
@@ -121,7 +122,7 @@ void SymbolIndexStore::validateSchema() {
                                "SELECT path,identifier,folded FROM reference_occurrences LIMIT 0");
 }
 
-IndexStatement::IndexStatement(SymbolIndexStore &database, const char *sql)
+IndexStatement::IndexStatement(ProjectIndexStore &database, const char *sql)
     : database_(database.handle()) {
     if (sqlite3_prepare_v2(database_, sql, -1, &statement_, nullptr) != SQLITE_OK)
         throw std::runtime_error(sqlite3_errmsg(database_));
@@ -164,6 +165,122 @@ QString IndexStatement::text(int column) const {
 
 qint64 IndexStatement::integer(int column) const {
     return sqlite3_column_int64(statement_, column);
+}
+
+IndexTransaction::IndexTransaction(ProjectIndexStore &database) : database_(database) {
+    database_.exec("BEGIN IMMEDIATE;");
+}
+
+IndexTransaction::~IndexTransaction() {
+    if (!committed_) {
+        const int code = sqlite3_exec(database_.handle(), "ROLLBACK;", nullptr, nullptr, nullptr);
+        if (code != SQLITE_OK)
+            qCWarning(indexLog) << "index.rollback_failed" << "code=" << code
+                                << "error=" << sqlite3_errmsg(database_.handle());
+    }
+}
+
+void IndexTransaction::commit() {
+    database_.exec("COMMIT;");
+    committed_ = true;
+}
+
+ProjectIndexWriter::ProjectIndexWriter(ProjectIndexStore &database)
+    : database_(database),
+      previous_(database, "SELECT hash,parser,state,size,mtime FROM files WHERE path=?"),
+      file_(database, "INSERT INTO files VALUES(?,?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET "
+                      "hash=excluded.hash,size=excluded.size,mtime=excluded.mtime,state=excluded."
+                      "state,error=excluded.error,parser=excluded.parser"),
+      remove_(database, "DELETE FROM symbols WHERE path=?"),
+      metadata_(database, "UPDATE files SET size=?,mtime=? WHERE path=?"),
+      insert_(database, "INSERT INTO symbols VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)") {
+}
+
+IndexedFileMetadata ProjectIndexWriter::metadata(const QString &path) {
+    previous_.bind(1, path);
+    IndexedFileMetadata result;
+    result.found = previous_.next();
+    if (result.found) {
+        result.hash = previous_.text(0);
+        result.parser = previous_.text(1);
+        result.state = previous_.text(2);
+        result.size = previous_.integer(3);
+        result.mtime = previous_.integer(4);
+    }
+    previous_.reset();
+    return result;
+}
+
+bool ProjectIndexWriter::reconcile(const QStringList &paths,
+                                   const std::shared_ptr<std::atomic_bool> &cancel) {
+    IndexTransaction transaction(database_);
+    database_.exec("CREATE TEMP TABLE seen(path TEXT PRIMARY KEY);");
+    IndexStatement seen(database_, "INSERT OR IGNORE INTO seen VALUES(?)");
+    for (const auto &path : paths) {
+        if (cancel && cancel->load())
+            return false;
+        seen.bind(1, path);
+        seen.next();
+        seen.reset();
+    }
+    if (cancel && cancel->load())
+        return false;
+    database_.exec("DELETE FROM files WHERE path NOT IN (SELECT path FROM seen);");
+    const bool changed = sqlite3_changes(database_.handle()) > 0;
+    database_.exec("DROP TABLE seen;");
+    transaction.commit();
+    return changed;
+}
+
+void ProjectIndexWriter::updateMetadata(const FileIndexRecord &file) {
+    IndexTransaction transaction(database_);
+    metadata_.bind(1, file.size);
+    metadata_.bind(2, file.mtime);
+    metadata_.bind(3, file.path);
+    metadata_.next();
+    metadata_.reset();
+    transaction.commit();
+}
+
+bool ProjectIndexWriter::replace(const FileIndexRecord &file, const QVector<SourceSymbol> &symbols,
+                                 const std::shared_ptr<std::atomic_bool> &cancel) {
+    if (cancel && cancel->load())
+        return false;
+    IndexTransaction transaction(database_);
+    file_.bind(1, file.path);
+    file_.bind(2, file.hash);
+    file_.bind(3, file.size);
+    file_.bind(4, file.mtime);
+    file_.bind(5, file.state);
+    file_.bind(6, file.error);
+    file_.bind(7, ParserVersion);
+    file_.next();
+    file_.reset();
+    remove_.bind(1, file.path);
+    remove_.next();
+    remove_.reset();
+    for (const auto &symbol : symbols) {
+        if (symbol.outlineOnly || symbol.local)
+            continue;
+        insert_.bind(1, file.path);
+        insert_.bind(2, symbol.name);
+        insert_.bind(3, symbol.kind);
+        insert_.bind(4, symbol.qualifiedName);
+        insert_.bind(5, symbol.signature);
+        insert_.bind(6, symbol.definition ? 1 : 0);
+        insert_.bind(7, symbol.start);
+        insert_.bind(8, symbol.end);
+        insert_.bind(9, symbol.nameStart);
+        insert_.bind(10, symbol.nameEnd);
+        insert_.bind(11, symbol.line);
+        insert_.bind(12, symbol.category);
+        insert_.bind(13, symbol.generated ? 1 : 0);
+        insert_.bind(14, symbol.provider);
+        insert_.next();
+        insert_.reset();
+    }
+    transaction.commit();
+    return true;
 }
 
 }

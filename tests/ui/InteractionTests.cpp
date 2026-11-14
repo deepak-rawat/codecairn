@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "ProjectSymbolQuery.h"
 #include "NavigationTree.h"
 #include "TestFixtures.h"
 #include "TestStorage.h"
@@ -23,7 +24,7 @@
 #include <QHBoxLayout>
 #include <QMouseEvent>
 
-#include "WorkspaceIndex.h"
+#include "ProjectIndexer.h"
 namespace {
 QTreeWidgetItem *symbolItem(QTreeWidget *tree, const QString &name) {
     for (QTreeWidgetItemIterator it(tree); *it; ++it)
@@ -709,8 +710,8 @@ void InteractionTests::escapeCancelsPendingSymbolActivation() {
     auto *filter = window.findChild<QLineEdit *>("symbolFilter");
     filter->setFocus();
     QTRY_VERIFY(filter->hasFocus());
-    auto *index = window.findChild<WorkspaceIndex *>();
-    QSignalSpy updated(index, &WorkspaceIndex::symbolsReady);
+    QSignalSpy updated(window.findChild<codecairn::detail::ProjectSymbolQuery *>(),
+                       &codecairn::detail::ProjectSymbolQuery::ready);
     filter->setText("beta");
     QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, "\r");
     QCoreApplication::sendEvent(filter, &enter);

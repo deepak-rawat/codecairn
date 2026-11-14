@@ -164,13 +164,17 @@ flowchart TD
     ENGINE --> SERVICES["Project: membership and analysis context"]
     SERVICES --> PARSE["SourceAnalysis and LanguageRegistry"]
     PARSE --> COMP["CompilerSymbolRecovery: libclang"]
-    SERVICES --> INDEX["WorkspaceIndex: scheduling"]
-    INDEX --> BUILD["WorkspaceScanner and WorkspaceIndexBuilder"]
-    INDEX --> QUERY["WorkspaceSymbolQuery"]
+    SERVICES --> INDEX["ProjectIndexer: scheduling and watching"]
+    INDEX --> BUILD["IndexingPass: bounded phase coordinator"]
+    BUILD --> SCAN["ProjectFileScanner"]
+    SERVICES --> QUERY["ProjectSymbolQuery: independent query scheduling"]
+    QUERY --> SQLQUERY["SymbolQueryExecutor: filters and live-result merge"]
     BUILD --> PARSE
-    BUILD --> DB[("SymbolIndexStore: SQLite")]
-    QUERY --> DB
-    SERVICES --> LSP["LanguageServerClient: QProcess and LSP"]
+    BUILD --> WRITE["ProjectIndexWriter and ReferenceIndexWriter"]
+    WRITE --> DB[("ProjectIndexStore: SQLite")]
+    SQLQUERY --> DB
+    SERVICES --> LANG["ProjectLanguages: provider lifecycle"]
+    LANG --> LSP["LanguageServerClient: QProcess and LSP"]
     LSP --> SERVER["clangd or optional server"]
     UI --> BROWSER["SymbolBrowser and DefinitionResolver"]
     SERVICES --> REFS["Reference/text queries and private search jobs"]
@@ -210,11 +214,11 @@ separate controllers.
 | Document revisions, snapshots, analysis, external reload | [SourceDocument.h](../src/ui/SourceDocument.h), [SourceDocument.cpp](../src/ui/SourceDocument.cpp) |
 | Text, selections, undo, styles, source-link margin | [CodeEditor.h](../src/ui/CodeEditor.h), [CodeEditor.cpp](../src/ui/CodeEditor.cpp) |
 | Parsing, language selection, compiler recovery | [SourceAnalysis.cpp](../src/core/SourceAnalysis.cpp), [LanguageRegistry.cpp](../src/core/LanguageRegistry.cpp), [CompilerSymbolRecovery.cpp](../src/core/CompilerSymbolRecovery.cpp) |
-| Index/service ownership | [WorkspaceServices.cpp](../src/core/WorkspaceServices.cpp) |
+| Project-owned provider lifecycle | [ProjectLanguages.cpp](../src/core/ProjectLanguages.cpp) |
 | Public domain ownership and project queries | [Engine.cpp](../src/core/Engine.cpp), [Project.cpp](../src/core/Project.cpp), [Document.cpp](../src/core/Document.cpp) |
-| Index scheduling, watchers, cancellation | [WorkspaceIndex.cpp](../src/core/WorkspaceIndex.cpp) |
-| Discovery, transactions, queries | [WorkspaceScanner.cpp](../src/core/WorkspaceScanner.cpp), [WorkspaceIndexBuilder.cpp](../src/core/WorkspaceIndexBuilder.cpp), [WorkspaceSymbolQuery.cpp](../src/core/WorkspaceSymbolQuery.cpp) |
-| SQLite and path identity | [SymbolIndexStore.cpp](../src/core/SymbolIndexStore.cpp), [WorkspacePaths.cpp](../src/core/WorkspacePaths.cpp) |
+| Index scheduling, watchers, cancellation | [ProjectIndexer.cpp](../src/core/ProjectIndexer.cpp) |
+| Discovery, indexing phases, query scheduling/execution | [ProjectFileScanner.cpp](../src/core/ProjectFileScanner.cpp), [IndexingPass.cpp](../src/core/IndexingPass.cpp), [ProjectSymbolQuery.cpp](../src/core/ProjectSymbolQuery.cpp), [SymbolQueryExecutor.cpp](../src/core/SymbolQueryExecutor.cpp) |
+| SQLite and path identity | [ProjectIndexStore.cpp](../src/core/ProjectIndexStore.cpp), [WorkspacePaths.cpp](../src/core/WorkspacePaths.cpp) |
 | Browser rows and syntax fallback | [SymbolBrowser.cpp](../src/ui/SymbolBrowser.cpp), [DefinitionResolver.cpp](../src/core/DefinitionResolver.cpp) |
 | LSP, compilation database, coordinate conversion | [LanguageServerClient.cpp](../src/core/LanguageServerClient.cpp), [CompilationDatabase.cpp](../src/core/CompilationDatabase.cpp), [SourceCoordinates.cpp](../src/core/SourceCoordinates.cpp) |
 | Typed search options, matching, semantic result resolution | [SearchOptions.h](../src/core/include/codecairn/SearchOptions.h), [ReferenceQuery.cpp](../src/core/ReferenceQuery.cpp), [ReferenceSearch.cpp](../src/core/ReferenceSearch.cpp) |
@@ -675,9 +679,17 @@ flowchart LR
     TX --> REF["Later: optional reference postings"]
 ```
 
-WorkspaceIndex owns scheduling, cancellation, and notifications. Discovery,
-transactional construction, storage, and queries have separate implementation
-files listed in the code map. Discovery completes before missing paths are
+Project directly owns ProjectIndexer, ProjectSymbolQuery and ProjectLanguages.
+There is no intermediate WorkspaceServices/service locator. The indexer only
+owns update scheduling, watches, cancellation and progress; it does not schedule
+symbol queries or manage language servers. ProjectSymbolQuery has its own bounded
+worker, coalescing and generation checks; index busy state controls pending-schema
+handling but does not prevent interactive queries. Closing/switching a project
+invalidates both components independently. Explicit index recreation also
+cancels/drains queries before archiving the database.
+
+IndexingPass explicitly coordinates discovery, catalog reconciliation, symbol
+preparation/commit and reference acceleration. Discovery completes before missing paths are
 deleted. Managed-project membership is applied during discovery, including
 pruning unselected directories; existing directory-name exclusions still apply.
 `catalogReady(QStringList)` publishes the completed catalog before parsing.
@@ -686,7 +698,9 @@ Indexing uses a dedicated low-priority coordinator and a private syntax parser
 pool bounded by available threads and eight workers. At most twice that worker
 count of file results is outstanding. Workers exchange snapshots/results, never
 widgets or SQLite connections. The coordinator is the single writer; each file's
-metadata and symbols commit atomically. Previous symbols remain queryable until
+metadata and symbols commit atomically through ProjectIndexWriter. The pass
+handles scheduling and progress, not SQL statements. The writer owns reusable
+prepared statements and transaction boundaries. Previous symbols remain queryable until
 their replacement commits, and a failed read/analysis retains the previous usable
 snapshot. `batchReady()` publishes incremental completed work with throttled
 notifications. WAL readers can query while indexing is busy.
@@ -694,14 +708,21 @@ notifications. WAL readers can query while indexing is busy.
 Cancellation preserves completed file transactions; refreshing reuses their
 hash/parser matches and resumes remaining work. An in-progress file replacement
 finishes atomically; cancellation never rolls back earlier commits. Reference
-acceleration runs after symbols become usable, with per-file transactions and a
-full-search fallback for absent, incomplete, or stale postings. Discovery, symbol,
+acceleration runs after symbols become usable, with a second bounded parallel
+read/hash/tokenization stage and a single ReferenceIndexWriter. It prepares
+statements once per pass, skips identifier extraction and transactions when
+content hash/posting version match, and atomically replaces changed postings.
+It does not retain every project's source bytes/identifier sets in memory:
+at most twice the worker count of prepared results is outstanding, released
+as consumed. Disk contents are still read and hashed on warm runs.
+Reference cancellation rolls back the active posting transaction. Search retains
+a full-search fallback for absent, incomplete, or stale postings. Discovery, symbol,
 and reference phase timings and peak active parser counts are logged. Warning
 collections are capped at 100, with an explicit suppressed count; per-analysis
 syntax diagnostics are also bounded.
 `FileIO.h` exposes `sourceContentHash(bytes)`, a reusable per-thread SHA-256
 hasher returning lowercase hexadecimal without transforming its input. Bulk
-parser threads and the coordinator's reference pass use it, resetting for every
+parser threads and reference-preparation workers use it, resetting for every
 file. This avoids repeated crypto-provider
 setup without skipping content reads or weakening unchanged-metadata freshness
 checks; stored hashes still describe the exact decoded source bytes.
@@ -906,11 +927,12 @@ clear dirty state, or replace dirty buffers in background.
 
 SQLite schema version is **2**. New empty databases initialize transactionally;
 legacy, nonempty unversioned, and newer schemas are explicitly rejected rather
-than migrated or deleted. `WorkspaceIndex::recreateDatabase()` is only called
+than migrated or deleted. `ProjectIndexer::recreateDatabase()` is only called
 after explicit UI confirmation. It cancels/drains its workers, obtains the
-workspace index lock, rejects symlinked databases/journals, archives the database
+project index lock, rejects symlinked databases/journals, archives the database
 and matching WAL/SHM journals with a unique backup suffix, and restarts the
 current root/project scope. Lock/archive failures remain explicit errors.
+ProjectSymbolQuery is separately cancelled and drained before this operation.
 The reference tables are created when absent and carry a separate per-file
 posting version.
 Candidate readers check the schema version inside their read transaction. Before
@@ -932,7 +954,7 @@ invalidation or migration, not silent database deletion.
 The compiler-assisted index uses a bumped ParserVersion so syntax-only caches
 are reparsed and macro-generated definitions are restored without deleting databases.
 Managed descriptors select separate database identities through the optional
-`projectFile` on `buildWorkspaceIndex()`, `WorkspaceIndex::open()`, and
+`projectFile` on `buildWorkspaceIndex()`, `ProjectIndexer::open()`, and
 `SymbolQuery`; folder and managed-project catalogs never share a store.
 Existing databases must contain the complete required schema before indexing;
 missing versioned tables/columns produce an error and require confirmed recreation,
@@ -1516,6 +1538,69 @@ Windows atomic-save fixtures wait for startup readers before replacement.
 
 ### Refactoring contracts and performance
 
+#### Project indexing internals
+
+The internal indexing redesign was test-first. Before production changes, new
+public lifecycle tests passed against revision `1872585`: progressive catalog
+and symbols, warm reuse, add/change/delete, unsaved/saved separation, queued
+project switching and cancellation/resume. Reference acceleration was compared
+with a full scan across Python/C++/JavaScript/Go sources, stale disk content,
+dirty overlays and comment/string filters.
+
+LanguageTests adds 12 nested/modern-language cases and 12 incomplete-syntax
+cases spanning C, C++, Python, Bash, JavaScript, TypeScript, TSX, Go, Rust, JSON,
+YAML and CMake. Assertions cover kinds, ranges into UTF-8 bytes, parents,
+qualification, locality, provider provenance and editor/index consistency.
+A mixed-language public API fixture compares source analysis with persisted
+index/query rows, ordering, categories, pagination, source reads and warm reuse.
+All additions passed the old implementation first; the new implementation
+passes the same assertions. No existing golden fingerprints were regenerated.
+This expands parser coverage, not semantic-provider certification for every
+language; TypeScript namespace and Go alias/multiple-name extraction remain
+unclaimed capabilities.
+
+Storage alternatives were considered alongside the execution model. SQLite WAL
+was retained because it already provides concurrent readers, per-file atomic
+publication, cascading deletion and existing covering indexes for real queries.
+The improvements are typed ProjectIndexWriter/ReferenceIndexWriter operations,
+reused prepared statements, no write transactions for unchanged postings, and
+parallel bounded reference preparation. A schema rewrite or new database
+dependency was not needed to obtain the measured improvements. Schema/parser
+versions and on-disk project/settings formats happen to remain unchanged; this
+was a design choice, not a backwards-compatibility constraint. Metadata paths
+retain their existing identity so no user state is silently discarded.
+
+Matched Debug comparisons used saved original executables on Apple Silicon,
+the same Qt/dependencies, serial runs and alternating original/candidate order:
+
+| Internal indexing comparison | Original | Redesigned |
+|---|---:|---:|
+| 1k cold index, median of 3 pairs | 569 ms | 492 ms |
+| 1k warm index, same pairs | 108 ms | 99 ms |
+| 25k cold index, median of 3 pairs | 12,844 ms | 12,088 ms |
+| 25k warm index, same pairs | 3,038 ms | 2,701 ms |
+| 25k first symbols, same pairs | 1,623 ms | 1,598 ms |
+| 25k process peak RSS, same pairs | 142.7 MB | 146.8 MB |
+| 100k cold index, pair 1 | 72.496 s | 68.693 s |
+| 100k warm index, pair 1 | 22.692 s | 19.242 s |
+| 100k cold index, reversed-order pair 2 | 74.614 s | 68.378 s |
+| 100k warm index, pair 2 | 22.095 s | 18.840 s |
+| 100k process peak RSS, pairs 1 / 2 | 353.6 / 357.0 MB | 312.1 / 322.7 MB |
+| Warm symbol query, median of 3 pairs | 1.10 ms | 1.08 ms |
+| Text dispatch with live overlays, median of 3 pairs | 10.864 ms | 10.856 ms |
+| Navigation read, median of 3 pairs | 37.250 us | 37.583 us |
+| Render 1,024 rows, median of 3 pairs | 13.13 ms | 13.20 ms |
+
+Cold/warm index counts and reuse assertions passed in every measured run. The
+parallel reference-preparation window adds a small peak-memory cost at 25k in
+these runs, while 100k peaks were lower; process RSS includes fixture setup and
+earlier cases, not isolated retained index memory. An initial candidate 1k run
+was a 1.424 s outlier; paired follow-ups above were 488-523 ms versus original
+518-683 ms. It is not dropped as an invalid result, nor interpreted as a
+reproducible algorithmic slowdown. Small interactive timing differences are
+not attributed as improvements. These shared-host fixtures do not certify every
+real repository, operating system, release build, or absence of memory leaks.
+
 The domain API replaces CoreSession with Engine-owned documents and independent
 Project analysis contexts. It automatically captures relevant live snapshots and
 caches project membership only for open documents, keyed by source identity.
@@ -1864,7 +1949,7 @@ to run Qt, allocate memory, or perform complex logging from a fatal signal handl
 | Geometry/actions/focus | MainWindowUi, UiAppearance, NavigationTree, SymbolBrowser |
 | Wrong style/range | SourceAnalysis, CodeEditor, coordinate conversion |
 | Stale symbols/navigation | Document revisions and request/workspace/channel generations |
-| Wrong files/counts | WorkspaceIndex exclusions, file states, overlays, queries |
+| Wrong files/counts | ProjectIndexer/ProjectFileScanner exclusions, file states, live snapshots, ProjectSymbolQuery |
 | Semantic failure | LanguageServerClient, CompilationDatabase, server output |
 | Results reset/replace/caret | MainWindowReferences, ReferenceResultsView, ReferenceHistory |
 | External edits/lost settings | FileIO, SettingsFile fingerprints, ApplicationStateStore |

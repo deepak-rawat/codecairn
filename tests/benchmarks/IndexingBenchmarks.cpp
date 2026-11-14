@@ -7,7 +7,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
-#include "WorkspaceIndex.h"
+#include "ProjectIndexer.h"
 #ifdef Q_OS_UNIX
 #include <sys/resource.h>
 #endif
@@ -33,16 +33,16 @@ private slots:
             const auto source = "int symbol_" + QByteArray::number(i) + "(void) { return 1; }\n";
             QCOMPARE(file.write(source), source.size());
         }
-        WorkspaceIndex index;
+        ProjectIndexer index;
         QElapsedTimer elapsed;
         qint64 catalogMs = -1;
         qint64 symbolsMs = -1;
-        connect(&index, &WorkspaceIndex::catalogReady, this, [&](const QStringList &paths) {
+        connect(&index, &ProjectIndexer::catalogReady, this, [&](const QStringList &paths) {
             catalogMs = elapsed.elapsed();
             QCOMPARE(paths.size(), fileCount);
             QVERIFY(index.busy());
         });
-        connect(&index, &WorkspaceIndex::batchReady, this, [&] {
+        connect(&index, &ProjectIndexer::batchReady, this, [&] {
             if (symbolsMs >= 0)
                 return;
             const auto page = queryWorkspaceSymbols(directory.path(), {});
@@ -52,7 +52,7 @@ private slots:
                 QVERIFY(index.busy());
             }
         });
-        QSignalSpy failures(&index, &WorkspaceIndex::failed);
+        QSignalSpy failures(&index, &ProjectIndexer::failed);
         elapsed.start();
         index.open(directory.path());
         QTRY_VERIFY_WITH_TIMEOUT(!index.busy(), 300000);

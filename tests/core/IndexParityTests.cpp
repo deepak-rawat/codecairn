@@ -1,5 +1,5 @@
 #include <codecairn/Indexing.h>
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
 #include "TestStorage.h"
 #include <codecairn/FileIO.h>
 
@@ -13,7 +13,7 @@
 #include <sqlite3.h>
 #include <cstring>
 
-using namespace WorkspaceIndexDetail;
+using namespace codecairn::detail;
 
 namespace {
 class WorkspaceFixture {
@@ -48,7 +48,7 @@ SourceSymbol symbol(const QString &name, const QString &kind, int start) {
     return result;
 }
 
-void persist(SymbolIndexStore &database, const QString &path,
+void persist(ProjectIndexStore &database, const QString &path,
              const QVector<SourceSymbol> &symbols) {
     IndexStatement file(database,
                         "INSERT INTO files VALUES(?,'diskhash',0,0,'indexed','','parser')");
@@ -148,7 +148,7 @@ void IndexParityTests::fieldsOrderingFiltersAndOverlays() {
     const auto second = symbol("Same", "Function", 30);
     const auto variable = symbol("Zed", "Variable", 70);
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.ensureSchema();
         persist(database, a, {second, first});
         persist(database, m, {symbol("Same", "Function", 20)});
@@ -299,7 +299,7 @@ void IndexParityTests::cancellationPreservesAtomicCompletedFile() {
     QCOMPARE(resumed.parsed, 0);
     QCOMPARE(resumed.reused, 1);
     compareSymbol(queryWorkspaceSymbols(fixture.root, {}).symbols.first(), after.symbols.first());
-    SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
     IndexStatement row(database, "SELECT parser FROM files");
     QVERIFY(row.next());
     QCOMPARE(row.text(0), QString::fromLatin1(ParserVersion));
@@ -317,7 +317,7 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
         buildWorkspaceIndex(fixture.root, IndexRefresh::DiscoverChanges, {}, cancel);
     QVERIFY2(initial.error.isEmpty(), qPrintable(initial.error));
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.exec("UPDATE files SET parser='codecairn-multilanguage-syntax-v14';"
                       "UPDATE symbols SET generated=1,provider='compiler';");
     }
@@ -326,7 +326,7 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
     QVERIFY2(refreshed.error.isEmpty(), qPrintable(refreshed.error));
     QCOMPARE(refreshed.parsed, 1);
     QCOMPARE(refreshed.reused, 0);
-    SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+    ProjectIndexStore database(workspaceDatabase(fixture.root), false);
     IndexStatement row(database, "SELECT parser FROM files");
     QVERIFY(row.next());
     QCOMPARE(row.text(0), QString::fromLatin1(ParserVersion));
@@ -341,7 +341,7 @@ void IndexParityTests::parserUpgradeRebuildsUnchangedFiles() {
 void IndexParityTests::unicodeAndLiteralFiltersKeepTheirSemantics() {
     WorkspaceFixture fixture;
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.ensureSchema();
         persist(database, fixture.path("names.c"),
                 {symbol(QString::fromUtf8("CAF\xc3\x89"), "Variable", 10),
@@ -367,7 +367,7 @@ void IndexParityTests::coveringIndexUpgradePreservesSymbolsAndAvoidsSorting() {
     WorkspaceFixture fixture;
     const auto path = fixture.path("source.cpp");
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.ensureSchema();
         persist(database, path, {symbol("preserved", "Function", 10)});
         database.exec("DROP INDEX symbol_catalog; DROP INDEX symbol_categories;"
@@ -379,7 +379,7 @@ void IndexParityTests::coveringIndexUpgradePreservesSymbolsAndAvoidsSorting() {
     const auto before = queryWorkspaceSymbols(fixture.root, {});
     QCOMPARE(before.total, 1);
     {
-        SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), true);
         database.ensureSchema();
         IndexStatement plan(
             database, "EXPLAIN QUERY PLAN SELECT rowid FROM symbols INDEXED BY symbol_catalog "
@@ -406,7 +406,7 @@ void IndexParityTests::invalidCachedNamesAreNeverBrowsed() {
     auto missing = symbol({}, "Variable", 30);
     auto emptyRange = symbol("missing", "Variable", 50);
     emptyRange.nameEnd = emptyRange.nameStart;
-    SymbolIndexStore database(workspaceDatabase(fixture.root), true);
+    ProjectIndexStore database(workspaceDatabase(fixture.root), true);
     database.ensureSchema();
     persist(database, path, {valid, missing, emptyRange});
     for (bool categories : {false, true}) {
@@ -455,7 +455,7 @@ void IndexParityTests::bulkHasherResetsAndPreservesFreshness() {
     const auto cancel = std::make_shared<std::atomic_bool>(false);
     const auto check = [&](const IndexResult &result) {
         QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
-        SymbolIndexStore database(workspaceDatabase(fixture.root), false);
+        ProjectIndexStore database(workspaceDatabase(fixture.root), false);
         IndexStatement rows(database, "SELECT f.path,f.hash,r.hash FROM files f "
                                       "JOIN reference_occurrence_files r ON r.path=f.path");
         int count = 0;

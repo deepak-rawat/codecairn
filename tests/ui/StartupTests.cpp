@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "ProjectSymbolQuery.h"
 #include "UiAppearance.h"
 #include "TestStorage.h"
 #include "ProjectDialog.h"
@@ -27,7 +28,7 @@
 #include <QTreeView>
 #include <QtConcurrentRun>
 
-#include "WorkspaceIndex.h"
+#include "ProjectIndexer.h"
 class StartupTests : public QObject {
     Q_OBJECT
     TestStorage storage_;
@@ -85,7 +86,7 @@ void StartupTests::firstLaunchIsEmptyAndHasNoSampleResource() {
     QVERIFY(logs->isEnabled());
     QCOMPARE(window.documentCount(), 0);
     QVERIFY(!window.activeEditor());
-    QVERIFY(window.findChild<WorkspaceIndex *>()->root().isEmpty());
+    QVERIFY(window.findChild<ProjectIndexer *>()->root().isEmpty());
     QVERIFY(!window.findChild<QAction *>("openSample"));
     QVERIFY(!QFile::exists(":/fixtures/typography.cpp"));
     QVERIFY(QFile::exists(":/config/default-settings.json"));
@@ -158,10 +159,10 @@ void StartupTests::restoresLastWorkspaceWithoutOpeningDocuments() {
                         stateDirectory_);
     QSignalSpy indexed(&restored, &MainWindow::indexReady);
     restored.openStartupPaths({});
-    QCOMPARE(restored.findChild<WorkspaceIndex *>()->root(), workspacePath(project.path()));
+    QCOMPARE(restored.findChild<ProjectIndexer *>()->root(), workspacePath(project.path()));
     QTRY_VERIFY_WITH_TIMEOUT(!indexed.isEmpty(), 10000);
     QCOMPARE(restored.documentCount(), 0);
-    QCOMPARE(restored.findChild<WorkspaceIndex *>()->files().size(), 1);
+    QCOMPARE(restored.findChild<ProjectIndexer *>()->files().size(), 1);
 }
 
 void StartupTests::unavailableWorkspaceStartsEmpty() {
@@ -174,7 +175,7 @@ void StartupTests::unavailableWorkspaceStartsEmpty() {
     MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
     window.openStartupPaths({});
     QCOMPARE(window.documentCount(), 0);
-    QVERIFY(window.findChild<WorkspaceIndex *>()->root().isEmpty());
+    QVERIFY(window.findChild<ProjectIndexer *>()->root().isEmpty());
     QVERIFY(window.statusBar()->currentMessage().contains("unavailable"));
     QVERIFY(!QFileInfo::exists(missing));
 }
@@ -190,7 +191,7 @@ void StartupTests::noProjectBypassesRestoreAndAutomaticWorkspace() {
     QVERIFY(store.saveState(state).isEmpty());
     MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
     window.openStartupPaths({}, true);
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     QVERIFY(index->root().isEmpty());
     QVERIFY(window.openFile(source));
     QCOMPARE(window.documentCount(), 1);
@@ -219,7 +220,7 @@ void StartupTests::managedProjectsRestoreIndependentSessions() {
     {
         MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"),
                           stateDirectory_);
-        auto *index = window.findChild<WorkspaceIndex *>();
+        auto *index = window.findChild<ProjectIndexer *>();
         window.openManagedProject(first);
         QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
         QCOMPARE(index->files(), QStringList{workspacePath(firstFile)});
@@ -262,7 +263,7 @@ void StartupTests::managedBaseFolderChangeCanSaveAndReopenSession() {
     QVERIFY(WorkspaceOptionsStore::saveProject(descriptor, first.path(), options).isEmpty());
     MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
     window.openManagedProject(descriptor);
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
     QVERIFY(window.openFile(firstFile));
     bool changed = false;
@@ -397,7 +398,7 @@ void StartupTests::corruptIndexOffersRecreation() {
     QTRY_VERIFY_WITH_TIMEOUT(window.findChild<QMessageBox *>("recreateProjectIndex"), 10000);
     prompt = window.findChild<QMessageBox *>("recreateProjectIndex");
     prompt->done(QMessageBox::Yes);
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     QTRY_VERIFY_WITH_TIMEOUT(!index->busy(), 10000);
     SymbolQuery query;
     const auto page = queryWorkspaceSymbols(project.path(), query);
@@ -417,15 +418,16 @@ void StartupTests::largeCatalogIsBrowsableDuringIndexing() {
                                 "int visible_symbol;\n", false)
                     .isEmpty());
     MainWindow window(false);
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     auto *files = window.findChild<QTreeWidget *>("fileList");
     bool catalogWhileBusy = false;
     bool symbolsWhileBusy = false;
-    connect(index, &WorkspaceIndex::catalogReady, &window,
+    connect(index, &ProjectIndexer::catalogReady, &window,
             [&] { catalogWhileBusy = index->busy() && files->topLevelItemCount() > 0; });
-    connect(index, &WorkspaceIndex::symbolsReady, &window, [&](const SymbolPage &page) {
-        symbolsWhileBusy = symbolsWhileBusy || (index->busy() && page.total > 0);
-    });
+    connect(window.findChild<codecairn::detail::ProjectSymbolQuery *>(),
+            &codecairn::detail::ProjectSymbolQuery::ready, &window, [&](const SymbolPage &page) {
+                symbolsWhileBusy = symbolsWhileBusy || (index->busy() && page.total > 0);
+            });
     window.openProject(project.path());
     QTRY_VERIFY_WITH_TIMEOUT(catalogWhileBusy, 15000);
     QCOMPARE(index->files().size(), 2101);
@@ -461,13 +463,13 @@ void StartupTests::explicitPathsOverrideLastWorkspace() {
                           stateDirectory_);
         window.openStartupPaths({project.path()});
         QCOMPARE(window.documentCount(), 0);
-        QCOMPARE(window.findChild<WorkspaceIndex *>()->root(), workspacePath(project.path()));
+        QCOMPARE(window.findChild<ProjectIndexer *>()->root(), workspacePath(project.path()));
     }
     MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
     window.openStartupPaths({path});
     QCOMPARE(window.documentCount(), 1);
     QCOMPARE(window.activeEditor()->bytes(), source);
-    QCOMPARE(window.findChild<WorkspaceIndex *>()->root(), workspacePath(project.path()));
+    QCOMPARE(window.findChild<ProjectIndexer *>()->root(), workspacePath(project.path()));
 }
 
 void StartupTests::latestWorkspaceIsRemembered() {
@@ -519,7 +521,7 @@ void StartupTests::externalWorkspaceStartup() {
     auto *scope = window.findChild<QLabel *>("symbolScope");
     auto *symbols = window.findChild<QTreeWidget *>("symbolList");
     QTRY_COMPARE_WITH_TIMEOUT(scope->text(), QString("%1 symbols").arg(expected.total), 30000);
-    QCOMPARE(window.findChild<WorkspaceIndex *>()->root(), workspacePath(root));
+    QCOMPARE(window.findChild<ProjectIndexer *>()->root(), workspacePath(root));
     if (expected.total > 4096)
         QCOMPARE(window.findChild<QTreeView *>("virtualSymbolList")->model()->rowCount(),
                  expected.total);
@@ -577,7 +579,7 @@ void StartupTests::externalWorkspaceStartup() {
     QVERIFY(metadataNoise.isValid());
     QTest::qWait(2500);
     QCOMPARE(ready.count(), 0);
-    QVERIFY(!window.findChild<WorkspaceIndex *>()->busy());
+    QVERIFY(!window.findChild<ProjectIndexer *>()->busy());
     qInfo() << "Metadata activity did not trigger another index build";
 }
 
@@ -622,7 +624,7 @@ void StartupTests::closeAndReopenProjectRestoresFiles() {
     QVERIFY(window.openFile(path));
     QVERIFY(window.closeProject());
     QCOMPARE(window.documentCount(), 0);
-    QVERIFY(window.findChild<WorkspaceIndex *>()->root().isEmpty());
+    QVERIFY(window.findChild<ProjectIndexer *>()->root().isEmpty());
     window.openProject(project.path());
     QCOMPARE(window.documentCount(), 1);
     QVERIFY(window.activeEditor()->bytes().contains("main"));
@@ -666,7 +668,7 @@ void StartupTests::persistenceDisabledDoesNotRestoreOrSaveWorkspace() {
     stateFile.close();
     MainWindow window(false, nullptr, {}, stateDirectory_);
     window.openStartupPaths({});
-    QVERIFY(window.findChild<WorkspaceIndex *>()->root().isEmpty());
+    QVERIFY(window.findChild<ProjectIndexer *>()->root().isEmpty());
     window.openProject(second.path());
     QVERIFY(window.close());
     QVERIFY(stateFile.open(QIODevice::ReadOnly));
@@ -712,7 +714,7 @@ void StartupTests::malformedStateIsReportedAndPreserved() {
     MainWindow window(true, nullptr, settingsDirectory_.filePath("settings.json"), stateDirectory_);
     QVERIFY(window.statusBar()->currentMessage().contains("schemaVersion"));
     window.openStartupPaths({});
-    QVERIFY(window.findChild<WorkspaceIndex *>()->root().isEmpty());
+    QVERIFY(window.findChild<ProjectIndexer *>()->root().isEmpty());
     window.openProject(project.path());
     QVERIFY(!window.closeProject());
     QCOMPARE(readSourceFile(store.statePath()).bytes, original);

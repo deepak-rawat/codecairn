@@ -71,6 +71,7 @@ private:
                           const std::optional<SourcePosition> &origin, bool references,
                           bool declarations);
     SourceAnalysis cachedAnalysis(const SourceSnapshot &snapshot) const;
+    void invalidateOperations();
     struct State;
     std::unique_ptr<State> state_;
 };

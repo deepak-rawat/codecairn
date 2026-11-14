@@ -57,8 +57,10 @@ add_library(
     src/core/Project.cpp
     src/core/Document.cpp
     src/core/internal/DefinitionResolver.h
-    src/core/internal/WorkspaceIndex.h
-    src/core/internal/WorkspaceServices.h
+    src/core/internal/ProjectIndexer.h
+    src/core/internal/ProjectLanguages.h
+    src/core/internal/ProjectSymbolQuery.h
+    src/core/internal/ProjectFileScanner.h
     src/core/internal/LanguageServerClient.h
     src/core/internal/NavigationService.h
     src/core/internal/ReferenceSession.h
@@ -68,7 +70,6 @@ add_library(
     src/core/LanguageRegistry.cpp
     src/core/CompilerSymbolRecovery.cpp
     src/core/WorkspaceOptionsStore.cpp
-    src/core/WorkspaceServices.cpp
     src/core/DefinitionResolver.cpp
     src/core/SourceCoordinates.cpp
     src/core/CompilationDatabase.cpp
@@ -82,13 +83,15 @@ add_library(
     src/core/ReferenceQuery.cpp
     src/core/ReferenceHistory.cpp
     src/core/NavigationHistory.cpp
-    src/core/WorkspaceIndex.cpp
+    src/core/ProjectIndexer.cpp
     src/core/WorkspacePaths.cpp
-    src/core/SymbolIndexStore.cpp
+    src/core/ProjectIndexStore.cpp
     src/core/ReferenceCandidateIndex.cpp
-    src/core/WorkspaceScanner.cpp
-    src/core/WorkspaceIndexBuilder.cpp
-    src/core/WorkspaceSymbolQuery.cpp
+    src/core/ProjectFileScanner.cpp
+    src/core/ProjectLanguages.cpp
+    src/core/ProjectSymbolQuery.cpp
+    src/core/IndexingPass.cpp
+    src/core/SymbolQueryExecutor.cpp
     src/core/LanguageServerClient.cpp
 )
 target_include_directories(

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <codecairn/NavigationTarget.h>
-#include "WorkspaceServices.h"
+#include "ProjectLanguages.h"
 #include <QFutureWatcher>
 #include <QPointer>
 #include <functional>
@@ -46,7 +46,8 @@ struct NavigationRead {
 class NavigationService final : public QObject {
     Q_OBJECT
 public:
-    explicit NavigationService(WorkspaceServices *services, QObject *parent = nullptr);
+    explicit NavigationService(codecairn::detail::ProjectLanguages *languages,
+                               QObject *parent = nullptr);
     ~NavigationService() override;
     void setSnapshotProvider(std::function<std::optional<QByteArray>(const QString &)> provider);
     void lookup(const DefinitionRequest &request, quint64 token, const QString &channel);
@@ -81,7 +82,7 @@ private:
     void complete(const QString &channel, quint64 generation, DefinitionResult result);
     bool fresh(const DefinitionRequest &request) const;
     void startRead();
-    WorkspaceServices *services_;
+    codecairn::detail::ProjectLanguages *languages_;
     QHash<QString, Lookup> lookups_;
     QHash<QString, DefinitionResolver *> resolvers_;
     quint64 generation_ = 0;

@@ -1,13 +1,15 @@
 #include "NavigationService.h"
 #include "DefinitionResolver.h"
 #include <codecairn/Diagnostics.h>
+#include <codecairn/WorkspacePaths.h>
 
 #include <QtConcurrentRun>
 #include <algorithm>
 #include <utility>
 
-NavigationService::NavigationService(WorkspaceServices *services, QObject *parent)
-    : QObject(parent), services_(services), reader_(this) {
+NavigationService::NavigationService(codecairn::detail::ProjectLanguages *languages,
+                                     QObject *parent)
+    : QObject(parent), languages_(languages), reader_(this) {
     connect(&reader_, &QFutureWatcher<NavigationRead>::finished, this, [this] {
         reading_ = false;
         if (runningReadGeneration_ == readGeneration_)
@@ -70,7 +72,7 @@ void NavigationService::lookup(const DefinitionRequest &request, quint64 token,
         syntaxLookup(channel, generation, {});
         return;
     }
-    auto *service = services_->languageService(request.root, request.path, request.source);
+    auto *service = languages_->serviceFor(request.path, request.source);
     if (!service) {
         semanticReady(channel, generation, {}, "No semantic provider for this language.");
         return;
@@ -78,7 +80,7 @@ void NavigationService::lookup(const DefinitionRequest &request, quint64 token,
     auto &lookup = lookups_[channel];
     lookup.service = service;
     for (const auto &overlay : request.overlays)
-        if (services_->languageService(request.root, overlay.path, overlay.source) == service)
+        if (languages_->serviceFor(overlay.path, overlay.source) == service)
             service->syncDocument(overlay.path, overlay.source,
                                   request.versions.value(overlay.path, 0));
     if (request.context) {
@@ -141,7 +143,7 @@ void NavigationService::semanticReady(const QString &channel, quint64 generation
     result.error = error;
     if (lookup.service) {
         result.provider = lookup.service->name() + " definition";
-        if (lookup.service == services_->cppService() && !lookup.service->hasCompilationDatabase())
+        if (lookup.service == languages_->cpp() && !lookup.service->hasCompilationDatabase())
             result.provider += " (fallback compile flags)";
     }
     complete(channel, generation, result);

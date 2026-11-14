@@ -2,6 +2,7 @@
 #include <codecairn/FileIO.h>
 #include "MainWindow.h"
 #include "LanguageServerClient.h"
+#include "ProjectSymbolQuery.h"
 #include <codecairn/SourceAnalysis.h>
 #include "UiAppearance.h"
 #include "TestFixtures.h"
@@ -32,7 +33,7 @@
 #include <QTest>
 #include <QTreeWidget>
 
-#include "WorkspaceIndex.h"
+#include "ProjectIndexer.h"
 class PrototypeTests : public QObject {
     Q_OBJECT
     TestStorage storage_;
@@ -743,11 +744,12 @@ void PrototypeTests::capturesTypographyPrototype() {
     window.show();
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     auto *service = window.findChild<LanguageServerClient *>();
-    auto *index = window.findChild<WorkspaceIndex *>();
+    auto *index = window.findChild<ProjectIndexer *>();
     QVERIFY(service && index);
     QSignalSpy statuses(service, &LanguageServerClient::status);
-    QSignalSpy indexed(index, &WorkspaceIndex::ready);
-    QSignalSpy symbolPages(index, &WorkspaceIndex::symbolsReady);
+    QSignalSpy indexed(index, &ProjectIndexer::ready);
+    QSignalSpy symbolPages(window.findChild<codecairn::detail::ProjectSymbolQuery *>(),
+                           &codecairn::detail::ProjectSymbolQuery::ready);
     QSignalSpy ready(&window, &MainWindow::analysisReady);
     window.openProject(dir.path());
     QVERIFY(window.openFile(path));

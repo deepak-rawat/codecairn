@@ -1,5 +1,5 @@
-#include "WorkspaceIndex.h"
-#include "WorkspaceScanner.h"
+#include "ProjectIndexer.h"
+#include "ProjectFileScanner.h"
 #include <codecairn/Diagnostics.h>
 #include <codecairn/WorkspaceOptionsStore.h>
 
@@ -13,9 +13,9 @@
 #include <QtConcurrentRun>
 #include <utility>
 
-using namespace WorkspaceIndexDetail;
+using namespace codecairn::detail;
 
-void WorkspaceIndex::logResources(const char *stage) {
+void ProjectIndexer::logResources(const char *stage) {
     if (!progress_ || !resourceElapsed_.isValid() || !indexLog().isInfoEnabled())
         return;
     const auto memory = Diagnostics::processMemory();
@@ -28,9 +28,8 @@ void WorkspaceIndex::logResources(const char *stage) {
                      << "elapsedMs=" << resourceElapsed_.elapsed();
 }
 
-WorkspaceIndex::WorkspaceIndex(QObject *parent) : QObject(parent) {
+ProjectIndexer::ProjectIndexer(QObject *parent) : QObject(parent) {
     indexPool_.setMaxThreadCount(1);
-    queryPool_.setMaxThreadCount(1);
     indexPool_.setThreadPriority(QThread::LowPriority);
     refreshTimer_.setSingleShot(true);
     refreshTimer_.setInterval(700);
@@ -64,7 +63,7 @@ WorkspaceIndex::WorkspaceIndex(QObject *parent) : QObject(parent) {
         const int parsed = progress_->parsed.load();
         if (runningAutomatic_ && parsed == 0)
             return;
-        emit status(progress_->phase.load() == 2
+        emit status(progress_->phase.load() == IndexPhase::References
                         ? QString("Symbols ready; preparing reference acceleration...")
                     : parsed > 0 ? QString("Indexing: %1 files discovered, %2 parsed, %3 committed")
                                        .arg(progress_->discovered.load())
@@ -128,31 +127,21 @@ WorkspaceIndex::WorkspaceIndex(QObject *parent) : QObject(parent) {
             }
         }
         startPending();
-        startQuery();
-    });
-    connect(&queryJob_, &QFutureWatcher<SymbolPage>::finished, this, [this] {
-        queryBusy_ = false;
-        if (runningQueryGeneration_ == queryGeneration_)
-            emit symbolsReady(queryJob_.result());
-        startQuery();
     });
 }
 
-WorkspaceIndex::~WorkspaceIndex() {
+ProjectIndexer::~ProjectIndexer() {
     resourceTimer_.stop();
     cancel();
-    invalidateSearch();
     indexJob_.waitForFinished();
     if (busy_)
         logResources("complete");
-    queryJob_.waitForFinished();
 }
 
-void WorkspaceIndex::open(const QString &root, const QString &projectFile, OpenMode mode) {
+void ProjectIndexer::open(const QString &root, const QString &projectFile, OpenMode mode) {
     root_ = workspacePath(root);
     projectFile_ = projectFile;
     ++generation_;
-    invalidateSearch();
     files_.clear();
     directorySnapshots_.clear();
     automaticFileChanged_ = false;
@@ -173,16 +162,15 @@ void WorkspaceIndex::open(const QString &root, const QString &projectFile, OpenM
     }
 }
 
-void WorkspaceIndex::setExcludes(const QStringList &names) {
+void ProjectIndexer::setExcludes(const QStringList &names) {
     if (excludes_ == names)
         return;
     excludes_ = names;
     refresh();
 }
 
-void WorkspaceIndex::close() {
+void ProjectIndexer::close() {
     cancel();
-    invalidateSearch();
     ++generation_;
     pollTimer_.stop();
     root_.clear();
@@ -195,7 +183,7 @@ void WorkspaceIndex::close() {
         watcher_.removePaths(watcher_.files());
 }
 
-void WorkspaceIndex::setRefreshIntervalMinutes(int minutes) {
+void ProjectIndexer::setRefreshIntervalMinutes(int minutes) {
     if (minutes < 1 || minutes > RuntimeLimits::MaximumWorkspaceRefreshMinutes) {
         qCWarning(indexLog) << "index.invalid_refresh_interval" << "root=" << root_
                             << "minutes=" << minutes;
@@ -207,7 +195,7 @@ void WorkspaceIndex::setRefreshIntervalMinutes(int minutes) {
         pollTimer_.setInterval(minutes * 60000);
 }
 
-void WorkspaceIndex::refresh(IndexRefresh mode) {
+void ProjectIndexer::refresh(IndexRefresh mode) {
     const bool force =
         mode == IndexRefresh::ReparseKnownFiles || mode == IndexRefresh::RebuildFilesAndSymbols;
     const bool rescan =
@@ -215,7 +203,7 @@ void WorkspaceIndex::refresh(IndexRefresh mode) {
     requestRefresh(force, rescan, false, true);
 }
 
-void WorkspaceIndex::requestRefresh(bool force, bool rescan, bool automatic, bool verifyContents) {
+void ProjectIndexer::requestRefresh(bool force, bool rescan, bool automatic, bool verifyContents) {
     if (root_.isEmpty())
         return;
     paused_ = false;
@@ -227,7 +215,7 @@ void WorkspaceIndex::requestRefresh(bool force, bool rescan, bool automatic, boo
     startPending();
 }
 
-void WorkspaceIndex::cancel() {
+void ProjectIndexer::cancel() {
     paused_ = true;
     pending_ = false;
     force_ = false;
@@ -241,23 +229,19 @@ void WorkspaceIndex::cancel() {
         cancelled_->store(true);
 }
 
-QString WorkspaceIndex::recreateDatabase() {
+QString ProjectIndexer::recreateDatabase() {
     if (root_.isEmpty())
         return "No workspace is open.";
     cancel();
-    invalidateSearch();
     ++generation_;
     {
         const QSignalBlocker indexSignals(&indexJob_);
-        const QSignalBlocker querySignals(&queryJob_);
         indexJob_.waitForFinished();
-        queryJob_.waitForFinished();
     }
     resourceTimer_.stop();
     if (busy_)
         logResources("complete");
     busy_ = false;
-    queryBusy_ = false;
     emit busyChanged(false);
     const auto database = workspaceDatabase(root_, projectFile_);
     const auto metadata = workspaceStorageDirectory(root_, {}, projectFile_);
@@ -297,7 +281,7 @@ QString WorkspaceIndex::recreateDatabase() {
     return {};
 }
 
-void WorkspaceIndex::startPending() {
+void ProjectIndexer::startPending() {
     if (busy_ || !pending_)
         return;
     pending_ = false;
@@ -314,7 +298,6 @@ void WorkspaceIndex::startPending() {
                     return;
                 files_ = paths;
                 emit catalogReady(paths);
-                startQuery();
             },
             Qt::QueuedConnection);
     };
@@ -379,59 +362,4 @@ void WorkspaceIndex::startPending() {
         result.automatic = automatic;
         return result;
     }));
-}
-
-void WorkspaceIndex::search(const SymbolQuery &query) {
-    const auto sameOverlays = [&] {
-        if (query.overlays.size() != pendingQuery_.overlays.size())
-            return false;
-        for (qsizetype i = 0; i < query.overlays.size(); ++i) {
-            const auto &a = query.overlays[i];
-            const auto &b = pendingQuery_.overlays[i];
-            if (a.path != b.path || a.hash != b.hash || a.source != b.source ||
-                a.analysis.symbols.size() != b.analysis.symbols.size())
-                return false;
-        }
-        return true;
-    };
-    const auto sameAnchor = [&] {
-        if (query.anchor.has_value() != pendingQuery_.anchor.has_value())
-            return false;
-        return !query.anchor ||
-               (query.anchor->path == pendingQuery_.anchor->path &&
-                query.anchor->symbol.nameStart == pendingQuery_.anchor->symbol.nameStart &&
-                query.anchor->symbol.name == pendingQuery_.anchor->symbol.name);
-    };
-    const bool same = queryBusy_ && runningQueryGeneration_ == queryGeneration_ &&
-                      query.text == pendingQuery_.text &&
-                      query.category == pendingQuery_.category &&
-                      query.offset == pendingQuery_.offset && query.limit == pendingQuery_.limit &&
-                      query.exact == pendingQuery_.exact &&
-                      query.includeCategorySymbols == pendingQuery_.includeCategorySymbols &&
-                      query.categoryLimit == pendingQuery_.categoryLimit &&
-                      query.includeCounts == pendingQuery_.includeCounts &&
-                      query.includeCategories == pendingQuery_.includeCategories &&
-                      sameOverlays() && sameAnchor();
-    if (!same) {
-        invalidateSearch();
-        queryCancelled_ = std::make_shared<std::atomic_bool>(false);
-    }
-    pendingQuery_ = query;
-    pendingQuery_.projectFile = projectFile_;
-    pendingQuery_.cancel = queryCancelled_;
-    queryPending_ = true;
-    startQuery();
-}
-
-void WorkspaceIndex::startQuery() {
-    if (queryBusy_ || !queryPending_)
-        return;
-    queryPending_ = false;
-    queryBusy_ = true;
-    runningQueryGeneration_ = queryGeneration_;
-    const auto root = root_;
-    auto query = pendingQuery_;
-    query.allowPendingSchema = busy_;
-    queryJob_.setFuture(QtConcurrent::run(
-        &queryPool_, [root, query] { return queryWorkspaceSymbols(root, query); }));
 }

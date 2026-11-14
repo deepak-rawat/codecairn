@@ -1,7 +1,7 @@
 #include <codecairn/Indexing.h>
 #include <codecairn/Diagnostics.h>
 #include <codecairn/FileIO.h>
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
 #include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QElapsedTimer>
@@ -16,7 +16,7 @@
 #include <stdexcept>
 #include <tuple>
 
-using namespace WorkspaceIndexDetail;
+using namespace codecairn::detail;
 
 namespace {
 constexpr const char *ValidSymbol =
@@ -132,9 +132,9 @@ SymbolPage queryWorkspaceSymbols(const QString &root, const SymbolQuery &query) 
         const int categoryLimit =
             query.categoryLimit < 0 ? std::numeric_limits<int>::max() : query.categoryLimit;
         const auto database = workspaceDatabase(root, query.projectFile);
-        std::unique_ptr<SymbolIndexStore> db;
+        std::unique_ptr<ProjectIndexStore> db;
         if (!root.isEmpty() && QFileInfo::exists(database)) {
-            db = std::make_unique<SymbolIndexStore>(database, false);
+            db = std::make_unique<ProjectIndexStore>(database, false);
             if (query.cancel)
                 sqlite3_progress_handler(
                     db->handle(), 1000,

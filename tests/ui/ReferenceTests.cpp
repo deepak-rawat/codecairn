@@ -43,7 +43,7 @@
 #include <QMenu>
 #include <QTabBar>
 
-#include "WorkspaceIndex.h"
+#include "ProjectIndexer.h"
 namespace {
 void setReferenceMethod(QDialog *dialog, SearchMethod method) {
     auto *combo = dialog->findChild<QComboBox *>("referenceMethod");
@@ -526,8 +526,8 @@ void ReferenceTests::indexedSearchIncludesDirtyOverlays() {
     const auto other = dir.filePath("b.cpp");
     QVERIFY(writeSourceFile(path, "int disk;\n", false).isEmpty());
     QVERIFY(writeSourceFile(other, "int irrelevant;\n", false).isEmpty());
-    WorkspaceIndex index;
-    QSignalSpy ready(&index, &WorkspaceIndex::ready);
+    ProjectIndexer index;
+    QSignalSpy ready(&index, &ProjectIndexer::ready);
     index.open(dir.path());
     QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 10000);
     auto r = request(path, "count");
@@ -609,8 +609,8 @@ void ReferenceTests::continuationRejectsChangedSources() {
     const auto other = dir.filePath("b.cpp");
     QVERIFY(writeSourceFile(path, "int absent;\n", false).isEmpty());
     QVERIFY(writeSourceFile(other, "int count; int f() { return count; }\n", false).isEmpty());
-    WorkspaceIndex index;
-    QSignalSpy ready(&index, &WorkspaceIndex::ready);
+    ProjectIndexer index;
+    QSignalSpy ready(&index, &ProjectIndexer::ready);
     index.open(dir.path());
     QTRY_VERIFY_WITH_TIMEOUT(!ready.isEmpty(), 10000);
     r = request(path, "count");

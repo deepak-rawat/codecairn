@@ -2,7 +2,7 @@
 #include <codecairn/Diagnostics.h>
 
 #include <codecairn/FileIO.h>
-#include "SymbolIndexStore.h"
+#include "ProjectIndexStore.h"
 #include <codecairn/WorkspacePaths.h>
 
 #include <QDateTime>
@@ -10,7 +10,7 @@
 #include <QSet>
 #include <stdexcept>
 
-using namespace WorkspaceIndexDetail;
+using namespace codecairn::detail;
 
 namespace {
 bool identifierCharacter(unsigned char c) {
@@ -31,60 +31,108 @@ bool cancelled(const std::shared_ptr<std::atomic_bool> &cancel) {
 }
 }
 
-bool WorkspaceIndexDetail::updateReferenceOccurrences(
-    SymbolIndexStore &database, const QString &path, const QByteArray &bytes,
-    const QByteArray &hash, const std::shared_ptr<std::atomic_bool> &cancel) {
-    IndexStatement previous(database,
-                            "SELECT hash,version FROM reference_occurrence_files WHERE path=?");
-    previous.bind(1, path);
-    const bool found = previous.next();
-    if (found && !hash.isEmpty() && previous.text(0) == QString::fromLatin1(hash) &&
-        previous.integer(1) == ReferenceOccurrenceVersion)
-        return false;
-    previous.reset();
-    IndexStatement remove(database, "DELETE FROM reference_occurrence_files WHERE path=?");
-    remove.bind(1, path);
-    remove.next();
-    if (hash.isEmpty() || cancelled(cancel))
-        return found;
-
-    QSet<QByteArray> identifiers;
-    bool asciiOnly = true;
+ReferenceContent codecairn::detail::prepareReferenceContent(
+    const QString &path, const QByteArray &bytes, const QByteArray &hash,
+    const ReferenceFileState &previous, const std::shared_ptr<std::atomic_bool> &cancel) {
+    ReferenceContent result;
+    result.path = path;
+    result.hash = hash;
+    result.previousFound = previous.found;
+    result.unchanged = !hash.isEmpty() && previous.hash == hash;
+    if (cancelled(cancel)) {
+        result.cancelled = true;
+        return result;
+    }
+    if (result.unchanged || hash.isEmpty())
+        return result;
     qsizetype start = 0;
     for (qsizetype i = 0; i <= bytes.size(); ++i) {
-        if ((i & 4095) == 0 && cancelled(cancel))
-            return true;
+        if ((i & 4095) == 0 && cancelled(cancel)) {
+            result.cancelled = true;
+            return result;
+        }
         const auto c = i < bytes.size() ? static_cast<unsigned char>(bytes.at(i)) : 0;
         if (c >= 128)
-            asciiOnly = false;
+            result.asciiOnly = false;
         if (i < bytes.size() && identifierCharacter(c))
             continue;
         if (i > start)
-            identifiers.insert(bytes.mid(start, i - start));
+            result.identifiers.insert(bytes.mid(start, i - start));
         start = i + 1;
     }
-    IndexStatement file(database, "INSERT INTO reference_occurrence_files VALUES(?,?,?,?)");
-    file.bind(1, path);
-    file.bind(2, QString::fromLatin1(hash));
-    file.bind(3, qint64{0});
-    file.bind(4, asciiOnly ? 1 : 0);
-    file.next();
-    IndexStatement posting(database, "INSERT INTO reference_occurrences VALUES(?,?,?)");
-    for (const auto &identifier : identifiers) {
+    return result;
+}
+
+ReferenceIndexWriter::ReferenceIndexWriter(ProjectIndexStore &database)
+    : database_(database),
+      previous_(database, "SELECT hash,version FROM reference_occurrence_files WHERE path=?"),
+      remove_(database, "DELETE FROM reference_occurrence_files WHERE path=?"),
+      file_(database, "INSERT INTO reference_occurrence_files VALUES(?,?,?,?)"),
+      posting_(database, "INSERT INTO reference_occurrences VALUES(?,?,?)"),
+      complete_(database, "UPDATE reference_occurrence_files SET version=? WHERE path=?") {
+}
+
+ReferenceFileState ReferenceIndexWriter::previous(const QString &path) {
+    previous_.bind(1, path);
+    ReferenceFileState result;
+    result.found = previous_.next();
+    if (result.found && previous_.integer(1) == ReferenceOccurrenceVersion)
+        result.hash = previous_.text(0).toLatin1();
+    previous_.reset();
+    return result;
+}
+
+bool ReferenceIndexWriter::replace(const ReferenceContent &content,
+                                   const std::shared_ptr<std::atomic_bool> &cancel) {
+    if (content.cancelled || cancelled(cancel) || content.unchanged ||
+        (content.hash.isEmpty() && !content.previousFound))
+        return false;
+    IndexTransaction transaction(database_);
+    const bool changed = updateInTransaction(content, cancel);
+    if (cancelled(cancel))
+        return false;
+    transaction.commit();
+    return changed;
+}
+
+bool ReferenceIndexWriter::updateInTransaction(const ReferenceContent &content,
+                                               const std::shared_ptr<std::atomic_bool> &cancel) {
+    if (content.cancelled || cancelled(cancel) || content.unchanged ||
+        (content.hash.isEmpty() && !content.previousFound))
+        return false;
+    remove_.bind(1, content.path);
+    remove_.next();
+    remove_.reset();
+    if (content.hash.isEmpty())
+        return content.previousFound;
+    file_.bind(1, content.path);
+    file_.bind(2, QString::fromLatin1(content.hash));
+    file_.bind(3, qint64{0});
+    file_.bind(4, content.asciiOnly ? 1 : 0);
+    file_.next();
+    file_.reset();
+    for (const auto &identifier : content.identifiers) {
         if (cancelled(cancel))
             return true;
-        posting.bind(1, path);
-        posting.bind(2, QString::fromLatin1(identifier));
-        posting.bind(3, QString::fromLatin1(identifier.toLower()));
-        posting.next();
-        posting.reset();
+        posting_.bind(1, content.path);
+        posting_.bind(2, QString::fromLatin1(identifier));
+        posting_.bind(3, QString::fromLatin1(identifier.toLower()));
+        posting_.next();
+        posting_.reset();
     }
-    IndexStatement complete(database,
-                            "UPDATE reference_occurrence_files SET version=? WHERE path=?");
-    complete.bind(1, ReferenceOccurrenceVersion);
-    complete.bind(2, path);
-    complete.next();
+    complete_.bind(1, ReferenceOccurrenceVersion);
+    complete_.bind(2, content.path);
+    complete_.next();
+    complete_.reset();
     return true;
+}
+
+bool codecairn::detail::updateReferenceOccurrences(
+    ProjectIndexStore &database, const QString &path, const QByteArray &bytes,
+    const QByteArray &hash, const std::shared_ptr<std::atomic_bool> &cancel) {
+    ReferenceIndexWriter writer(database);
+    const auto content = prepareReferenceContent(path, bytes, hash, writer.previous(path), cancel);
+    return writer.updateInTransaction(content, cancel);
 }
 
 ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStringList &paths,
@@ -102,7 +150,7 @@ ReferenceCandidateResult referenceCandidateFiles(const QString &root, const QStr
     if (!QFileInfo::exists(workspaceDatabase(root, projectFile)))
         return result;
     try {
-        SymbolIndexStore database(workspaceDatabase(root, projectFile), false);
+        ProjectIndexStore database(workspaceDatabase(root, projectFile), false);
         database.exec("BEGIN;");
         {
             IndexStatement version(database, "PRAGMA user_version");

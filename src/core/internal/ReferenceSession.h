@@ -1,7 +1,7 @@
 #pragma once
 
 #include <codecairn/ReferenceSearch.h>
-#include "WorkspaceServices.h"
+#include "ProjectLanguages.h"
 #include <codecairn/WorkspaceOptionsStore.h>
 
 #include <QFutureWatcher>
@@ -40,7 +40,8 @@ QStringList referenceSearchPaths(const QStringList &catalog, const QVector<Symbo
 class ReferenceSession final : public QObject {
     Q_OBJECT
 public:
-    explicit ReferenceSession(WorkspaceServices *services, QObject *parent = nullptr);
+    explicit ReferenceSession(codecairn::detail::ProjectLanguages *languages,
+                              QObject *parent = nullptr);
     ~ReferenceSession() override;
     void setSnapshotProvider(std::function<std::optional<QByteArray>(const QString &)> provider);
     void start(const ReferenceSearchRequest &request, quint64 token,
@@ -56,7 +57,7 @@ private:
     void searchPage(quint64 token);
     void fail(quint64 token, const QString &error);
     std::optional<QByteArray> liveSource(const QString &path) const;
-    WorkspaceServices *services_;
+    codecairn::detail::ProjectLanguages *languages_;
     QPointer<LanguageServerClient> service_;
     QMetaObject::Connection semanticConnection_;
     ReferenceSearchRequest request_;
