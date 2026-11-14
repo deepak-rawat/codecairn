@@ -1,4 +1,6 @@
 #include <codecairn/FileIO.h>
+#include <codecairn/Engine.h>
+#include <codecairn/Project.h>
 #include "CompilerSymbolRecovery.h"
 #include <codecairn/Indexing.h>
 #include <codecairn/LanguageRegistry.h>
@@ -8,10 +10,55 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QtConcurrentMap>
 #include <algorithm>
+#include <tuple>
+
+namespace {
+void verifySymbolRanges(const QByteArray &source, const SourceAnalysis &analysis) {
+    for (int i = 0; i < analysis.symbols.size(); ++i) {
+        const auto &symbol = analysis.symbols[i];
+        QVERIFY2(!symbol.name.isEmpty(), qPrintable(symbol.kind));
+        QVERIFY(symbol.start >= 0);
+        QVERIFY(symbol.start <= symbol.nameStart);
+        QVERIFY(symbol.nameStart < symbol.nameEnd);
+        QVERIFY(symbol.nameEnd <= symbol.end);
+        QVERIFY(symbol.end <= source.size());
+        QCOMPARE(symbol.line, source.left(symbol.nameStart).count('\n'));
+        QVERIFY(symbol.parent >= -1 && symbol.parent < analysis.symbols.size());
+        int ancestor = symbol.parent;
+        int depth = 0;
+        while (ancestor >= 0) {
+            QVERIFY(ancestor < analysis.symbols.size());
+            QVERIFY(ancestor != i);
+            QVERIFY(++depth < analysis.symbols.size());
+            ancestor = analysis.symbols[ancestor].parent;
+        }
+        if (!symbol.generated && !symbol.outlineOnly)
+            QCOMPARE(source.mid(symbol.nameStart, symbol.nameEnd - symbol.nameStart),
+                     symbol.name.toUtf8());
+    }
+}
+
+void compareSymbol(const SourceSymbol &actual, const SourceSymbol &expected) {
+    QCOMPARE(actual.name, expected.name);
+    QCOMPARE(actual.kind, expected.kind);
+    QCOMPARE(actual.qualifiedName, expected.qualifiedName);
+    QCOMPARE(actual.signature, expected.signature);
+    QCOMPARE(actual.category, expected.category);
+    QCOMPARE(actual.start, expected.start);
+    QCOMPARE(actual.end, expected.end);
+    QCOMPARE(actual.nameStart, expected.nameStart);
+    QCOMPARE(actual.nameEnd, expected.nameEnd);
+    QCOMPARE(actual.line, expected.line);
+    QCOMPARE(actual.definition, expected.definition);
+    QCOMPARE(actual.generated, expected.generated);
+    QCOMPARE(actual.provider, expected.provider);
+}
+}
 
 class LanguageTests : public QObject {
     Q_OBJECT
@@ -23,6 +70,11 @@ private slots:
     void multiFileExamples();
     void updatedGrammarSyntax_data();
     void updatedGrammarSyntax();
+    void nestedLanguageContracts_data();
+    void nestedLanguageContracts();
+    void incompleteLanguageContracts_data();
+    void incompleteLanguageContracts();
+    void publicMixedLanguageIndexParity();
     void compilerRegressions();
     void compilerBuiltinHeaders();
     void forwardTagsInTypedefs();
@@ -38,6 +90,419 @@ private slots:
     void externalWorkspaceReadOnly();
     void externalWorkspaceCompilerCoverage();
 };
+
+void LanguageTests::nestedLanguageContracts_data() {
+    QTest::addColumn<QByteArray>("source");
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<LanguageId>("language");
+    // name | kind | qualified name | parent name | category | optional "declaration"
+    QTest::addColumn<QStringList>("expected");
+    QTest::newRow("C-nested-record-enum")
+        << QByteArray("// café 🧭\nstruct Packet { struct Header { int size; } header; };\n"
+                      "enum State { Ready, Busy };\nint declared(int value);\n"
+                      "extern int pending;\nint dispatch(void) { int local = 1; return local; }\n")
+        << QString(":/contracts.c") << LanguageId::C
+        << QStringList{"Packet|Type|Packet||Struct",
+                       "Header|Type|Packet::Header|Packet|Struct",
+                       "size|Field|Packet::Header::size|Header|Field",
+                       "Ready|Constant|State::Ready|State|Enum Constant",
+                       "declared|Function|declared||Function|declaration",
+                       "pending|Variable|pending||Variable|declaration",
+                       "dispatch|Function|dispatch||Function",
+                       "local|Variable|dispatch::local|dispatch|Variable"};
+    QTest::newRow("C++-template-alias-scoped-enum")
+        << QByteArray("// café 🧭\nnamespace store {\n"
+                      "template<class T> struct Box {\n"
+                      "  T value;\n  T get() const { return value; }\n  T peek() const;\n};\n"
+                      "using Number = Box<int>;\nenum class State { Ready, Busy };\n}\n")
+        << QString(":/contracts.cpp") << LanguageId::Cpp
+        << QStringList{"store|Namespace|store||Namespace",
+                       "Box|Type|store::Box|store|Struct",
+                       "value|Field|store::Box::value|Box|Field",
+                       "get|Function|store::Box::get|Box|Function",
+                       "peek|Function|store::Box::peek|Box|Function|declaration",
+                       "Number|Type|store::Number|store|Alias",
+                       "Ready|Constant|store::State::Ready|State|Enum Constant"};
+    QTest::newRow("Python-async-nested-unicode")
+        << QByteArray("# café 🧭\nclass Worker:\n"
+                      "    async def résumé(self):\n"
+                      "        def nested():\n            return 1\n"
+                      "        local = nested()\n        return local\n")
+        << QString(":/contracts.py") << LanguageId::Python
+        << QStringList{"Worker|Type|Worker||Class", "résumé|Function|Worker.résumé|Worker|Function",
+                       "nested|Function|Worker.résumé.nested|résumé|Function",
+                       "local|Variable|Worker.résumé.local|résumé|Variable"};
+    QTest::newRow("Bash-nested-function")
+        << QByteArray("# café 🧭\nouter() {\n  value=hello\n"
+                      "  inner() { printf '%s\\n' \"$value\"; }\n  inner\n}\n")
+        << QString(":/contracts.bash") << LanguageId::Bash
+        << QStringList{"outer|Function|outer||Function",
+                       "inner|Function|outer::inner|outer|Function",
+                       "value|Variable|outer::value|outer|Variable"};
+    QTest::newRow("JavaScript-class-generator-arrow")
+        << QByteArray("// café 🧭\nexport class Worker {\n  value = 1;\n"
+                      "  async run() { const local = this.value; return local; }\n}\n"
+                      "export const create = () => new Worker();\n"
+                      "export function* values() { yield 1; }\n")
+        << QString(":/contracts.mjs") << LanguageId::JavaScript
+        << QStringList{"Worker|Type|Worker||Class",
+                       "value|Field|Worker.value|Worker|Field",
+                       "run|Function|Worker.run|Worker|Function",
+                       "local|Variable|Worker.run.local|run|Variable",
+                       "create|Function|create||Function",
+                       "values|Function|values||Function"};
+    QTest::newRow("TypeScript-generic-interface-alias")
+        << QByteArray("// café 🧭\nexport interface Box<T> { value: T; }\n"
+                      "export type Maybe<T> = T | undefined;\n"
+                      "export const create = <T>(value: T): Box<T> => ({ value });\n")
+        << QString(":/contracts.ts") << LanguageId::TypeScript
+        << QStringList{"Box|Type|Box||Type", "value|Field|Box.value|Box|Field",
+                       "Maybe|Type|Maybe||Alias", "create|Function|create||Function"};
+    QTest::newRow("TSX-component-and-local")
+        << QByteArray("// café 🧭\ninterface Props { label: string; }\n"
+                      "export function View(props: Props) {\n"
+                      "  const local = props.label;\n"
+                      "  return <section><span>{local}</span></section>;\n}\n")
+        << QString(":/contracts.tsx") << LanguageId::Tsx
+        << QStringList{"Props|Type|Props||Type", "label|Field|Props.label|Props|Field",
+                       "View|Function|View||Function", "local|Variable|View.local|View|Variable"};
+    QTest::newRow("Go-generic-type-and-receiver")
+        << QByteArray("// café 🧭\npackage sample\n"
+                      "type Box[T any] struct { Value T }\n"
+                      "func (b *Box[T]) Get() T { return b.Value }\n"
+                      "func New[T any](value T) Box[T] { return Box[T]{Value: value} }\n")
+        << QString(":/contracts.go") << LanguageId::Go
+        << QStringList{"Box|Type|Box||Type", "Value|Field|Box::Value|Box|Field",
+                       "Get|Function|Box::Get||Function", "New|Function|New||Function"};
+    QTest::newRow("Rust-module-impl-enum")
+        << QByteArray("// café 🧭\nmod store {\n"
+                      "  pub struct Item { pub value: i32 }\n"
+                      "  impl Item { pub fn read(&self) -> i32 { self.value } }\n"
+                      "  pub trait Reader { fn read_value(&self) -> i32; }\n"
+                      "  pub enum State { Ready, Busy }\n}\n")
+        << QString(":/contracts.rs") << LanguageId::Rust
+        << QStringList{"store|Namespace|store||Namespace",
+                       "Item|Type|store::Item|store|Struct",
+                       "value|Field|store::Item::value|Item|Field",
+                       "read|Function|store::Item::read|Item|Function",
+                       "Reader|Type|store::Reader|store|Type",
+                       "read_value|Function|store::Reader::read_value|Reader|Function|declaration",
+                       "Ready|Constant|store::State::Ready|State|Enum Constant"};
+    QTest::newRow("JSON-nested-unicode-keys")
+        << QByteArray("{\"café\": \"🧭\", \"settings\": "
+                      "{\"enabled\": true, \"items\": [{\"id\": 1}]}}\n")
+        << QString(":/contracts.json") << LanguageId::Json
+        << QStringList{"café|Field|café||Field", "settings|Field|settings||Field",
+                       "enabled|Field|settings::enabled|settings|Field",
+                       "id|Field|settings::items::id|items|Field"};
+    QTest::newRow("YAML-block-and-flow-mappings")
+        << QByteArray("# café 🧭\nsettings:\n  enabled: true\n  items:\n"
+                      "    - id: 1\n  nested: {timeout: 30}\n")
+        << QString(":/contracts.yaml") << LanguageId::Yaml
+        << QStringList{"settings|Field|settings||Field",
+                       "enabled|Field|settings::enabled|settings|Field",
+                       "id|Field|settings::items::id|items|Field",
+                       "timeout|Field|settings::nested::timeout|nested|Field"};
+    QTest::newRow("CMake-functions-macros-targets")
+        << QByteArray("# café 🧭\noption(ENABLE_WORKER \"Build worker\" ON)\n"
+                      "function(add_worker target)\n  set(local value)\n"
+                      "  add_library(worker STATIC worker.cpp)\nendfunction()\n"
+                      "macro(configure_worker target)\nendmacro()\n")
+        << QString(":/contracts.cmake") << LanguageId::CMake
+        << QStringList{"ENABLE_WORKER|Variable|ENABLE_WORKER||Variable",
+                       "add_worker|Function|add_worker||Function",
+                       "local|Variable|add_worker::local|add_worker|Variable",
+                       "worker|Type|add_worker::worker|add_worker|Type",
+                       "configure_worker|Macro|configure_worker||Macro"};
+}
+
+void LanguageTests::nestedLanguageContracts() {
+    QFETCH(QByteArray, source);
+    QFETCH(QString, path);
+    QFETCH(LanguageId, language);
+    QFETCH(QStringList, expected);
+    const auto editor = analyzeSource(source, path);
+    QVERIFY2(editor.error.isEmpty(), qPrintable(editor.error));
+    QVERIFY(editor.supported);
+    QCOMPARE(editor.language, language);
+    QVERIFY2(!editor.syntaxErrors, qPrintable(editor.diagnostics.join('\n')));
+    QCOMPARE(editor.styles.size(), source.size());
+    verifySymbolRanges(source, editor);
+    for (const auto &description : expected) {
+        const auto fields = description.split('|');
+        const auto found =
+            std::find_if(editor.symbols.cbegin(), editor.symbols.cend(), [&](const auto &symbol) {
+                return !symbol.outlineOnly && symbol.name == fields[0] &&
+                       symbol.qualifiedName == fields[2];
+            });
+        QVERIFY2(found != editor.symbols.cend(), qPrintable(description));
+        QCOMPARE(found->kind, fields[1]);
+        QCOMPARE(found->category, fields[4]);
+        QCOMPARE(found->parent < 0 ? QString{} : editor.symbols[found->parent].name, fields[3]);
+        QCOMPARE(found->provider, "syntax");
+        QVERIFY(!found->generated);
+        QCOMPARE(found->definition, fields.size() < 6 || fields[5] != "declaration");
+        const bool insideFunction =
+            found->name == "local" ||
+            (language == LanguageId::Bash && (found->name == "inner" || found->name == "value")) ||
+            (language == LanguageId::Python && found->name == "nested") ||
+            (language == LanguageId::CMake && found->name == "worker");
+        QCOMPARE(found->local, insideFunction);
+    }
+    for (const auto mode : {SourceAnalysisMode::Index, SourceAnalysisMode::SyntaxOnly}) {
+        const auto symbolsOnly = analyzeSource(source, path, mode);
+        QVERIFY(symbolsOnly.error.isEmpty());
+        QVERIFY(symbolsOnly.styles.isEmpty());
+        QCOMPARE(symbolsOnly.language, editor.language);
+        QCOMPARE(symbolsOnly.syntaxErrors, editor.syntaxErrors);
+        QCOMPARE(symbolsOnly.symbols.size(), editor.symbols.size());
+        for (int i = 0; i < editor.symbols.size(); ++i) {
+            compareSymbol(symbolsOnly.symbols[i], editor.symbols[i]);
+            QCOMPARE(symbolsOnly.symbols[i].parent, editor.symbols[i].parent);
+            QCOMPARE(symbolsOnly.symbols[i].local, editor.symbols[i].local);
+            QCOMPARE(symbolsOnly.symbols[i].outlineOnly, editor.symbols[i].outlineOnly);
+        }
+    }
+}
+
+void LanguageTests::incompleteLanguageContracts_data() {
+    QTest::addColumn<QString>("path");
+    QTest::addColumn<QByteArray>("source");
+    QTest::newRow("C") << QString(":/partial.c")
+                       << QByteArray("// café 🧭\nint kept(void) { return 1; }\n"
+                                     "int broken(void) { return (\n");
+    QTest::newRow("C++") << QString(":/partial.cpp")
+                         << QByteArray("// café 🧭\nnamespace kept { int value; }\n"
+                                       "int broken() { return (\n");
+    QTest::newRow("Python") << QString(":/partial.py")
+                            << QByteArray("# café 🧭\ndef kept(): pass\nbroken = (\n");
+    QTest::newRow("Bash") << QString(":/partial.sh")
+                          << QByteArray("# café 🧭\nkept() { :; }\nif true; then\n");
+    QTest::newRow("JavaScript") << QString(":/partial.js")
+                                << QByteArray("// café 🧭\nfunction kept() {}\nconst broken = (\n");
+    QTest::newRow("TypeScript") << QString(":/partial.ts")
+                                << QByteArray("// café 🧭\ninterface kept { value: string; }\n"
+                                              "const broken = (\n");
+    QTest::newRow("TSX") << QString(":/partial.tsx")
+                         << QByteArray("// café 🧭\nfunction kept() { return <div/>; }\n"
+                                       "const broken = <section>\n");
+    QTest::newRow("Go") << QString(":/partial.go")
+                        << QByteArray("// café 🧭\npackage sample\nfunc kept() {}\n"
+                                      "func broken() { return (\n");
+    QTest::newRow("Rust") << QString(":/partial.rs")
+                          << QByteArray("// café 🧭\nfn kept() {}\nfn broken() { let value = (\n");
+    QTest::newRow("JSON") << QString(":/partial.json")
+                          << QByteArray("{\"café\": \"🧭\", \"kept\": 1, \"broken\": [\n");
+    QTest::newRow("YAML") << QString(":/partial.yaml")
+                          << QByteArray("# café 🧭\nkept: 1\nbroken: [\n");
+    QTest::newRow("CMake") << QString(":/partial.cmake")
+                           << QByteArray("# café 🧭\nfunction(kept)\nendfunction()\nset(BROKEN\n");
+}
+
+void LanguageTests::incompleteLanguageContracts() {
+    QFETCH(QString, path);
+    QFETCH(QByteArray, source);
+    const auto analysis = analyzeSource(source, path, SourceAnalysisMode::SyntaxOnly);
+    QVERIFY2(analysis.error.isEmpty(), qPrintable(analysis.error));
+    QVERIFY(analysis.supported);
+    QVERIFY(analysis.syntaxErrors);
+    QVERIFY(!analysis.compilerEnriched);
+    QVERIFY(analysis.styles.isEmpty());
+    verifySymbolRanges(source, analysis);
+    QVERIFY(std::any_of(analysis.symbols.cbegin(), analysis.symbols.cend(),
+                        [](const auto &symbol) { return symbol.name == "kept"; }));
+    for (const auto &symbol : analysis.symbols)
+        QCOMPARE(symbol.provider, "syntax");
+    // Resource identities keep this syntax-recovery check independent of libclang availability.
+    for (const auto mode : {SourceAnalysisMode::Editor, SourceAnalysisMode::Index}) {
+        const auto recovered = analyzeSource(source, path, mode);
+        QVERIFY2(recovered.error.isEmpty(), qPrintable(recovered.error));
+        QCOMPARE(recovered.syntaxErrors, analysis.syntaxErrors);
+        QCOMPARE(recovered.symbols.size(), analysis.symbols.size());
+        QCOMPARE(recovered.styles.size(),
+                 mode == SourceAnalysisMode::Editor ? source.size() : qsizetype{0});
+        for (int i = 0; i < analysis.symbols.size(); ++i) {
+            compareSymbol(recovered.symbols[i], analysis.symbols[i]);
+            QCOMPARE(recovered.symbols[i].parent, analysis.symbols[i].parent);
+            QCOMPARE(recovered.symbols[i].local, analysis.symbols[i].local);
+            QCOMPARE(recovered.symbols[i].outlineOnly, analysis.symbols[i].outlineOnly);
+        }
+    }
+}
+
+void LanguageTests::publicMixedLanguageIndexParity() {
+    QTemporaryDir directory(QDir::current().filePath(".language-index-contracts-XXXXXX"));
+    QVERIFY(directory.isValid());
+    const QDir fixtures(QDir(CODECAIRN_LANGUAGE_FIXTURES_PATH).filePath("index_contracts"));
+    const QStringList files{"records.cpp", "worker.py", "view.tsx", "settings.json", "generated.c"};
+    QMap<QString, codecairn::SourceSnapshot> snapshots;
+    for (const auto &file : files) {
+        const auto source = readSourceFile(fixtures.filePath(file));
+        QVERIFY2(source.error.isEmpty(), qPrintable(source.error));
+        const auto path = directory.filePath(file);
+        QVERIFY(writeSourceFile(path, source.bytes, false).isEmpty());
+        snapshots.insert(path, {path, source.bytes, sourceContentHash(source.bytes), 1});
+    }
+
+    codecairn::Engine engine;
+    const auto opened =
+        engine.openProject(codecairn::ProjectSpec::folder(directory.path()),
+                           {codecairn::IndexStartup::Manual, codecairn::LanguageStartup::Manual});
+    QVERIFY(opened);
+    auto *project = opened.value();
+    QSignalSpy indexed(project, &codecairn::Project::indexReady);
+    QSignalSpy queried(project, &codecairn::Project::symbolsReady);
+    QSignalSpy engineAnalyses(&engine, &codecairn::Engine::analysisReady);
+    QSignalSpy projectAnalyses(project, &codecairn::Project::analysisReady);
+    QSignalSpy reads(&engine, &codecairn::Engine::sourceReady);
+    const auto coldRequest = project->refreshIndex(IndexRefresh::DiscoverChanges);
+    QTRY_COMPARE_WITH_TIMEOUT(indexed.size(), 1, 30000);
+    QCOMPARE(qvariant_cast<codecairn::RequestId>(indexed[0][0]), coldRequest);
+    const auto cold = qvariant_cast<IndexResult>(indexed[0][1]);
+    QVERIFY2(cold.error.isEmpty(), qPrintable(cold.error));
+    QVERIFY(!cold.cancelled);
+    QCOMPARE(cold.files.size(), files.size());
+    QCOMPARE(cold.parsed, files.size());
+    QCOMPARE(cold.reused, 0);
+
+    QVector<IndexedSymbol> expected;
+    for (const auto &snapshot : snapshots) {
+        engineAnalyses.clear();
+        const auto editorRequest = engine.analyze(snapshot);
+        QTRY_COMPARE(engineAnalyses.size(), 1);
+        QCOMPARE(qvariant_cast<codecairn::RequestId>(engineAnalyses[0][0]), editorRequest);
+        const auto editor = qvariant_cast<codecairn::AnalysisResult>(engineAnalyses[0][1]);
+        QCOMPARE(editor.source.path, snapshot.path);
+        QCOMPARE(editor.source.hash, snapshot.hash);
+        QCOMPARE(editor.source.revision, snapshot.revision);
+        QCOMPARE(editor.source.bytes, snapshot.bytes);
+        QVERIFY2(editor.analysis.error.isEmpty(), qPrintable(editor.analysis.error));
+        QVERIFY(editor.analysis.supported);
+        QCOMPARE(editor.analysis.styles.size(), snapshot.bytes.size());
+        verifySymbolRanges(snapshot.bytes, editor.analysis);
+
+        projectAnalyses.clear();
+        const auto symbolRequest = project->analyze(snapshot, codecairn::AnalysisDetail::Symbols);
+        QTRY_COMPARE(projectAnalyses.size(), 1);
+        QCOMPARE(qvariant_cast<codecairn::RequestId>(projectAnalyses[0][0]), symbolRequest);
+        const auto symbols = qvariant_cast<codecairn::AnalysisResult>(projectAnalyses[0][1]);
+        QVERIFY2(symbols.analysis.error.isEmpty(), qPrintable(symbols.analysis.error));
+        QVERIFY(symbols.analysis.styles.isEmpty());
+        QCOMPARE(symbols.source.hash, snapshot.hash);
+        QCOMPARE(symbols.analysis.compilerEnriched, editor.analysis.compilerEnriched);
+        QCOMPARE(symbols.analysis.symbols.size(), editor.analysis.symbols.size());
+        for (int i = 0; i < editor.analysis.symbols.size(); ++i) {
+            const auto &symbol = editor.analysis.symbols[i];
+            compareSymbol(symbols.analysis.symbols[i], symbol);
+            QCOMPARE(symbols.analysis.symbols[i].parent, symbol.parent);
+            QCOMPARE(symbols.analysis.symbols[i].local, symbol.local);
+            QCOMPARE(symbols.analysis.symbols[i].outlineOnly, symbol.outlineOnly);
+            if (!symbol.local && !symbol.outlineOnly)
+                expected.append({snapshot.path, snapshot.hash, symbol, false});
+        }
+    }
+    std::sort(expected.begin(), expected.end(), [](const auto &a, const auto &b) {
+        return std::tie(a.symbol.name, a.path, a.symbol.start) <
+               std::tie(b.symbol.name, b.path, b.symbol.start);
+    });
+    QVERIFY(!expected.isEmpty());
+    const auto generated = std::find_if(expected.cbegin(), expected.cend(), [](const auto &entry) {
+        return entry.symbol.name == "make_shared";
+    });
+    QVERIFY(generated != expected.cend());
+    QVERIFY(generated->symbol.generated);
+    QVERIFY(generated->symbol.definition);
+    QCOMPARE(generated->symbol.provider, "compiler");
+
+    codecairn::SymbolQuery all;
+    all.pageSize = 1000;
+    const auto firstRequest = project->findSymbols(all);
+    QTRY_COMPARE(queried.size(), 1);
+    QCOMPARE(qvariant_cast<codecairn::RequestId>(queried[0][0]), firstRequest);
+    const auto first = qvariant_cast<SymbolPage>(queried[0][1]);
+    QVERIFY2(first.error.isEmpty(), qPrintable(first.error));
+    QVERIFY(!first.cancelled);
+    QCOMPARE(first.total, expected.size());
+    QCOMPARE(first.symbols.size(), expected.size());
+    for (int i = 0; i < expected.size(); ++i) {
+        const auto &actual = first.symbols[i];
+        QCOMPARE(actual.path, expected[i].path);
+        QCOMPARE(actual.hash, expected[i].hash);
+        QVERIFY(!actual.live);
+        QVERIFY(!actual.symbol.local && !actual.symbol.outlineOnly);
+        compareSymbol(actual.symbol, expected[i].symbol);
+
+        const codecairn::SourceLocation location{actual.path, actual.symbol.nameStart,
+                                                 actual.symbol.nameEnd, -1, actual.hash};
+        reads.clear();
+        const auto readRequest = engine.readSource(location, actual);
+        QTRY_COMPARE(reads.size(), 1);
+        QCOMPARE(qvariant_cast<codecairn::RequestId>(reads[0][0]), readRequest);
+        const auto source = qvariant_cast<codecairn::SourceRead>(reads[0][1]);
+        QVERIFY2(source.file.error.isEmpty(), qPrintable(source.file.error));
+        QVERIFY2(source.range.error.isEmpty(), qPrintable(source.range.error));
+        QVERIFY(!source.range.stale);
+        QCOMPARE(source.file.bytes, snapshots.value(actual.path).bytes);
+        QCOMPARE(source.range.start, actual.symbol.nameStart);
+        QCOMPARE(source.range.end, actual.symbol.nameEnd);
+        const auto nameBytes =
+            source.file.bytes.mid(source.range.start, source.range.end - source.range.start);
+        QCOMPARE(nameBytes,
+                 actual.symbol.generated ? QByteArray("DECLARE") : actual.symbol.name.toUtf8());
+    }
+
+    const auto warmRequest = project->refreshIndex(IndexRefresh::DiscoverChanges);
+    QTRY_COMPARE_WITH_TIMEOUT(indexed.size(), 2, 30000);
+    QCOMPARE(qvariant_cast<codecairn::RequestId>(indexed[1][0]), warmRequest);
+    const auto warm = qvariant_cast<IndexResult>(indexed[1][1]);
+    QVERIFY2(warm.error.isEmpty(), qPrintable(warm.error));
+    QVERIFY(!warm.cancelled);
+    QCOMPARE(warm.parsed, 0);
+    QCOMPARE(warm.reused, files.size());
+    QCOMPARE(warm.sourceHashes, cold.sourceHashes);
+
+    queried.clear();
+    project->findSymbols(all);
+    QTRY_COMPARE(queried.size(), 1);
+    const auto repeated = qvariant_cast<SymbolPage>(queried[0][1]);
+    QVERIFY2(repeated.error.isEmpty(), qPrintable(repeated.error));
+    QCOMPARE(repeated.total, first.total);
+    QCOMPARE(repeated.categories, first.categories);
+    QCOMPARE(repeated.symbols.size(), first.symbols.size());
+    for (int i = 0; i < first.symbols.size(); ++i) {
+        QCOMPARE(repeated.symbols[i].path, first.symbols[i].path);
+        QCOMPARE(repeated.symbols[i].hash, first.symbols[i].hash);
+        compareSymbol(repeated.symbols[i].symbol, first.symbols[i].symbol);
+    }
+    for (int offset = 0; offset < expected.size(); offset += 2) {
+        auto query = all;
+        query.offset = offset;
+        query.pageSize = 2;
+        queried.clear();
+        project->findSymbols(query);
+        QTRY_COMPARE(queried.size(), 1);
+        const auto page = qvariant_cast<SymbolPage>(queried[0][1]);
+        QVERIFY2(page.error.isEmpty(), qPrintable(page.error));
+        QCOMPARE(page.total, first.total);
+        QCOMPARE(page.symbols.size(), qMin(2, static_cast<int>(expected.size()) - offset));
+        for (int i = 0; i < page.symbols.size(); ++i) {
+            QCOMPARE(page.symbols[i].path, expected[offset + i].path);
+            compareSymbol(page.symbols[i].symbol, expected[offset + i].symbol);
+        }
+    }
+    codecairn::SymbolQuery exact;
+    exact.text = "Worker.shared";
+    exact.exact = true;
+    queried.clear();
+    project->findSymbols(exact);
+    QTRY_COMPARE(queried.size(), 1);
+    const auto match = qvariant_cast<SymbolPage>(queried[0][1]);
+    QVERIFY2(match.error.isEmpty(), qPrintable(match.error));
+    QCOMPARE(match.total, 1);
+    QCOMPARE(match.symbols.size(), 1);
+    QCOMPARE(match.symbols[0].symbol.qualifiedName, exact.text);
+    QCOMPARE(match.symbols[0].symbol.kind, "Function");
+}
 
 void LanguageTests::examples_data() {
     QTest::addColumn<QString>("file");

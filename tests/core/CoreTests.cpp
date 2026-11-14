@@ -18,7 +18,11 @@
 #error Core tests must not inherit GUI dependencies.
 #endif
 
-#if __has_include("WorkspaceServices.h") || __has_include("LanguageServerClient.h")
+#if __has_include("ProjectLanguages.h") ||                                                         \
+                  __has_include("LanguageServerClient.h") ||                                       \
+                                __has_include("ProjectIndexer.h") ||                               \
+                                              __has_include("ProjectIndexStore.h") ||              \
+                                                            __has_include("ProjectSymbolQuery.h")
 #error Domain consumers must not inherit implementation service headers.
 #endif
 
@@ -30,6 +34,133 @@ class CoreTests : public QObject {
     const ProjectOptions manual_{IndexStartup::Manual, LanguageStartup::Manual};
 
 private slots:
+    void projectIndexLifecyclePublishesAndReusesSavedFiles() {
+        QTemporaryDir directory;
+        const auto first = directory.filePath("first.py");
+        const auto second = directory.filePath("second.py");
+        QVERIFY(writeSourceFile(first, "def first(): pass\n", false).isEmpty());
+        QVERIFY(writeSourceFile(second, "def second(): pass\n", false).isEmpty());
+        Engine engine;
+        auto *project = engine.createProject();
+        QSignalSpy indexed(project, &Project::indexReady);
+        QSignalSpy failures(project, &Project::failed);
+        bool catalogWhileBusy = false;
+        bool symbolsWhileBusy = false;
+        connect(project, &Project::catalogReady, this, [&](const QStringList &paths) {
+            catalogWhileBusy = project->indexing() && paths.size() == 2;
+        });
+        connect(project, &Project::indexBatchReady, this,
+                [&] { symbolsWhileBusy = symbolsWhileBusy || project->indexing(); });
+        QVERIFY(project->open(ProjectSpec::folder(directory.path()),
+                              {IndexStartup::Automatic, LanguageStartup::Manual}));
+        QTRY_COMPARE(indexed.size(), 1);
+        QVERIFY(catalogWhileBusy);
+        QVERIFY(symbolsWhileBusy);
+        QCOMPARE(qvariant_cast<IndexResult>(indexed[0][1]).parsed, 2);
+        QSignalSpy pages(project, &Project::symbolsReady);
+        codecairn::SymbolQuery all;
+        all.pageSize = 100;
+        project->findSymbols(all);
+        QTRY_COMPARE(pages.size(), 1);
+        auto page = qvariant_cast<SymbolPage>(pages[0][1]);
+        QVERIFY(page.error.isEmpty());
+        QCOMPARE(page.total, 2);
+        project->refreshIndex();
+        QTRY_COMPARE(indexed.size(), 2);
+        auto result = qvariant_cast<IndexResult>(indexed[1][1]);
+        QCOMPARE(result.parsed, 0);
+        QCOMPARE(result.reused, 2);
+        auto document = engine.openDocument(first);
+        QVERIFY(document);
+        document.value()->updateContents("def unsaved(): pass\n");
+        QSignalSpy analyses(project, &Project::analysisReady);
+        project->analyze(document.value()->snapshot());
+        QTRY_COMPARE(analyses.size(), 1);
+        all.text = "unsaved";
+        project->findSymbols(all);
+        QTRY_COMPARE(pages.size(), 2);
+        QCOMPARE(qvariant_cast<SymbolPage>(pages[1][1]).total, 1);
+        QCOMPARE(readSourceFile(first).bytes, QByteArray("def first(): pass\n"));
+        QVERIFY(engine.closeDocument(document.value()));
+        QVERIFY(QFile::remove(second));
+        QVERIFY(writeSourceFile(first, "def updated(): pass\n", false).isEmpty());
+        project->refreshIndex();
+        QTRY_COMPARE(indexed.size(), 3);
+        result = qvariant_cast<IndexResult>(indexed[2][1]);
+        QCOMPARE(result.files.size(), 1);
+        QCOMPARE(result.parsed, 1);
+        all.text.clear();
+        project->findSymbols(all);
+        QTRY_COMPARE(pages.size(), 3);
+        page = qvariant_cast<SymbolPage>(pages[2][1]);
+        QCOMPARE(page.total, 1);
+        QCOMPARE(page.symbols[0].symbol.name, "updated");
+        QVERIFY(failures.isEmpty());
+    }
+
+    void switchingProjectsRejectsQueuedCatalogAndQueries() {
+        QTemporaryDir first, second;
+        QVERIFY(
+            writeSourceFile(first.filePath("first.py"), "def first(): pass\n", false).isEmpty());
+        QVERIFY(
+            writeSourceFile(second.filePath("second.py"), "def second(): pass\n", false).isEmpty());
+        Engine engine;
+        auto *project = engine.createProject();
+        QSignalSpy indexed(project, &Project::indexReady);
+        QSignalSpy pages(project, &Project::symbolsReady);
+        const ProjectOptions automatic{IndexStartup::Automatic, LanguageStartup::Manual};
+        QVERIFY(project->open(ProjectSpec::folder(first.path()), automatic));
+        project->findSymbols({});
+        QVERIFY(project->open(ProjectSpec::folder(second.path()), automatic));
+        QTRY_COMPARE(indexed.size(), 1);
+        QCOMPARE(qvariant_cast<IndexResult>(indexed[0][1]).root, workspacePath(second.path()));
+        codecairn::SymbolQuery query;
+        query.text = "second";
+        const auto id = project->findSymbols(query);
+        QTRY_VERIFY(std::any_of(pages.cbegin(), pages.cend(), [&](const auto &arguments) {
+            return qvariant_cast<RequestId>(arguments[0]) == id &&
+                   qvariant_cast<SymbolPage>(arguments[1]).total == 1;
+        }));
+        QCOMPARE(project->files(), QStringList{workspacePath(second.filePath("second.py"))});
+        project->close();
+        QVERIFY(project->files().isEmpty());
+        QVERIFY(!project->indexing());
+    }
+
+    void cancelledIndexRetainsPublishedSymbolsAndResumes() {
+        QTemporaryDir directory;
+        for (int i = 0; i < 40; ++i)
+            QVERIFY(writeSourceFile(directory.filePath(QString("file%1.py").arg(i)),
+                                    "def target(): pass\n", false)
+                        .isEmpty());
+        Engine engine;
+        auto *project = engine.createProject();
+        bool cancelled = false;
+        connect(project, &Project::indexBatchReady, this, [&] {
+            if (!cancelled) {
+                cancelled = true;
+                project->cancelIndexing();
+            }
+        });
+        QVERIFY(project->open(ProjectSpec::folder(directory.path()),
+                              {IndexStartup::Automatic, LanguageStartup::Manual}));
+        QTRY_VERIFY(cancelled && !project->indexing());
+        QSignalSpy indexed(project, &Project::indexReady);
+        project->refreshIndex();
+        QTRY_COMPARE(indexed.size(), 1);
+        const auto result = qvariant_cast<IndexResult>(indexed[0][1]);
+        QVERIFY(!result.cancelled);
+        QCOMPARE(result.files.size(), 40);
+        QVERIFY(result.reused > 0);
+        QSignalSpy pages(project, &Project::symbolsReady);
+        codecairn::SymbolQuery query;
+        query.text = "target";
+        query.pageSize = 100;
+        project->findSymbols(query);
+        QTRY_COMPARE(pages.size(), 1);
+        QCOMPARE(qvariant_cast<SymbolPage>(pages[0][1]).total, 40);
+    }
+
     void documentsHaveOneIdentityAndIndependentProjectLifetime() {
         QTemporaryDir directory;
         const auto path = directory.filePath("shared.py");
